@@ -1,23 +1,29 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidBusinessTimeZoneError } from "../errors/Errors.js"
-import type { Brand } from "../types/Brand.js"
+
+const isValidIanaTimeZone = (s: string): boolean => {
+  try {
+    Temporal.Now.zonedDateTimeISO(s)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * IANA time-zone identifier of the deployment, branded so it cannot
  * be confused with an arbitrary string. Validated by round-tripping
- * through `Temporal.TimeZone.from`.
+ * through `Temporal.Now.zonedDateTimeISO`, which throws on unknown
+ * zones.
  */
-export type BusinessTimeZone = Brand<string, "BusinessTimeZone">
+export const BusinessTimeZoneSchema = Schema.String.pipe(
+  Schema.filter(isValidIanaTimeZone),
+  Schema.brand("BusinessTimeZone"),
+)
+export type BusinessTimeZone = Schema.Schema.Type<typeof BusinessTimeZoneSchema>
 
-export const parseBusinessTimeZone = (
-  raw: string,
-): Either.Either<BusinessTimeZone, DomainError> => {
-  try {
-    const _check = Temporal.Now.zonedDateTimeISO(raw)
-    void _check
-    return Either.right(raw as BusinessTimeZone)
-  } catch {
-    return Either.left(new InvalidBusinessTimeZoneError({ value: raw }))
-  }
-}
+const decode = Schema.decodeUnknownEither(BusinessTimeZoneSchema)
+
+export const parseBusinessTimeZone = (raw: string): Either.Either<BusinessTimeZone, DomainError> =>
+  Either.mapLeft(decode(raw), () => new InvalidBusinessTimeZoneError({ value: raw }))
