@@ -10,4 +10,4 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
-- Initial scaffold of the layer-DAG `tmpl` engine and Phase A layer set.
+- Initial scaffold from project-template.

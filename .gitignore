@@ -1,15 +1,4 @@
-# Rust / Cargo
-target/
-**/*.rs.bk
-*.pdb
-
-# Coverage
-*.profraw
-*.profdata
-coverage/
-*.lcov
-
-# Editors
+# Editor scratch
 .vscode/*
 !.vscode/extensions.json
 .idea/
@@ -20,12 +9,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Log / scratch
+# Logs / scratch
 *.log
 .scratch/
 
 # Direnv
 .envrc.local
-
-# Local override for layers selection during template development
-.tmpl-local.toml
