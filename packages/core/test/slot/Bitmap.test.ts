@@ -47,6 +47,13 @@ describe("Bitmap", () => {
       expect(B.empty(-5).length).toBe(0)
       expect(B.full(-1).length).toBe(0)
     })
+
+    it.each([32, 64, 96])("full(%d) — word-aligned length leaves no spurious tail bits", (n) => {
+      const bm = B.full(n)
+      expect(B.popcount(bm)).toBe(n)
+      expect(B.isSet(bm, n - 1)).toBe(true)
+      expect(B.isSet(bm, n)).toBe(false)
+    })
   })
 
   describe("setRange / clearRange", () => {
@@ -101,9 +108,9 @@ describe("Bitmap", () => {
       )
     })
 
-    it("popcount(a OR b) ≥ max(popcount(a), popcount(b))", () => {
+    it("popcount(a OR b) ≥ max(popcount(a), popcount(b)) at equal lengths", () => {
       fc.assert(
-        fc.property(arbBitmap(100), arbBitmap(100), (a, b) => {
+        fc.property(arbSameLengthPair(100), ([a, b]) => {
           const lhs = B.popcount(B.or(a, b))
           const rhs = Math.max(B.popcount(a), B.popcount(b))
           return lhs >= rhs

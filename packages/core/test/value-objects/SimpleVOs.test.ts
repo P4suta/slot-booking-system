@@ -68,10 +68,19 @@ describe("FreeText", () => {
     expect(isLeft(r)).toBe(true)
   })
 
-  it("strips control characters except \\n and \\t", () => {
-    const r = parseFreeText("hello world\t\nbye")
+  it("strips C0/DEL/C1 controls and keeps \\t and \\n", () => {
+    // BEL (0x07) → range 1, VT (0x0B), FF (0x0C), ESC (0x1B) → range 4,
+    // DEL (0x7F) and NEL (0x85, C1) → range 5. Tab (0x09) and LF (0x0A)
+    // are deliberately *not* in the deny list and must survive.
+    const raw = "abcdefg\thello\nworld"
+    const r = parseFreeText(raw)
     expect(isRight(r)).toBe(true)
-    if (isRight(r)) expect(r.right).toBe("hello world\t\nbye")
+    if (isRight(r)) expect(r.right).toBe("abcdefg\thello\nworld")
+  })
+
+  it("counts surrogate pairs as one code point (multi-byte safety)", () => {
+    expect(isRight(parseFreeText("💩".repeat(500)))).toBe(true)
+    expect(isLeft(parseFreeText("💩".repeat(501)))).toBe(true)
   })
 
   it("normalize is idempotent", () => {

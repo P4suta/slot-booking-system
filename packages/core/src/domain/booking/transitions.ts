@@ -57,11 +57,10 @@ export const apply = (
       return Either.left(AlreadyCompleted)
     case "NoShow":
       return Either.left(AlreadyNoShow)
-    default: {
-      const _exhaustive: never = booking
-      return Either.left(InvalidStateTransition(JSON.stringify(_exhaustive), command.kind))
-    }
   }
+  // Exhaustiveness over `Booking["state"]` is enforced at the type level —
+  // every variant returns above, so reaching here is unrepresentable. No
+  // `default` branch and no `_exhaustive: never` is needed.
 }
 
 const applyToHeld = (
@@ -124,10 +123,6 @@ const applyToHeld = (
     case "Complete":
     case "MarkNoShow":
       return Either.left(InvalidStateTransition("Held", command.kind))
-    default: {
-      const _exhaustive: never = command
-      return Either.left(InvalidStateTransition("Held", JSON.stringify(_exhaustive)))
-    }
   }
 }
 
@@ -206,9 +201,5 @@ const applyToConfirmed = (
     case "Confirm":
     case "Expire":
       return Either.left(InvalidStateTransition("Confirmed", command.kind))
-    default: {
-      const _exhaustive: never = command
-      return Either.left(InvalidStateTransition("Confirmed", JSON.stringify(_exhaustive)))
-    }
   }
 }

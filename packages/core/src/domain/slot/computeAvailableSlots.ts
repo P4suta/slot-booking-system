@@ -10,7 +10,7 @@ import type { Weekday } from "../entities/Weekday.js"
 import type { ProviderId, ResourceId, ServiceId } from "../types/EntityId.js"
 import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import type { ResourceType } from "../value-objects/ResourceType.js"
-import { and, type Bitmap, clearRange, empty, full, isSet, setRange } from "./Bitmap.js"
+import * as B from "./Bitmap.js"
 
 /** Inputs for slot computation. All fields are read-only and pure data. */
 export type SlotCalcInput = {
@@ -40,8 +40,7 @@ const MINUTES_PER_DAY = 1_440
 
 const isActiveBooking = (b: Booking): boolean => b.state === "Held" || b.state === "Confirmed"
 
-const idAsc = <T extends { id: string }>(a: T, b: T): number =>
-  a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+const idAsc = <T extends { readonly id: string }>(a: T, b: T): number => a.id.localeCompare(b.id)
 
 /** Minute-of-day in a target day for an Instant. Negative if before, ≥1440 if after. */
 const minuteOfTargetDay = (instant: Temporal.Instant, dayStart: Temporal.ZonedDateTime): number => {
@@ -49,18 +48,208 @@ const minuteOfTargetDay = (instant: Temporal.Instant, dayStart: Temporal.ZonedDa
   return Number(ns / 60_000_000_000n)
 }
 
-/** True iff `[start, end)` of `mask` is all set. */
-const rangeAllSet = (mask: Bitmap, start: number, end: number): boolean => {
-  if (start < 0 || end > mask.length || end <= start) return false
-  for (let i = start; i < end; i++) if (!isSet(mask, i)) return false
+/**
+ * True iff every bit in `[start, end)` of `mask` is set.
+ *
+ * Precondition: `0 <= start < end <= mask.length`. The candidate-walk
+ * loop in `computeAvailableSlots` enforces this before invocation, so
+ * no defensive guard is needed here.
+ */
+const rangeAllSet = (mask: B.Bitmap, start: number, end: number): boolean => {
+  for (let i = start; i < end; i++) if (!B.isSet(mask, i)) return false
   return true
+}
+
+/** A provider paired with its precomputed daily availability mask. */
+type ProviderAvailability = {
+  readonly id: ProviderId
+  readonly mask: B.Bitmap
+}
+
+/** A resource paired with its precomputed daily availability mask. */
+type ResourceAvailability = {
+  readonly id: ResourceId
+  readonly type: ResourceType
+  readonly mask: B.Bitmap
+}
+
+/**
+ * A booking already resolved against the service map. Bookings whose
+ * `serviceId` is unknown to the input are dropped at the boundary so
+ * downstream code can rely on `service` being present.
+ */
+type ResolvedBooking = {
+  readonly booking: Booking
+  readonly service: Service
+}
+
+const resolveBookings = (
+  bookings: readonly Booking[],
+  servicesById: ReadonlyMap<ServiceId, Service>,
+): readonly ResolvedBooking[] =>
+  bookings.flatMap((booking) => {
+    const service = servicesById.get(booking.serviceId)
+    return service !== undefined ? [{ booking, service } as const] : []
+  })
+
+const buildBusinessAndPastMask = (
+  bh: BusinessHours,
+  date: Temporal.PlainDate,
+  now: Temporal.Instant,
+  timeZone: BusinessTimeZone,
+): B.Bitmap | null => {
+  let mask = B.empty(MINUTES_PER_DAY)
+  for (const w of bh.windows) {
+    const startMin = w.start.hour * 60 + w.start.minute
+    const endMin = w.end.hour * 60 + w.end.minute
+    mask = B.setRange(mask, startMin, endMin)
+  }
+  const nowZdt = now.toZonedDateTimeISO(timeZone)
+  const cmpDate = Temporal.PlainDate.compare(date, nowZdt.toPlainDate())
+  if (cmpDate < 0) return null
+  if (cmpDate === 0) {
+    const nowMin = nowZdt.hour * 60 + nowZdt.minute + 1
+    mask = B.clearRange(mask, 0, Math.min(nowMin, MINUTES_PER_DAY))
+  }
+  return mask
+}
+
+const computeProviderAvailabilities = (
+  baseMask: B.Bitmap,
+  service: Service,
+  providers: readonly Provider[],
+  absences: readonly ProviderAbsence[],
+  bookings: readonly ResolvedBooking[],
+  dayStart: Temporal.ZonedDateTime,
+): readonly ProviderAvailability[] =>
+  providers
+    .filter((p) => p.enabled && providerSatisfies(p, service.requiredSkills))
+    .toSorted(idAsc)
+    .map((p) => {
+      const fromAbsences = absences
+        .filter((a) => a.providerId === p.id)
+        .reduce((mask, a) => {
+          const lo = Math.max(0, minuteOfTargetDay(a.start, dayStart))
+          const hi = Math.min(MINUTES_PER_DAY, minuteOfTargetDay(a.end, dayStart))
+          return B.clearRange(mask, lo, hi)
+        }, baseMask)
+      const finalMask = bookings
+        .filter(({ booking }) => booking.providerId === p.id && isActiveBooking(booking))
+        .reduce((mask, { booking, service: svc }) => {
+          const lo = Math.max(
+            0,
+            minuteOfTargetDay(booking.slot.start, dayStart) - svc.bufferBeforeMinutes,
+          )
+          const hi = Math.min(
+            MINUTES_PER_DAY,
+            minuteOfTargetDay(booking.slot.end, dayStart) + svc.bufferAfterMinutes,
+          )
+          return B.clearRange(mask, lo, hi)
+        }, fromAbsences)
+      return { id: p.id, mask: finalMask } as const
+    })
+
+/** Effect a booking has on a resource's availability for a given date. */
+type ResourceImpact =
+  | { readonly kind: "none" }
+  | { readonly kind: "clear"; readonly lo: number; readonly hi: number }
+  | { readonly kind: "blackout" }
+
+const resourceImpact = (
+  rb: ResolvedBooking,
+  date: Temporal.PlainDate,
+  dayStart: Temporal.ZonedDateTime,
+  timeZone: BusinessTimeZone,
+): ResourceImpact => {
+  const { booking, service: svc } = rb
+  if (!isActiveBooking(booking)) return { kind: "none" }
+  const bookingDate = booking.slot.start.toZonedDateTimeISO(timeZone).toPlainDate()
+  const holdingEndDate =
+    svc.holdingDays > 0 ? bookingDate.add({ days: svc.holdingDays }) : bookingDate
+  const cmpStart = Temporal.PlainDate.compare(date, bookingDate)
+  const cmpEnd = Temporal.PlainDate.compare(date, holdingEndDate)
+  if (cmpStart < 0 || cmpEnd > 0) return { kind: "none" }
+  if (cmpStart > 0) return { kind: "blackout" }
+  // Same calendar day as the booking — clear the work interval + bufAfter.
+  const lo = Math.max(0, minuteOfTargetDay(booking.slot.start, dayStart))
+  const hi = Math.min(
+    MINUTES_PER_DAY,
+    minuteOfTargetDay(booking.slot.end, dayStart) + svc.bufferAfterMinutes,
+  )
+  return { kind: "clear", lo, hi }
+}
+
+const computeResourceAvailabilities = (
+  baseMask: B.Bitmap,
+  service: Service,
+  resources: readonly Resource[],
+  bookings: readonly ResolvedBooking[],
+  date: Temporal.PlainDate,
+  dayStart: Temporal.ZonedDateTime,
+  timeZone: BusinessTimeZone,
+): readonly ResourceAvailability[] =>
+  resources
+    .filter((r) => r.enabled && service.requiredResourceTypes.has(r.type))
+    .toSorted(idAsc)
+    .map((r) => {
+      const relevant = bookings.filter(({ booking }) => booking.resourceIds.includes(r.id))
+      const impacts = relevant.map((rb) => resourceImpact(rb, date, dayStart, timeZone))
+      if (impacts.some((i) => i.kind === "blackout")) {
+        return { id: r.id, type: r.type, mask: B.empty(MINUTES_PER_DAY) } as const
+      }
+      const mask = impacts.reduce(
+        (m, i) => (i.kind === "clear" ? B.clearRange(m, i.lo, i.hi) : m),
+        baseMask,
+      )
+      return { id: r.id, type: r.type, mask } as const
+    })
+
+const pickProvider = (
+  providers: readonly ProviderAvailability[],
+  needStart: number,
+  needEnd: number,
+): ProviderId | undefined => {
+  for (const { id, mask } of providers) {
+    if (rangeAllSet(mask, needStart, needEnd)) return id
+  }
+  return undefined
+}
+
+const pickResources = (
+  resourcesByType: ReadonlyMap<ResourceType, readonly ResourceAvailability[]>,
+  requiredTypes: ReadonlySet<ResourceType>,
+  startMin: number,
+  endMin: number,
+): readonly ResourceId[] | undefined => {
+  const chosen: ResourceId[] = []
+  for (const requiredType of requiredTypes) {
+    const candidates = resourcesByType.get(requiredType) ?? []
+    const pick = candidates.find(
+      (r) => !chosen.includes(r.id) && rangeAllSet(r.mask, startMin, endMin),
+    )
+    if (!pick) return undefined
+    chosen.push(pick.id)
+  }
+  return chosen
+}
+
+const groupByType = (
+  list: readonly ResourceAvailability[],
+): ReadonlyMap<ResourceType, readonly ResourceAvailability[]> => {
+  const out = new Map<ResourceType, ResourceAvailability[]>()
+  for (const r of list) {
+    const acc = out.get(r.type) ?? []
+    acc.push(r)
+    out.set(r.type, acc)
+  }
+  return out
 }
 
 /**
  * Pure, deterministic computation of bookable slots on a single day,
  * driven by ADR-0012 bitmap arithmetic. Same input → same output.
  *
- * Algorithm sketch:
+ * Algorithm:
  *   1. Drop the date if it falls in a Closure or has no business hours.
  *   2. Build a 1440-bit per-day mask: open windows ∧ ¬past.
  *   3. Per eligible Provider (skill match, enabled), AND the day mask
@@ -81,101 +270,34 @@ export const computeAvailableSlots = (input: SlotCalcInput): readonly AvailableS
   const weekday = input.date.dayOfWeek as Weekday
   const bh = input.businessHoursByWeekday.get(weekday)
   if (!bh || bh.windows.length === 0) return []
-
   if (input.closures.some((c) => c.date.equals(input.date))) return []
 
   const dayStart = input.date.toZonedDateTime({ timeZone: input.timeZone })
+  const baseMask = buildBusinessAndPastMask(bh, input.date, input.now, input.timeZone)
+  if (baseMask === null) return []
 
-  // 1. Day mask: business hours ∧ ¬past minutes
-  let dayMask = empty(MINUTES_PER_DAY)
-  for (const w of bh.windows) {
-    const startMin = w.start.hour * 60 + w.start.minute
-    const endMin = w.end.hour * 60 + w.end.minute
-    dayMask = setRange(dayMask, startMin, endMin)
-  }
+  const resolved = resolveBookings(input.existingBookings, input.servicesById)
 
-  let notPast = full(MINUTES_PER_DAY)
-  const nowZdt = input.now.toZonedDateTimeISO(input.timeZone)
-  const nowDate = nowZdt.toPlainDate()
-  const cmpDate = Temporal.PlainDate.compare(input.date, nowDate)
-  if (cmpDate < 0) return []
-  if (cmpDate === 0) {
-    const nowMin = nowZdt.hour * 60 + nowZdt.minute + 1
-    notPast = clearRange(notPast, 0, Math.min(nowMin, MINUTES_PER_DAY))
-  }
-  const baseMask = and(dayMask, notPast)
+  const providerAvailabilities = computeProviderAvailabilities(
+    baseMask,
+    input.service,
+    input.providers,
+    input.providerAbsences,
+    resolved,
+    dayStart,
+  )
 
-  // 2. Eligible providers
-  const eligibleProviders = input.providers
-    .filter((p) => p.enabled && providerSatisfies(p, input.service.requiredSkills))
-    .toSorted(idAsc)
+  const resourceAvailabilities = computeResourceAvailabilities(
+    baseMask,
+    input.service,
+    input.resources,
+    resolved,
+    input.date,
+    dayStart,
+    input.timeZone,
+  )
+  const resourcesByType = groupByType(resourceAvailabilities)
 
-  // 3. Per-provider availability mask
-  const providerMasks = new Map<ProviderId, Bitmap>()
-  for (const p of eligibleProviders) {
-    let mask = baseMask
-    for (const a of input.providerAbsences) {
-      if (a.providerId !== p.id) continue
-      const lo = Math.max(0, minuteOfTargetDay(a.start, dayStart))
-      const hi = Math.min(MINUTES_PER_DAY, minuteOfTargetDay(a.end, dayStart))
-      if (hi > lo) mask = clearRange(mask, lo, hi)
-    }
-    for (const b of input.existingBookings) {
-      if (b.providerId !== p.id) continue
-      if (!isActiveBooking(b)) continue
-      const svc = input.servicesById.get(b.serviceId)
-      const bufBefore = svc?.bufferBeforeMinutes ?? 0
-      const bufAfter = svc?.bufferAfterMinutes ?? 0
-      const lo = Math.max(0, minuteOfTargetDay(b.slot.start, dayStart) - bufBefore)
-      const hi = Math.min(MINUTES_PER_DAY, minuteOfTargetDay(b.slot.end, dayStart) + bufAfter)
-      if (hi > lo) mask = clearRange(mask, lo, hi)
-    }
-    providerMasks.set(p.id, mask)
-  }
-
-  // 4. Eligible resources by type
-  const eligibleResources = input.resources
-    .filter((r) => r.enabled && input.service.requiredResourceTypes.has(r.type))
-    .toSorted(idAsc)
-
-  const resourcesByType = new Map<ResourceType, Resource[]>()
-  for (const r of eligibleResources) {
-    const list = resourcesByType.get(r.type) ?? []
-    list.push(r)
-    resourcesByType.set(r.type, list)
-  }
-
-  // 5. Per-resource availability mask, including holding-period blackout
-  const resourceMasks = new Map<ResourceId, Bitmap>()
-  for (const r of eligibleResources) {
-    let mask = baseMask
-    for (const b of input.existingBookings) {
-      if (!b.resourceIds.includes(r.id)) continue
-      if (!isActiveBooking(b)) continue
-      const svc = input.servicesById.get(b.serviceId)
-      const holdingDays = svc?.holdingDays ?? 0
-      const bufAfter = svc?.bufferAfterMinutes ?? 0
-      const bookingDate = b.slot.start.toZonedDateTimeISO(input.timeZone).toPlainDate()
-      const holdingEndDate = holdingDays > 0 ? bookingDate.add({ days: holdingDays }) : bookingDate
-
-      const onOrAfterStart = Temporal.PlainDate.compare(input.date, bookingDate) >= 0
-      const onOrBeforeEnd = Temporal.PlainDate.compare(input.date, holdingEndDate) <= 0
-      if (!(onOrAfterStart && onOrBeforeEnd)) continue
-
-      if (input.date.equals(bookingDate)) {
-        const lo = Math.max(0, minuteOfTargetDay(b.slot.start, dayStart))
-        const hi = Math.min(MINUTES_PER_DAY, minuteOfTargetDay(b.slot.end, dayStart) + bufAfter)
-        if (hi > lo) mask = clearRange(mask, lo, hi)
-      } else {
-        // Hold day (between booking date + 1 and holding end): block the whole day.
-        mask = empty(MINUTES_PER_DAY)
-        break
-      }
-    }
-    resourceMasks.set(r.id, mask)
-  }
-
-  // 6. Walk candidate starts, deterministically pair Provider × Resources
   const D = input.service.durationMinutes
   const bufBefore = input.service.bufferBeforeMinutes
   const bufAfter = input.service.bufferAfterMinutes
@@ -187,46 +309,23 @@ export const computeAvailableSlots = (input: SlotCalcInput): readonly AvailableS
     const needEnd = startMin + D + bufAfter
     if (needStart < 0 || needEnd > MINUTES_PER_DAY) continue
 
-    let provider: ProviderId | undefined
-    for (const p of eligibleProviders) {
-      const mask = providerMasks.get(p.id)
-      if (!mask) continue
-      if (rangeAllSet(mask, needStart, needEnd)) {
-        provider = p.id
-        break
-      }
-    }
+    const provider = pickProvider(providerAvailabilities, needStart, needEnd)
     if (!provider) continue
 
-    const chosenResources: ResourceId[] = []
-    let allTypesMatched = true
-    for (const requiredType of input.service.requiredResourceTypes) {
-      const candidates = resourcesByType.get(requiredType) ?? []
-      let pick: ResourceId | undefined
-      for (const r of candidates) {
-        if (chosenResources.includes(r.id)) continue
-        const mask = resourceMasks.get(r.id)
-        if (!mask) continue
-        if (rangeAllSet(mask, startMin, startMin + D)) {
-          pick = r.id
-          break
-        }
-      }
-      if (!pick) {
-        allTypesMatched = false
-        break
-      }
-      chosenResources.push(pick)
-    }
-    if (!allTypesMatched) continue
+    const resourceIds = pickResources(
+      resourcesByType,
+      input.service.requiredResourceTypes,
+      startMin,
+      startMin + D,
+    )
+    if (!resourceIds) continue
 
     out.push({
       start: dayStart.add({ minutes: startMin }),
       end: dayStart.add({ minutes: startMin + D }),
       providerId: provider,
-      resourceIds: chosenResources,
+      resourceIds,
     })
   }
-
   return out
 }

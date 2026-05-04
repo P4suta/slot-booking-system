@@ -8,7 +8,17 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "html", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/index.ts", "src/**/*.d.ts"],
+      exclude: [
+        "src/**/index.ts",
+        "src/**/*.d.ts",
+        // Type-only files — declarations / discriminated-union types only.
+        "src/domain/types/Brand.ts",
+        "src/domain/booking/Booking.ts",
+        "src/domain/booking/Command.ts",
+        "src/domain/events/BookingEvent.ts",
+        "src/domain/entities/Closure.ts",
+        "src/domain/entities/Resource.ts",
+      ],
       thresholds: {
         branches: 100,
         functions: 100,

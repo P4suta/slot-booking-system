@@ -2,7 +2,11 @@ import { Temporal } from "@js-temporal/polyfill"
 import { Either } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
-import { canonicalize, makeOpenWindow } from "../../src/domain/entities/OpenWindow.js"
+import {
+  canonicalize,
+  makeOpenWindow,
+  windowMinutes,
+} from "../../src/domain/entities/OpenWindow.js"
 import { providerSatisfies } from "../../src/domain/entities/Provider.js"
 import { makeProviderAbsence } from "../../src/domain/entities/ProviderAbsence.js"
 import { totalProviderMinutes } from "../../src/domain/entities/Service.js"
@@ -63,6 +67,13 @@ describe("OpenWindow", () => {
 
   it("accepts strict start < end", () => {
     expect(Either.isRight(makeOpenWindow(t(9), t(18)))).toBe(true)
+  })
+
+  it("windowMinutes returns the duration of the window in whole minutes", () => {
+    const w = Either.getOrThrow(makeOpenWindow(t(9), t(18)))
+    expect(windowMinutes(w)).toBe(9 * 60)
+    const w2 = Either.getOrThrow(makeOpenWindow(t(10, 30), t(11, 15)))
+    expect(windowMinutes(w2)).toBe(45)
   })
 
   it("canonicalize merges overlapping windows", () => {

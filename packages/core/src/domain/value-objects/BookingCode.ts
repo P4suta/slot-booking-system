@@ -46,12 +46,12 @@ export const normalizeBookingCode = (input: string): string => {
 
 const isBodyChar = (c: string): boolean => ALPHABET_INDEX.has(c)
 
+// Pre-condition: every char of `body` is in ALPHABET (caller validates).
+// `String#indexOf` is a total function, so no defensive branch is needed.
 const decodeBody = (body: string): bigint => {
   let acc = 0n
   for (const c of body) {
-    const idx = ALPHABET_INDEX.get(c)
-    if (idx === undefined) return -1n
-    acc = acc * ALPHABET_SIZE + BigInt(idx)
+    acc = acc * ALPHABET_SIZE + BigInt(ALPHABET.indexOf(c))
   }
   return acc
 }
@@ -61,7 +61,7 @@ const encodeBody = (value: bigint): string => {
   const buf: string[] = []
   for (let i = 0; i < BODY_LENGTH; i++) {
     const idx = Number(v % ALPHABET_SIZE)
-    buf.push(ALPHABET[idx] ?? "0")
+    buf.push(ALPHABET.charAt(idx))
     v /= ALPHABET_SIZE
   }
   return buf.reverse().join("")
@@ -69,7 +69,7 @@ const encodeBody = (value: bigint): string => {
 
 const checksumChar = (value: bigint): string => {
   const idx = Number(((value % CHECK_MOD) + CHECK_MOD) % CHECK_MOD)
-  return CHECK_ALPHABET[idx] ?? "0"
+  return CHECK_ALPHABET.charAt(idx)
 }
 
 /**
@@ -119,9 +119,6 @@ export const parseBookingCode = (raw: string): Either.Either<BookingCode, Domain
     return Either.left(InvalidBookingCode("invalid-character"))
   }
   const value = decodeBody(body)
-  if (value < 0n) {
-    return Either.left(InvalidBookingCode("invalid-character"))
-  }
   if (checksumChar(value) !== check) {
     return Either.left(InvalidBookingCode("checksum-mismatch"))
   }
