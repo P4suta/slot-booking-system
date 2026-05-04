@@ -4,6 +4,8 @@
     "lib": ["ES2023"],
     "rootDir": ".",
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo",
     "types": ["vitest/globals"]
   },
   "include": ["src/**/*", "test/**/*", "vitest.config.ts"],

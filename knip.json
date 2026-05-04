@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "ignore": [".github/**", "docs/**", ".template/**"]
+    },
+    "packages/core": {
+      "entry": ["src/index.ts", "vitest.config.ts", "test/**/*.test.ts", "test/**/*.bench.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"],
+      "ignoreDependencies": ["ulidx"]
+    },
+    "apps/default": {
+      "entry": ["src/worker.ts", "drizzle.config.ts"],
+      "project": ["src/**/*.ts"],
+      "ignoreDependencies": [
+        "@booking/core",
+        "drizzle-orm",
+        "@cloudflare/workers-types",
+        "@types/node",
+        "miniflare"
+      ]
+    }
+  }
+}

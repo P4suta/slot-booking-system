@@ -66,3 +66,5 @@ pre-push:
     strict-code:
       run: |
         docker compose run --rm dev bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src apps/default/src 2>/dev/null'
+    dead-code:
+      run: docker compose run --rm dev ./node_modules/.bin/knip

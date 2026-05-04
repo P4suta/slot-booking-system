@@ -1,11 +1,21 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set dotenv-load := false
 
-# Every recipe runs inside the lean Node 22 dev container. The host
-# never invokes node / pnpm / wrangler directly.
+# ---------------------------------------------------------------------------
+# Every recipe runs inside the lean Node 22 dev container (ADR-0015).
+# Host installs only `just`, `lefthook`, `committed`, `typos`, `actionlint`,
+# `markdownlint-cli2` (managed by mise). Node / pnpm / wrangler / biome /
+# vitest live exclusively inside `docker compose dev`.
+# ---------------------------------------------------------------------------
+
 DEV  := "docker compose run --rm dev"
 DEVP := "docker compose run --rm --service-ports dev"   # publishes ports
 CI   := "docker compose run --rm ci"
+
+# Common in-container CLIs through pnpm / corepack so they pin the workspace's
+# installed version. Direct `./node_modules/.bin/<x>` is also fine; we prefer
+# the pnpm form for consistency.
+PNPM := "corepack pnpm"
 
 default:
     @just --list --unsorted
@@ -21,7 +31,7 @@ image:
     docker compose build dev
 
 install:
-    {{DEV}} corepack pnpm install --frozen-lockfile=false
+    {{DEV}} {{PNPM}} install --frozen-lockfile=false
 
 hooks:
     {{DEV}} lefthook install
@@ -34,26 +44,23 @@ sh:
     {{DEV}} bash
 
 # ---------------------------------------------------------------------------
-# Lint / format
+# Format / lint
 # ---------------------------------------------------------------------------
 
 fmt:
-    {{DEV}} corepack pnpm -w exec biome format --write .
+    {{DEV}} ./node_modules/.bin/biome format --write .
 
 fmt-check:
-    {{DEV}} corepack pnpm -w exec biome format .
+    {{DEV}} ./node_modules/.bin/biome format .
 
 lint-biome:
-    {{DEV}} corepack pnpm -w exec biome check .
+    {{DEV}} ./node_modules/.bin/biome check .
 
-typos:
-    {{DEV}} corepack pnpm -w exec typos -- || {{DEV}} sh -c 'command -v typos || true'
-
-actionlint:
-    {{DEV}} corepack pnpm -w exec actionlint -- || true
+lint-biome-fix:
+    {{DEV}} ./node_modules/.bin/biome check --write .
 
 markdownlint:
-    {{DEV}} corepack pnpm -w exec markdownlint-cli2 \
+    markdownlint-cli2 \
         "**/*.md" \
         "#node_modules" \
         "#dist" \
@@ -61,74 +68,93 @@ markdownlint:
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**"
 
-lint: fmt-check lint-biome markdownlint
+lint: lint-biome markdownlint
 
 # ---------------------------------------------------------------------------
-# Type / arch / guard gates
+# Type / arch / strict-code / dead-code gates
 # ---------------------------------------------------------------------------
 
 typecheck:
-    {{DEV}} corepack pnpm -r exec tsc --noEmit
+    {{DEV}} {{PNPM}} -r exec tsc --noEmit
 
 # Architecture: dependency-cruiser enforces layer direction + forbidden
-# constructs (Date, throw, cloudflare:, …) inside packages/core.
+# constructs (cloudflare:, … inside packages/core).
 arch:
-    {{DEV}} corepack pnpm -w exec depcruise -- --config .dependency-cruiser.cjs packages apps
+    {{DEV}} ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
 
-# PII-guard: forbid PII intent in source. Matches field/column declarations
-# and URL/email-host literals — not prose mentions of the words.
+# Dead-code / unused-export detection.
+dead-code:
+    {{DEV}} ./node_modules/.bin/knip
+
+# PII guard: forbids field/column declarations and URL/email-host literals
+# tied to PII, throughout source. See ADR-0009.
 pii-guard:
-    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\\b(email|phone_number|address|birthday|gender)\\s*[:=]|mailto:|@gmail\\.|@yahoo\\.)" packages apps -g "!**/CHANGELOG*"'
+    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'
 
-# Domain-purity: forbid industry-specific vocabulary inside core + default app.
+# Domain-purity: forbid industry-specific terms inside packages/core +
+# apps/default.
 domain-purity:
-    {{DEV}} bash -c '! rg -n -i -e "\\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\\s*shop)\\b" packages apps -g "!**/docs/adr/**" -g "!Justfile"'
+    {{DEV}} bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
 
-# Forbidden constructs: Date / throw / @ts-ignore inside src trees.
+# Forbidden constructs grep: Date, throw, @ts-ignore (ADR-0010).
 strict-code:
-    {{DEV}} bash -c '! rg -n -t ts -e "\\bnew Date\\(|\\bDate\\.now\\(|@ts-ignore|@ts-expect-error|: any\\b" packages/core/src apps/default/src 2>/dev/null'
+    {{DEV}} bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src apps/default/src 2>/dev/null'
 
 # ---------------------------------------------------------------------------
-# Test / coverage
+# Test
 # ---------------------------------------------------------------------------
 
 test:
-    {{DEV}} corepack pnpm -r run test
+    {{DEV}} {{PNPM}} -r run test
 
 test-watch:
-    {{DEV}} corepack pnpm -r run test:watch
+    {{DEV}} {{PNPM}} -r run test:watch
 
 test-coverage:
-    {{DEV}} corepack pnpm -r run test:coverage
+    {{DEV}} {{PNPM}} -r run test:coverage
 
 test-property:
-    {{DEV}} corepack pnpm -F @booking/core run test:property
+    {{DEV}} {{PNPM}} -F @booking/core run test:property
+
+# Performance baseline. Vitest's `bench` runner (experimental).
+bench:
+    {{DEV}} {{PNPM}} -F @booking/core run test:bench
+
+# Mutation testing (Stryker). Heavy; run on demand, not in pre-push.
+mutation:
+    {{DEV}} {{PNPM}} -F @booking/core run test:mutation
 
 # ---------------------------------------------------------------------------
 # Build / pack
 # ---------------------------------------------------------------------------
 
 build:
-    {{DEV}} corepack pnpm -r run build
+    {{DEV}} {{PNPM}} -r run build
 
+# Pack the core package and verify it loads from a tarball — sanity for
+# future cross-repo distribution (ADR-0011).
 pack-core:
-    {{DEV}} corepack pnpm -F @booking/core run build
-    {{DEV}} corepack pnpm -F @booking/core pack --pack-destination /tmp
+    {{DEV}} {{PNPM}} -F @booking/core run build
+    {{DEV}} {{PNPM}} -F @booking/core pack --pack-destination /tmp
 
 # ---------------------------------------------------------------------------
 # Cloudflare local dev (apps/default)
 # ---------------------------------------------------------------------------
 
 dev-default:
-    {{DEVP}} corepack pnpm -F default run dev
+    {{DEVP}} {{PNPM}} -F default run dev
 
 migrate-local:
-    {{DEV}} corepack pnpm -F default exec wrangler d1 migrations apply DB --local
+    {{DEV}} {{PNPM}} -F default exec wrangler d1 migrations apply DB --local
 
 # ---------------------------------------------------------------------------
-# Aggregate
+# Aggregate gates
 # ---------------------------------------------------------------------------
 
-check: lint typecheck arch pii-guard domain-purity strict-code test-coverage
+# Pre-push mirror: every check the CI workflow runs, but skip mutation
+# testing (heavy) and bench (informational).
+check: lint typecheck arch pii-guard domain-purity strict-code dead-code test-coverage
 
+# Full CI gate: check + build (and the apps/default dev smoke happens
+# externally on demand via `just dev-default`).
 ci: check build

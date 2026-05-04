@@ -90,6 +90,14 @@ jobs:
             slot-booking-system-ci:latest \
             ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
 
+      - name: Dead-code (knip)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            ./node_modules/.bin/knip
+
       - name: PII guard
         run: |
           docker run --rm \

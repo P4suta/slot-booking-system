@@ -26,6 +26,8 @@ dist/
 build/
 .svelte-kit/
 .turbo/
+.tsbuildinfo
+**/.tsbuildinfo
 
 # Test / coverage
 coverage/

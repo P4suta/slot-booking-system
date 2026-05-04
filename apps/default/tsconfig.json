@@ -4,6 +4,8 @@
     "lib": ["ES2023"],
     "rootDir": ".",
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo",
     "types": ["@cloudflare/workers-types", "node"]
   },
   "include": ["src/**/*", "drizzle.config.ts"],

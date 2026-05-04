@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing for the pure-domain layer. Validates that the test suite catches real defects, not just incidental code shapes.",
+  "packageManager": "pnpm",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.ts"
+  },
+  "mutate": [
+    "src/domain/value-objects/**/*.ts",
+    "src/domain/entities/**/*.ts",
+    "src/domain/booking/transitions.ts",
+    "src/domain/slot/**/*.ts",
+    "!src/**/*.d.ts",
+    "!src/**/index.ts"
+  ],
+  "ignorePatterns": ["dist", "coverage", "node_modules"],
+  "thresholds": {
+    "high": 90,
+    "low": 80,
+    "break": 80
+  },
+  "reporters": ["clear-text", "html", "progress"],
+  "htmlReporter": {
+    "fileName": "reports/mutation/index.html"
+  },
+  "tempDirName": ".stryker-tmp",
+  "timeoutMS": 60000,
+  "concurrency": 4,
+  "checkers": ["typescript"],
+  "tsconfigFile": "tsconfig.json"
+}
