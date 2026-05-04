@@ -1,119 +1,99 @@
+import {
+  AlreadyCancelledError,
+  AlreadyCompletedError,
+  AlreadyNoShowError,
+  type AnyError,
+  BookingNotFoundError,
+  InvalidAbsenceError,
+  InvalidBitmapError,
+  InvalidBookingCodeError,
+  InvalidBusinessTimeZoneError,
+  InvalidDurationError,
+  InvalidEntityIdError,
+  InvalidFreeTextError,
+  InvalidHoldingDaysError,
+  InvalidNameKanaError,
+  InvalidOpenWindowError,
+  InvalidPhoneLast4Error,
+  InvalidResourceTypeError,
+  InvalidSkillError,
+  InvalidStateTransitionError,
+  InvalidTimeSlotError,
+  InvalidWeekdayError,
+  OutsideBusinessHoursError,
+  PhoneMismatchError,
+  ProviderUnavailableError,
+  ResourceUnavailableError,
+  ServiceDisabledError,
+  SlotExpiredError,
+  SlotUnavailableError,
+} from "./Errors.js"
+
 /**
- * Tagged ADT of every domain-level error. Use the constructors below
- * rather than building objects literally so the call site is searchable
- * and the field names cannot drift.
+ * Top-level alias for any error the domain emits. Every leaf type is a
+ * `Data.TaggedError` class; consumers can pattern-match on `_tag` or
+ * use `instanceof` for narrowing.
  *
- * The error channel is the **only** way domain code signals failure.
- * `throw` is forbidden inside `domain/` and `application/` (ADR-0010).
+ * See ADR-0017 for the error-handling architecture, ADR-0009 for the
+ * logging discipline that consumes these.
  */
-export type DomainError =
-  | { readonly _tag: "InvalidPhoneLast4"; readonly reason: string }
-  | { readonly _tag: "InvalidNameKana"; readonly reason: string }
-  | { readonly _tag: "InvalidBookingCode"; readonly reason: BookingCodeReason }
-  | { readonly _tag: "InvalidFreeText"; readonly reason: string }
-  | { readonly _tag: "InvalidDuration"; readonly reason: string }
-  | { readonly _tag: "InvalidHoldingDays"; readonly reason: string }
-  | { readonly _tag: "InvalidTimeSlot"; readonly reason: string }
-  | { readonly _tag: "InvalidBitmap"; readonly reason: string }
-  | { readonly _tag: "InvalidSkill"; readonly reason: string }
-  | { readonly _tag: "InvalidResourceType"; readonly reason: string }
-  | { readonly _tag: "InvalidWeekday"; readonly reason: string }
-  | { readonly _tag: "InvalidOpenWindow"; readonly reason: string }
-  | { readonly _tag: "InvalidAbsence"; readonly reason: string }
-  | { readonly _tag: "BookingNotFound" }
-  | { readonly _tag: "PhoneMismatch" }
-  | { readonly _tag: "AlreadyCancelled" }
-  | { readonly _tag: "AlreadyCompleted" }
-  | { readonly _tag: "AlreadyNoShow" }
-  | { readonly _tag: "SlotExpired" }
-  | { readonly _tag: "SlotUnavailable" }
-  | { readonly _tag: "OutsideBusinessHours" }
-  | { readonly _tag: "ServiceDisabled" }
-  | { readonly _tag: "ProviderUnavailable" }
-  | { readonly _tag: "ResourceUnavailable" }
-  | { readonly _tag: "InvalidStateTransition"; readonly from: string; readonly command: string }
+export type DomainError = AnyError
+
+/* -------------------------------------------------------------------------- */
+/* Backwards-compatible smart constructors.                                    */
+/* They build the corresponding `Data.TaggedError` class instance.             */
+/* -------------------------------------------------------------------------- */
+
+export const InvalidPhoneLast4 = (reason: string): DomainError =>
+  new InvalidPhoneLast4Error({ reason })
+
+export const InvalidNameKana = (reason: string): DomainError => new InvalidNameKanaError({ reason })
 
 export type BookingCodeReason = "wrong-length" | "invalid-character" | "checksum-mismatch"
 
-export const InvalidPhoneLast4 = (reason: string): DomainError => ({
-  _tag: "InvalidPhoneLast4",
-  reason,
-})
+export const InvalidBookingCode = (reason: BookingCodeReason): DomainError =>
+  new InvalidBookingCodeError({ reason })
 
-export const InvalidNameKana = (reason: string): DomainError => ({
-  _tag: "InvalidNameKana",
-  reason,
-})
+export const InvalidFreeText = (reason: string): DomainError => new InvalidFreeTextError({ reason })
 
-export const InvalidBookingCode = (reason: BookingCodeReason): DomainError => ({
-  _tag: "InvalidBookingCode",
-  reason,
-})
+export const InvalidDuration = (reason: string): DomainError => new InvalidDurationError({ reason })
 
-export const InvalidFreeText = (reason: string): DomainError => ({
-  _tag: "InvalidFreeText",
-  reason,
-})
+export const InvalidHoldingDays = (reason: string): DomainError =>
+  new InvalidHoldingDaysError({ reason })
 
-export const InvalidDuration = (reason: string): DomainError => ({
-  _tag: "InvalidDuration",
-  reason,
-})
+export const InvalidTimeSlot = (reason: string): DomainError => new InvalidTimeSlotError({ reason })
 
-export const InvalidHoldingDays = (reason: string): DomainError => ({
-  _tag: "InvalidHoldingDays",
-  reason,
-})
+export const InvalidBitmap = (reason: string): DomainError => new InvalidBitmapError({ reason })
 
-export const InvalidTimeSlot = (reason: string): DomainError => ({
-  _tag: "InvalidTimeSlot",
-  reason,
-})
+export const InvalidSkill = (reason: string): DomainError => new InvalidSkillError({ reason })
 
-export const InvalidBitmap = (reason: string): DomainError => ({
-  _tag: "InvalidBitmap",
-  reason,
-})
+export const InvalidResourceType = (reason: string): DomainError =>
+  new InvalidResourceTypeError({ reason })
 
-export const InvalidSkill = (reason: string): DomainError => ({
-  _tag: "InvalidSkill",
-  reason,
-})
+export const InvalidWeekday = (reason: string): DomainError => new InvalidWeekdayError({ reason })
 
-export const InvalidResourceType = (reason: string): DomainError => ({
-  _tag: "InvalidResourceType",
-  reason,
-})
+export const InvalidOpenWindow = (reason: string): DomainError =>
+  new InvalidOpenWindowError({ reason })
 
-export const InvalidWeekday = (reason: string): DomainError => ({
-  _tag: "InvalidWeekday",
-  reason,
-})
+export const InvalidAbsence = (reason: string): DomainError => new InvalidAbsenceError({ reason })
 
-export const InvalidOpenWindow = (reason: string): DomainError => ({
-  _tag: "InvalidOpenWindow",
-  reason,
-})
+export const InvalidBusinessTimeZone = (value: string): DomainError =>
+  new InvalidBusinessTimeZoneError({ value })
 
-export const InvalidAbsence = (reason: string): DomainError => ({
-  _tag: "InvalidAbsence",
-  reason,
-})
+export const InvalidEntityId = (expectedPrefix: string, received: string): DomainError =>
+  new InvalidEntityIdError({ expectedPrefix, received })
 
-export const BookingNotFound: DomainError = { _tag: "BookingNotFound" }
-export const PhoneMismatch: DomainError = { _tag: "PhoneMismatch" }
-export const AlreadyCancelled: DomainError = { _tag: "AlreadyCancelled" }
-export const AlreadyCompleted: DomainError = { _tag: "AlreadyCompleted" }
-export const AlreadyNoShow: DomainError = { _tag: "AlreadyNoShow" }
-export const SlotExpired: DomainError = { _tag: "SlotExpired" }
-export const SlotUnavailable: DomainError = { _tag: "SlotUnavailable" }
-export const OutsideBusinessHours: DomainError = { _tag: "OutsideBusinessHours" }
-export const ServiceDisabled: DomainError = { _tag: "ServiceDisabled" }
-export const ProviderUnavailable: DomainError = { _tag: "ProviderUnavailable" }
-export const ResourceUnavailable: DomainError = { _tag: "ResourceUnavailable" }
+export const BookingNotFound: DomainError = new BookingNotFoundError({})
+export const PhoneMismatch: DomainError = new PhoneMismatchError({})
+export const AlreadyCancelled: DomainError = new AlreadyCancelledError({})
+export const AlreadyCompleted: DomainError = new AlreadyCompletedError({})
+export const AlreadyNoShow: DomainError = new AlreadyNoShowError({})
+export const SlotExpired: DomainError = new SlotExpiredError({})
+export const SlotUnavailable: DomainError = new SlotUnavailableError({})
+export const OutsideBusinessHours: DomainError = new OutsideBusinessHoursError({})
+export const ServiceDisabled: DomainError = new ServiceDisabledError({})
+export const ProviderUnavailable: DomainError = new ProviderUnavailableError({})
+export const ResourceUnavailable: DomainError = new ResourceUnavailableError({})
 
-export const InvalidStateTransition = (from: string, command: string): DomainError => ({
-  _tag: "InvalidStateTransition",
-  from,
-  command,
-})
+export const InvalidStateTransition = (from: string, command: string): DomainError =>
+  new InvalidStateTransitionError({ from, command })

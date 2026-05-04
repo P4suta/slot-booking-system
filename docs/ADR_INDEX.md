@@ -22,6 +22,8 @@ back.
 | [0013](./adr/0013-total-state-transitions.md)       | Booking state machine: total transition function             | accepted |
 | [0014](./adr/0014-self-validating-booking-code.md)  | Booking code rejected before any database lookup             | accepted |
 | [0015](./adr/0015-docker-only-development.md)       | Dev, test, and CI run inside the Docker dev container        | accepted |
+| [0016](./adr/0016-always-latest-releases.md)        | Dependencies and tools track the latest release              | accepted |
+| [0017](./adr/0017-error-handling.md)                | Errors as Data.TaggedError with codes, causes, and meta      | accepted |
 
 ## Authoring a new ADR
 

@@ -1,6 +1,6 @@
 import { Temporal } from "@js-temporal/polyfill"
 import { Either } from "effect"
-import { type DomainError, InvalidWeekday } from "../errors/DomainError.js"
+import { type DomainError, InvalidBusinessTimeZone } from "../errors/DomainError.js"
 import type { Brand } from "../types/Brand.js"
 
 /**
@@ -18,6 +18,6 @@ export const parseBusinessTimeZone = (
     void _check
     return Either.right(raw as BusinessTimeZone)
   } catch {
-    return Either.left(InvalidWeekday(`unknown IANA time zone: ${raw}`))
+    return Either.left(InvalidBusinessTimeZone(raw))
   }
 }

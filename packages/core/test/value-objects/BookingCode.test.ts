@@ -79,13 +79,15 @@ describe("BookingCode", () => {
     it("rejects invalid characters in the body", () => {
       // '!' survives normalisation unchanged and is not in the Crockford body alphabet.
       const err = expectLeft(parseBookingCode("!000000"))
-      expect(err).toEqual({ _tag: "InvalidBookingCode", reason: "invalid-character" })
+      expect(err._tag).toBe("InvalidBookingCode")
+      if (err._tag === "InvalidBookingCode") expect(err.reason).toBe("invalid-character")
     })
 
     it("rejects invalid characters in the check position", () => {
       // 'a' would normalise to 'A' (a body char), so use '@' which survives normalisation.
       const err = expectLeft(parseBookingCode("000000@"))
-      expect(err).toEqual({ _tag: "InvalidBookingCode", reason: "invalid-character" })
+      expect(err._tag).toBe("InvalidBookingCode")
+      if (err._tag === "InvalidBookingCode") expect(err.reason).toBe("invalid-character")
     })
 
     it("rejects mismatched checksum", () => {
@@ -93,10 +95,8 @@ describe("BookingCode", () => {
       // Flip the check character to a different valid char from the check alphabet
       const tampered = `${code.slice(0, 6)}${code[6] === "9" ? "8" : "9"}`
       const err = expectLeft(parseBookingCode(tampered))
-      expect(err).toEqual({
-        _tag: "InvalidBookingCode",
-        reason: "checksum-mismatch",
-      })
+      expect(err._tag).toBe("InvalidBookingCode")
+      if (err._tag === "InvalidBookingCode") expect(err.reason).toBe("checksum-mismatch")
     })
 
     it("property: every keyspace value round-trips", () => {
