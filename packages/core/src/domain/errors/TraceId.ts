@@ -1,5 +1,4 @@
-import { Either } from "effect"
-import type { Brand } from "../types/Brand.js"
+import { Either, Schema } from "effect"
 
 /**
  * Request-scoped correlation identifier surfaced in logs, error
@@ -7,13 +6,19 @@ import type { Brand } from "../types/Brand.js"
  * for time-ordering and high entropy. Must never be derived from
  * customer PII.
  */
-export type TraceId = Brand<string, "TraceId">
+export const TraceIdSchema = Schema.String.pipe(
+  Schema.pattern(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  Schema.brand("TraceId"),
+)
+export type TraceId = Schema.Schema.Type<typeof TraceIdSchema>
 
-const TRACE_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/
+const isTraceIdSchema = Schema.is(TraceIdSchema)
 
-export const isTraceId = (s: string): s is TraceId => TRACE_ID_PATTERN.test(s)
+export const isTraceId = (s: string): s is TraceId => isTraceIdSchema(s)
+
+const decode = Schema.decodeUnknownEither(TraceIdSchema)
 
 export const parseTraceId = (
   s: string,
 ): Either.Either<TraceId, { readonly _tag: "InvalidTraceId"; readonly value: string }> =>
-  isTraceId(s) ? Either.right(s) : Either.left({ _tag: "InvalidTraceId", value: s })
+  Either.mapLeft(decode(s), () => ({ _tag: "InvalidTraceId" as const, value: s }))

@@ -16,7 +16,6 @@ export default defineConfig({
         "src/**/index.ts",
         "src/**/*.d.ts",
         // Type-only files — declarations / discriminated-union types only.
-        "src/domain/types/Brand.ts",
         "src/domain/booking/Booking.ts",
         "src/domain/booking/Command.ts",
         "src/domain/events/BookingEvent.ts",
