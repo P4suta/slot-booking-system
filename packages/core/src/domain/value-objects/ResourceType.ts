@@ -1,21 +1,19 @@
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidResourceTypeError } from "../errors/Errors.js"
-import type { Brand } from "../types/Brand.js"
+import { summarizeParse } from "../errors/fromParseError.js"
 
 /**
  * Logical type of a Resource — `workspace`, `storage`, `chair`, …
  * Lowercase snake-case ASCII; max 40 chars. Concrete type names live
  * in the deployment, never in `packages/core`.
  */
-export type ResourceType = Brand<string, "ResourceType">
+export const ResourceTypeSchema = Schema.String.pipe(
+  Schema.pattern(/^[a-z][a-z0-9_]{0,39}$/),
+  Schema.brand("ResourceType"),
+)
+export type ResourceType = Schema.Schema.Type<typeof ResourceTypeSchema>
 
-const RESOURCE_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,39}$/
+const decode = Schema.decodeUnknownEither(ResourceTypeSchema)
 
 export const parseResourceType = (raw: string): Either.Either<ResourceType, DomainError> =>
-  RESOURCE_TYPE_PATTERN.test(raw)
-    ? Either.right(raw as ResourceType)
-    : Either.left(
-        new InvalidResourceTypeError({
-          reason: `resource type must match ${RESOURCE_TYPE_PATTERN}`,
-        }),
-      )
+  Either.mapLeft(decode(raw), (e) => new InvalidResourceTypeError({ reason: summarizeParse(e) }))

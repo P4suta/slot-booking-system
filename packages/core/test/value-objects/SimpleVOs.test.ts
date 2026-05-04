@@ -1,9 +1,9 @@
 import { Either } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
-import { parseMinutes } from "../../src/domain/value-objects/Duration.js"
+import { isMinutes, parseMinutes } from "../../src/domain/value-objects/Duration.js"
 import { normalizeFreeText, parseFreeText } from "../../src/domain/value-objects/FreeText.js"
-import { parseHoldingDays } from "../../src/domain/value-objects/HoldingDays.js"
+import { isHoldingDays, parseHoldingDays } from "../../src/domain/value-objects/HoldingDays.js"
 import { normalizeNameKana, parseNameKana } from "../../src/domain/value-objects/NameKana.js"
 
 const isLeft = Either.isLeft
@@ -101,6 +101,13 @@ describe("Minutes", () => {
   it.each([-1, 1441, 1.5, Number.NaN, Number.POSITIVE_INFINITY])("rejects %p", (n) => {
     expect(isLeft(parseMinutes(n))).toBe(true)
   })
+
+  it("isMinutes guard mirrors parseMinutes", () => {
+    expect(isMinutes(0)).toBe(true)
+    expect(isMinutes(1440)).toBe(true)
+    expect(isMinutes(-1)).toBe(false)
+    expect(isMinutes(1.5)).toBe(false)
+  })
 })
 
 describe("HoldingDays", () => {
@@ -110,5 +117,12 @@ describe("HoldingDays", () => {
 
   it.each([-1, 31, 0.5])("rejects %p", (n) => {
     expect(isLeft(parseHoldingDays(n))).toBe(true)
+  })
+
+  it("isHoldingDays guard mirrors parseHoldingDays", () => {
+    expect(isHoldingDays(0)).toBe(true)
+    expect(isHoldingDays(30)).toBe(true)
+    expect(isHoldingDays(31)).toBe(false)
+    expect(isHoldingDays(0.5)).toBe(false)
   })
 })

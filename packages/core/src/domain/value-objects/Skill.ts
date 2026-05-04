@@ -1,17 +1,19 @@
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidSkillError } from "../errors/Errors.js"
-import type { Brand } from "../types/Brand.js"
+import { summarizeParse } from "../errors/fromParseError.js"
 
 /**
  * Skill that a Provider may possess and a Service may require. Lowercase
  * snake-case ASCII; max 40 chars. Industry-agnostic — concrete skill
  * names live in deployment configuration, never in the core.
  */
-export type Skill = Brand<string, "Skill">
+export const SkillSchema = Schema.String.pipe(
+  Schema.pattern(/^[a-z][a-z0-9_]{0,39}$/),
+  Schema.brand("Skill"),
+)
+export type Skill = Schema.Schema.Type<typeof SkillSchema>
 
-const SKILL_PATTERN = /^[a-z][a-z0-9_]{0,39}$/
+const decode = Schema.decodeUnknownEither(SkillSchema)
 
 export const parseSkill = (raw: string): Either.Either<Skill, DomainError> =>
-  SKILL_PATTERN.test(raw)
-    ? Either.right(raw as Skill)
-    : Either.left(new InvalidSkillError({ reason: `skill must match ${SKILL_PATTERN}` }))
+  Either.mapLeft(decode(raw), (e) => new InvalidSkillError({ reason: summarizeParse(e) }))
