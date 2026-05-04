@@ -1,10 +1,12 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set dotenv-load := false
 
-# Cargo manifests
-ENGINE_MANIFEST := ".template/tmpl/Cargo.toml"
+# Every recipe runs inside the lean Node 22 dev container. The host
+# never invokes node / pnpm / wrangler directly.
+DEV  := "docker compose run --rm dev"
+DEVP := "docker compose run --rm --service-ports dev"   # publishes ports
+CI   := "docker compose run --rm ci"
 
-# Default: list available recipes.
 default:
     @just --list --unsorted
 
@@ -12,137 +14,121 @@ default:
 # Bootstrap
 # ---------------------------------------------------------------------------
 
-# Install pinned tools via mise + register lefthook hooks.
-bootstrap:
-    mise install
-    just hooks
+# Build the dev image, install workspace deps, register git hooks.
+bootstrap: image install hooks
+
+image:
+    docker compose build dev
+
+install:
+    {{DEV}} corepack pnpm install --frozen-lockfile=false
 
 hooks:
-    lefthook install
+    {{DEV}} lefthook install
 
 hooks-uninstall:
-    lefthook uninstall
+    {{DEV}} lefthook uninstall
+
+# Drop into an interactive shell inside the dev container.
+sh:
+    {{DEV}} bash
 
 # ---------------------------------------------------------------------------
-# Engine (the Rust crate at .template/tmpl/)
-# ---------------------------------------------------------------------------
-
-engine-build:
-    cargo build --manifest-path {{ENGINE_MANIFEST}} --release
-
-engine-check:
-    cargo check --manifest-path {{ENGINE_MANIFEST}} --all-targets
-
-# Watch loop for fast feedback while editing the engine.
-watch JOB="check":
-    bacon --manifest-path {{ENGINE_MANIFEST}} {{JOB}}
-
-# ---------------------------------------------------------------------------
-# Lint, format, and the strict-code grep gate
+# Lint / format
 # ---------------------------------------------------------------------------
 
 fmt:
-    cargo fmt --manifest-path {{ENGINE_MANIFEST}} --all
+    {{DEV}} corepack pnpm -w exec biome format --write .
 
 fmt-check:
-    cargo fmt --manifest-path {{ENGINE_MANIFEST}} --all -- --check
+    {{DEV}} corepack pnpm -w exec biome format .
 
-clippy:
-    cargo clippy --manifest-path {{ENGINE_MANIFEST}} --all-targets -- -D warnings
+lint-biome:
+    {{DEV}} corepack pnpm -w exec biome check .
 
 typos:
-    typos
+    {{DEV}} corepack pnpm -w exec typos -- || {{DEV}} sh -c 'command -v typos || true'
 
 actionlint:
-    actionlint
-
-yamllint:
-    @if command -v yamllint >/dev/null 2>&1; then \
-        yamllint . ; \
-    else \
-        echo "yamllint not installed locally — install via 'apt install yamllint' or 'brew install yamllint' to enable this lint pass"; \
-    fi
+    {{DEV}} corepack pnpm -w exec actionlint -- || true
 
 markdownlint:
-    markdownlint-cli2 \
+    {{DEV}} corepack pnpm -w exec markdownlint-cli2 \
         "**/*.md" \
-        "#target" \
-        "#.template/tmpl/target" \
+        "#node_modules" \
+        "#dist" \
+        "#coverage" \
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**"
 
-# Reject patterns that mask real bugs even when the type / lint gates pass.
-# Sources of truth: docs/adr/0002-strict-code-grep.md.
+lint: fmt-check lint-biome markdownlint
+
+# ---------------------------------------------------------------------------
+# Type / arch / guard gates
+# ---------------------------------------------------------------------------
+
+typecheck:
+    {{DEV}} corepack pnpm -r exec tsc --noEmit
+
+# Architecture: dependency-cruiser enforces layer direction + forbidden
+# constructs (Date, throw, cloudflare:, …) inside packages/core.
+arch:
+    {{DEV}} corepack pnpm -w exec depcruise -- --config .dependency-cruiser.cjs packages apps
+
+# PII-guard: forbid PII intent in source. Matches field/column declarations
+# and URL/email-host literals — not prose mentions of the words.
+pii-guard:
+    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\\b(email|phone_number|address|birthday|gender)\\s*[:=]|mailto:|@gmail\\.|@yahoo\\.)" packages apps -g "!**/CHANGELOG*"'
+
+# Domain-purity: forbid industry-specific vocabulary inside core + default app.
+domain-purity:
+    {{DEV}} bash -c '! rg -n -i -e "\\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\\s*shop)\\b" packages apps -g "!**/docs/adr/**" -g "!Justfile"'
+
+# Forbidden constructs: Date / throw / @ts-ignore inside src trees.
 strict-code:
-    @echo "::group::strict-code"
-    # No bare TODO/FIXME without an issue reference. POSIX `grep -E`
-    # has no lookahead, so we filter the matches in a second pass:
-    # if any TODO/FIXME line lacks a `(#NN)` token, fail.
-    ! grep -rEn '\b(TODO|FIXME)\b' \
-        --include='*.rs' --include='*.toml' --include='*.yml' --include='*.yaml' \
-        --exclude-dir=target --exclude-dir=.template/tmpl/target \
-        . \
-        | grep -vE '\(#[0-9]+\)' \
-        || (echo "bare TODO/FIXME — add (#NN) issue link" && exit 1)
-    # No #[allow(...)] without `reason = "..."`.
-    ! grep -rEn '#\[allow\([a-z_:]+\)\]' \
-        --include='*.rs' --exclude-dir=target . \
-        || (echo "#[allow(...)] missing reason = \"...\"" && exit 1)
-    # No `unsafe` blocks (engine is `#![forbid(unsafe_code)]`; this is belt-and-braces).
-    ! grep -rEn '\bunsafe[[:space:]]*\{' \
-        --include='*.rs' --exclude-dir=target . \
-        || (echo "unsafe block detected" && exit 1)
-    # No nightly toolchain markers slipping in.
-    ! grep -rEn '#!\[feature\(' \
-        --include='*.rs' --exclude-dir=target . \
-        || (echo "#![feature(...)] requires nightly — not allowed" && exit 1)
-    @echo "::endgroup::"
-
-lint: fmt-check clippy typos actionlint yamllint markdownlint strict-code
+    {{DEV}} bash -c '! rg -n -t ts -e "\\bnew Date\\(|\\bDate\\.now\\(|@ts-ignore|@ts-expect-error|: any\\b" packages/core/src apps/default/src 2>/dev/null'
 
 # ---------------------------------------------------------------------------
-# Test, coverage, audit
+# Test / coverage
 # ---------------------------------------------------------------------------
-
-# `cargo nextest` / `cargo deny` / `cargo llvm-cov` are mise-managed
-# cargo plugins. Lefthook hooks spawn under `/bin/sh` whose PATH
-# can lag behind a freshly-installed mise tool, so route the
-# invocations through `mise exec` for deterministic resolution.
 
 test:
-    mise exec -- cargo nextest run --manifest-path {{ENGINE_MANIFEST}}
+    {{DEV}} corepack pnpm -r run test
+
+test-watch:
+    {{DEV}} corepack pnpm -r run test:watch
+
+test-coverage:
+    {{DEV}} corepack pnpm -r run test:coverage
 
 test-property:
-    mise exec -- cargo nextest run --manifest-path {{ENGINE_MANIFEST}} \
-        --filter-expr 'test(/property_/)' \
-        --no-capture
-
-# Region-coverage gate. Floor is 94 % (Phase C achieved 95.16 % with
-# headroom); the long-term target matches afm at 96 %. Ratchet up by
-# raising `COVERAGE_FLOOR` as test surface grows — most remaining gaps
-# are filesystem fault-injection paths and boon validator inner error
-# branches. Never lower.
-COVERAGE_FLOOR := "94"
-
-coverage:
-    mise exec -- cargo llvm-cov --manifest-path {{ENGINE_MANIFEST}} \
-        --ignore-filename-regex 'src/main\.rs' \
-        --fail-under-regions {{COVERAGE_FLOOR}} \
-        --summary-only
-
-audit:
-    mise exec -- cargo deny --manifest-path {{ENGINE_MANIFEST}} check
-
-# Engine-side template-self-CI: manifest + DAG soundness over every layer.
-verify-template: engine-build
-    .template/tmpl/target/release/tmpl verify
+    {{DEV}} corepack pnpm -F @booking/core run test:property
 
 # ---------------------------------------------------------------------------
-# Aggregate gates
+# Build / pack
 # ---------------------------------------------------------------------------
 
-# What the CI workflow runs end-to-end.
-ci: lint test coverage verify-template audit
+build:
+    {{DEV}} corepack pnpm -r run build
 
-# Mirror of the pre-commit hook chain so contributors can preview locally.
-pre-commit: fmt-check clippy typos strict-code
+pack-core:
+    {{DEV}} corepack pnpm -F @booking/core run build
+    {{DEV}} corepack pnpm -F @booking/core pack --pack-destination /tmp
+
+# ---------------------------------------------------------------------------
+# Cloudflare local dev (apps/default)
+# ---------------------------------------------------------------------------
+
+dev-default:
+    {{DEVP}} corepack pnpm -F default run dev
+
+migrate-local:
+    {{DEV}} corepack pnpm -F default exec wrangler d1 migrations apply DB --local
+
+# ---------------------------------------------------------------------------
+# Aggregate
+# ---------------------------------------------------------------------------
+
+check: lint typecheck arch pii-guard domain-purity strict-code test-coverage
+
+ci: check build

@@ -9,3 +9,31 @@ updates:
     groups:
       actions-sha-bumps:
         patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    groups:
+      effect-stack:
+        patterns: ["effect", "@effect/*", "@js-temporal/*", "typeid-js", "ulidx"]
+      cloudflare-stack:
+        patterns: ["wrangler", "miniflare", "@cloudflare/*", "drizzle-orm", "drizzle-kit"]
+      lint-format:
+        patterns: ["@biomejs/*", "dependency-cruiser", "knip"]
+      test-stack:
+        patterns: ["vitest", "@vitest/*", "fast-check", "expect-type", "@stryker-mutator/*"]
+      types:
+        patterns: ["@types/*"]
+      typescript:
+        patterns: ["typescript"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5

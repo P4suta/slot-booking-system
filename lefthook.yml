@@ -1,5 +1,9 @@
 # lefthook (https://lefthook.dev/) git hooks.
 #
+# Heavy work (biome / tsc / vitest / dependency-cruiser) is delegated to
+# the dev container via `just <recipe>`; cheap host-local checks (typos,
+# actionlint, committed) run directly so commits stay fast.
+#
 # Install:   just hooks
 # Uninstall: just hooks-uninstall
 
@@ -14,15 +18,31 @@ pre-commit:
     actionlint:
       glob: ".github/workflows/*.{yml,yaml}"
       run: actionlint
-    yamllint:
-      glob: "**/*.{yml,yaml}"
-      run: yamllint
-    markdownlint:
-      glob: "**/*.md"
-      run: markdownlint-cli2 "**/*.md" "#target"
+    biome:
+      glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,json}"
+      run: just lint-biome
+    typecheck:
+      glob: "**/*.{ts,tsx,svelte}"
+      run: just typecheck
+    arch:
+      glob: "{packages,apps}/**/*.{ts,tsx,svelte}"
+      run: just arch
+    pii-guard:
+      glob: "**/*.{ts,tsx,svelte,sql,md}"
+      run: just pii-guard
+    domain-purity:
+      glob: "{packages,apps}/**/*.{ts,tsx,svelte,sql}"
+      run: just domain-purity
+
+commit-msg:
+  commands:
+    committed:
+      run: committed --commit-file {1}
 
 pre-push:
   parallel: true
   skip:
     - rebase
-  commands: {}
+  commands:
+    test:
+      run: just test

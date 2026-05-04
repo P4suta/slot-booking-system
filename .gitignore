@@ -16,5 +16,26 @@ Thumbs.db
 # Direnv
 .envrc.local
 
-# tmpl engine build artifacts
-.template/tmpl/target/
+# Node / pnpm
+node_modules/
+.pnpm-store/
+pnpm-debug.log*
+
+# Build output
+dist/
+build/
+.svelte-kit/
+.turbo/
+
+# Test / coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Cloudflare / wrangler
+.wrangler/
+.dev.vars
+
+# Drizzle local SQLite
+*.sqlite
+*.sqlite3

@@ -1,0 +1,11 @@
+# Don't rebuild the dev container when only generated artefacts change.
+node_modules/
+coverage/
+*.log
+.git/
+dist/
+build/
+.svelte-kit/
+.turbo/
+.wrangler/
+.pnpm-store/

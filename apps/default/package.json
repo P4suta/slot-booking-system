@@ -1,0 +1,25 @@
+{
+  "name": "default",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Industry-agnostic demo deployment of the booking-system core.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "test": "echo 'no tests in default app yet'",
+    "test:coverage": "echo 'no tests in default app yet'",
+    "migrate:local": "wrangler d1 migrations apply DB --local"
+  },
+  "dependencies": {
+    "@booking/core": "workspace:*",
+    "drizzle-orm": "^0.45.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260504.0",
+    "@types/node": "^25.6.0",
+    "drizzle-kit": "^0.31.0",
+    "miniflare": "^4.20260430.0",
+    "wrangler": "^4.87.0"
+  }
+}

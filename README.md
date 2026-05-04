@@ -1,6 +1,6 @@
 # slot-booking-system
 
-Slot booking system (early scaffold) — bootstrapped from P4suta/project-template
+TODO: one-sentence description.
 
 ## Status
 
