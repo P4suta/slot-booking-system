@@ -1,6 +1,20 @@
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidNameKanaError } from "../errors/Errors.js"
-import type { Brand } from "../types/Brand.js"
+import { summarizeParse } from "../errors/fromParseError.js"
+
+const NAME_KANA_PATTERN = /^[゠-ヿ぀-ゟ･-ﾟー]+(?: [゠-ヿ぀-ゟ･-ﾟー]+)*$/
+const MAX_LENGTH = 50
+
+/**
+ * Normalise raw input: NFKC fold (half-width → full-width), collapse any
+ * mix of ASCII / full-width whitespace into a single ASCII space, then
+ * trim. Idempotent: `normalizeNameKana(normalizeNameKana(x)) === normalizeNameKana(x)`.
+ */
+export const normalizeNameKana = (raw: string): string =>
+  raw
+    .normalize("NFKC")
+    .replace(/[\s　]+/g, " ")
+    .trim()
 
 /**
  * Customer-supplied full name in katakana (or hiragana). Trimmed,
@@ -13,26 +27,25 @@ import type { Brand } from "../types/Brand.js"
  *   - ASCII space and full-width ideographic space (` ` and `U+3000`),
  *     normalised to a single ASCII space between non-space tokens.
  *
+ * Encoded as a `Schema.transform` whose `decode` runs `normalizeNameKana`
+ * before the brand's refinement filters apply, and whose `encode` is
+ * identity (the branded output is already normalised).
+ *
  * The PII storage policy (ADR-0009) keeps this field at most 2 years.
  */
-export type NameKana = Brand<string, "NameKana">
+const NameKanaBrand = Schema.String.pipe(
+  Schema.filter((s) => s.length > 0 && s.length <= MAX_LENGTH && NAME_KANA_PATTERN.test(s)),
+  Schema.brand("NameKana"),
+)
 
-const NAME_KANA_PATTERN = /^[゠-ヿ぀-ゟ･-ﾟー]+(?: [゠-ヿ぀-ゟ･-ﾟー]+)*$/
+export const NameKanaSchema = Schema.transform(Schema.String, NameKanaBrand, {
+  strict: true,
+  decode: (raw) => normalizeNameKana(raw),
+  encode: (norm) => norm,
+})
+export type NameKana = Schema.Schema.Type<typeof NameKanaSchema>
 
-const MAX_LENGTH = 50
+const decode = Schema.decodeUnknownEither(NameKanaSchema)
 
-const fail = (reason: string) => Either.left(new InvalidNameKanaError({ reason }))
-
-export const normalizeNameKana = (raw: string): string =>
-  raw
-    .normalize("NFKC")
-    .replace(/[\s　]+/g, " ")
-    .trim()
-
-export const parseNameKana = (raw: string): Either.Either<NameKana, DomainError> => {
-  const normalized = normalizeNameKana(raw)
-  if (normalized.length === 0) return fail("empty")
-  if (normalized.length > MAX_LENGTH) return fail("too long")
-  if (!NAME_KANA_PATTERN.test(normalized)) return fail("contains non-kana characters")
-  return Either.right(normalized as NameKana)
-}
+export const parseNameKana = (raw: string): Either.Either<NameKana, DomainError> =>
+  Either.mapLeft(decode(raw), (e) => new InvalidNameKanaError({ reason: summarizeParse(e) }))

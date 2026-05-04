@@ -1,10 +1,18 @@
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import { isMinutes, parseMinutes } from "../../src/domain/value-objects/Duration.js"
-import { normalizeFreeText, parseFreeText } from "../../src/domain/value-objects/FreeText.js"
+import {
+  FreeTextSchema,
+  normalizeFreeText,
+  parseFreeText,
+} from "../../src/domain/value-objects/FreeText.js"
 import { isHoldingDays, parseHoldingDays } from "../../src/domain/value-objects/HoldingDays.js"
-import { normalizeNameKana, parseNameKana } from "../../src/domain/value-objects/NameKana.js"
+import {
+  NameKanaSchema,
+  normalizeNameKana,
+  parseNameKana,
+} from "../../src/domain/value-objects/NameKana.js"
 
 const isLeft = Either.isLeft
 const isRight = Either.isRight
@@ -50,6 +58,14 @@ describe("NameKana", () => {
     const long = "ア".repeat(51)
     expect(isLeft(parseNameKana(long))).toBe(true)
   })
+
+  it("encodes a branded value back to the (already-normalised) string", () => {
+    const r = parseNameKana("ヤマダ タロウ")
+    expect(isRight(r)).toBe(true)
+    if (isRight(r)) {
+      expect(Schema.encodeSync(NameKanaSchema)(r.right)).toBe("ヤマダ タロウ")
+    }
+  })
 })
 
 describe("FreeText", () => {
@@ -90,6 +106,14 @@ describe("FreeText", () => {
         return normalizeFreeText(once) === once
       }),
     )
+  })
+
+  it("encodes a branded value back to the (already-normalised) string", () => {
+    const r = parseFreeText("hello world")
+    expect(isRight(r)).toBe(true)
+    if (isRight(r)) {
+      expect(Schema.encodeSync(FreeTextSchema)(r.right)).toBe("hello world")
+    }
   })
 })
 

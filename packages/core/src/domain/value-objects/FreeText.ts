@@ -1,16 +1,6 @@
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidFreeTextError } from "../errors/Errors.js"
-import type { Brand } from "../types/Brand.js"
-
-/**
- * Optional customer-supplied note. Plain text. Maximum 500 NFC code
- * points after trimming. Persisted PII; subject to the same retention
- * window as `NameKana` and `PhoneLast4`.
- *
- * Control characters other than `\n` (U+000A) and `\t` (U+0009) are
- * stripped.
- */
-export type FreeText = Brand<string, "FreeText">
+import { summarizeParse } from "../errors/fromParseError.js"
 
 const MAX_LENGTH = 500
 
@@ -35,6 +25,10 @@ const stripControl = (s: string): string => {
   return out
 }
 
+/**
+ * Normalise raw input: NFC fold, strip C0/C1/DEL controls (keeping `\t`
+ * and `\n`), then trim. Idempotent.
+ */
 export const normalizeFreeText = (raw: string): string => stripControl(raw.normalize("NFC")).trim()
 
 /** Code-point count via `for…of`; surrogate pairs collapse into one. */
@@ -44,10 +38,27 @@ const codePointCount = (s: string): number => {
   return n
 }
 
-export const parseFreeText = (raw: string): Either.Either<FreeText, DomainError> => {
-  const normalized = normalizeFreeText(raw)
-  if (codePointCount(normalized) > MAX_LENGTH) {
-    return Either.left(new InvalidFreeTextError({ reason: `exceeds ${MAX_LENGTH} characters` }))
-  }
-  return Either.right(normalized as FreeText)
-}
+/**
+ * Optional customer-supplied note. Plain text. Maximum 500 NFC code
+ * points after trimming. Persisted PII; subject to the same retention
+ * window as `NameKana` and `PhoneLast4`.
+ *
+ * Control characters other than `\n` (U+000A) and `\t` (U+0009) are
+ * stripped during decode.
+ */
+const FreeTextBrand = Schema.String.pipe(
+  Schema.filter((s) => codePointCount(s) <= MAX_LENGTH),
+  Schema.brand("FreeText"),
+)
+
+export const FreeTextSchema = Schema.transform(Schema.String, FreeTextBrand, {
+  strict: true,
+  decode: (raw) => normalizeFreeText(raw),
+  encode: (norm) => norm,
+})
+export type FreeText = Schema.Schema.Type<typeof FreeTextSchema>
+
+const decode = Schema.decodeUnknownEither(FreeTextSchema)
+
+export const parseFreeText = (raw: string): Either.Either<FreeText, DomainError> =>
+  Either.mapLeft(decode(raw), (e) => new InvalidFreeTextError({ reason: summarizeParse(e) }))
