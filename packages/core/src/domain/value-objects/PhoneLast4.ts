@@ -1,19 +1,23 @@
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidPhoneLast4Error } from "../errors/Errors.js"
-import type { Brand } from "../types/Brand.js"
+import { summarizeParse } from "../errors/fromParseError.js"
 
 /**
  * Last four digits of a customer phone number — the **only** phone-number
  * surface this system stores. Combined with `BookingCode` it acts as a
  * weak authorisation factor for self-service cancel / reschedule.
  */
-export type PhoneLast4 = Brand<string, "PhoneLast4">
+export const PhoneLast4Schema = Schema.String.pipe(
+  Schema.pattern(/^\d{4}$/),
+  Schema.brand("PhoneLast4"),
+)
+export type PhoneLast4 = Schema.Schema.Type<typeof PhoneLast4Schema>
 
-const PHONE_LAST4_PATTERN = /^\d{4}$/
+const isPhoneLast4Schema = Schema.is(PhoneLast4Schema)
 
-export const isPhoneLast4 = (value: string): value is PhoneLast4 => PHONE_LAST4_PATTERN.test(value)
+export const isPhoneLast4 = (value: string): value is PhoneLast4 => isPhoneLast4Schema(value)
 
-export const parsePhoneLast4 = (value: string): Either.Either<PhoneLast4, DomainError> =>
-  isPhoneLast4(value)
-    ? Either.right(value)
-    : Either.left(new InvalidPhoneLast4Error({ reason: "must be exactly 4 ASCII digits" }))
+const decode = Schema.decodeUnknownEither(PhoneLast4Schema)
+
+export const parsePhoneLast4 = (value: unknown): Either.Either<PhoneLast4, DomainError> =>
+  Either.mapLeft(decode(value), (e) => new InvalidPhoneLast4Error({ reason: summarizeParse(e) }))
