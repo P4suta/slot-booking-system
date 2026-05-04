@@ -1,5 +1,5 @@
 import { Either } from "effect"
-import { type DomainError, InvalidNameKana } from "../errors/DomainError.js"
+import { type DomainError, InvalidNameKanaError } from "../errors/Errors.js"
 import type { Brand } from "../types/Brand.js"
 
 /**
@@ -21,6 +21,8 @@ const NAME_KANA_PATTERN = /^[゠-ヿ぀-ゟ･-ﾟー]+(?: [゠-ヿ぀-ゟ･-�
 
 const MAX_LENGTH = 50
 
+const fail = (reason: string) => Either.left(new InvalidNameKanaError({ reason }))
+
 export const normalizeNameKana = (raw: string): string =>
   raw
     .normalize("NFKC")
@@ -29,10 +31,8 @@ export const normalizeNameKana = (raw: string): string =>
 
 export const parseNameKana = (raw: string): Either.Either<NameKana, DomainError> => {
   const normalized = normalizeNameKana(raw)
-  if (normalized.length === 0) return Either.left(InvalidNameKana("empty"))
-  if (normalized.length > MAX_LENGTH) return Either.left(InvalidNameKana("too long"))
-  if (!NAME_KANA_PATTERN.test(normalized)) {
-    return Either.left(InvalidNameKana("contains non-kana characters"))
-  }
+  if (normalized.length === 0) return fail("empty")
+  if (normalized.length > MAX_LENGTH) return fail("too long")
+  if (!NAME_KANA_PATTERN.test(normalized)) return fail("contains non-kana characters")
   return Either.right(normalized as NameKana)
 }

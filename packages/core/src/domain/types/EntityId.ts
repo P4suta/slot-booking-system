@@ -1,6 +1,6 @@
 import { Either } from "effect"
 import { typeid } from "typeid-js"
-import { type DomainError, InvalidEntityId } from "../errors/DomainError.js"
+import { type DomainError, InvalidEntityIdError } from "../errors/Errors.js"
 import type { Brand } from "./Brand.js"
 
 /**
@@ -48,7 +48,7 @@ const parser =
   (s: string): Either.Either<Id, DomainError> =>
     matchesPrefix(s, prefix)
       ? Either.right(s as unknown as Id)
-      : Either.left(InvalidEntityId(`${prefix}_`, s))
+      : Either.left(new InvalidEntityIdError({ expectedPrefix: `${prefix}_`, received: s }))
 
 const generator =
   <Id extends string>(prefix: EntityPrefix) =>

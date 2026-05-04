@@ -1,49 +1,13 @@
-import { Temporal } from "@js-temporal/polyfill"
 import { Either } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
-import type { Booking, Confirmed, Held } from "../../src/domain/booking/Booking.js"
+import type { Booking, Confirmed } from "../../src/domain/booking/Booking.js"
 import type { Command } from "../../src/domain/booking/Command.js"
 import { apply } from "../../src/domain/booking/transitions.js"
-import {
-  type BookingEventId,
-  newBookingEventId,
-  newBookingId,
-  newProviderId,
-  newResourceId,
-  newServiceId,
-} from "../../src/domain/types/EntityId.js"
-import { encodeBookingCode } from "../../src/domain/value-objects/BookingCode.js"
-import { type FreeText, parseFreeText } from "../../src/domain/value-objects/FreeText.js"
-import { type NameKana, parseNameKana } from "../../src/domain/value-objects/NameKana.js"
-import { parsePhoneLast4 } from "../../src/domain/value-objects/PhoneLast4.js"
-import { makeTimeSlot } from "../../src/domain/value-objects/TimeSlot.js"
+import { type BookingEventId, newBookingEventId } from "../../src/domain/types/EntityId.js"
+import { at, baseHeld, slot } from "../_fixtures/index.js"
 
-const at = (iso: string): Temporal.Instant => Temporal.Instant.from(iso)
-const slot = (a: string, b: string) => Either.getOrThrow(makeTimeSlot(at(a), at(b)))
-const phone = (s: string) => Either.getOrThrow(parsePhoneLast4(s))
-const kana = (s: string): NameKana => Either.getOrThrow(parseNameKana(s))
-const text = (s: string): FreeText => Either.getOrThrow(parseFreeText(s))
-const code = (v: bigint) => Either.getOrThrow(encodeBookingCode(v))
-
-const id = newBookingId()
 const ev = (): BookingEventId => newBookingEventId()
-
-const baseHeld = (): Held => ({
-  id,
-  code: code(123_456n),
-  serviceId: newServiceId(),
-  providerId: newProviderId(),
-  resourceIds: [newResourceId()],
-  slot: slot("2026-05-10T01:00:00Z", "2026-05-10T02:00:00Z"),
-  source: "online",
-  nameKana: kana("ヤマダ タロウ"),
-  phoneLast4: phone("1234"),
-  freeText: text("note"),
-  state: "Held",
-  heldAt: at("2026-05-09T12:00:00Z"),
-  expiresAt: at("2026-05-09T12:05:00Z"),
-})
 
 const expectRight = <A, E>(e: Either.Either<A, E>): A => {
   if (Either.isLeft(e)) {
@@ -63,14 +27,15 @@ const expectLeftTag = <E extends { _tag: string }>(
 describe("apply (transitions)", () => {
   describe("Held + Confirm → Confirmed", () => {
     it("returns Confirmed with the same common fields and a Confirmed event", () => {
+      const initial = baseHeld()
       const cmd: Command = { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }
-      const r = expectRight(apply(baseHeld(), cmd, ev()))
+      const r = expectRight(apply(initial, cmd, ev()))
       expect(r.booking.state).toBe("Confirmed")
       if (r.booking.state === "Confirmed") {
         expect(r.booking.confirmedAt.equals(cmd.at)).toBe(true)
       }
       expect(r.event.type).toBe("Confirmed")
-      expect(r.event.bookingId).toBe(id)
+      expect(r.event.bookingId).toBe(initial.id)
     })
   })
 

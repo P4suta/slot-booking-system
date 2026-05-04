@@ -5,7 +5,13 @@
       "ignore": [".github/**", "docs/**", ".template/**"]
     },
     "packages/core": {
-      "entry": ["src/index.ts", "vitest.config.ts", "test/**/*.test.ts", "test/**/*.bench.ts"],
+      "entry": [
+        "src/index.ts",
+        "vitest.config.ts",
+        "test/**/*.test.ts",
+        "test/**/*.bench.ts",
+        "test/_fixtures/index.ts"
+      ],
       "project": ["src/**/*.ts", "test/**/*.ts"],
       "ignoreDependencies": ["ulidx"]
     },

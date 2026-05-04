@@ -1,5 +1,5 @@
 import { Either } from "effect"
-import { type DomainError, InvalidFreeText } from "../errors/DomainError.js"
+import { type DomainError, InvalidFreeTextError } from "../errors/Errors.js"
 import type { Brand } from "../types/Brand.js"
 
 /**
@@ -47,7 +47,7 @@ const codePointCount = (s: string): number => {
 export const parseFreeText = (raw: string): Either.Either<FreeText, DomainError> => {
   const normalized = normalizeFreeText(raw)
   if (codePointCount(normalized) > MAX_LENGTH) {
-    return Either.left(InvalidFreeText(`exceeds ${MAX_LENGTH} characters`))
+    return Either.left(new InvalidFreeTextError({ reason: `exceeds ${MAX_LENGTH} characters` }))
   }
   return Either.right(normalized as FreeText)
 }

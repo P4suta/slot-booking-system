@@ -1,9 +1,9 @@
 import { Either } from "effect"
 import { describe, expect, it } from "vitest"
 import {
-  type AnyError,
   BookingNotFoundError,
   codeOf,
+  type DomainError,
   InvalidBookingCodeError,
   InvalidPhoneLast4Error,
   InvalidStateTransitionError,
@@ -70,7 +70,7 @@ describe("withMeta", () => {
 
 describe("toLogPayload", () => {
   it("emits _tag, code, severity, and the error's data fields", () => {
-    const e: AnyError = new InvalidPhoneLast4Error({ reason: "must be 4 digits" })
+    const e: DomainError = new InvalidPhoneLast4Error({ reason: "must be 4 digits" })
     const p = toLogPayload(e)
     expect(p._tag).toBe("InvalidPhoneLast4")
     expect(p.code).toBe("E_VAL_PHONE_LAST4")
@@ -109,7 +109,7 @@ describe("toLogPayload", () => {
     // Errors don't carry PII fields by construction. This guards the
     // assertion at the type level: try to find any forbidden key in the
     // payload across every concrete error class.
-    const errors: AnyError[] = [
+    const errors: DomainError[] = [
       new InvalidPhoneLast4Error({ reason: "x" }),
       new InvalidBookingCodeError({ reason: "wrong-length" }),
       new BookingNotFoundError({}),

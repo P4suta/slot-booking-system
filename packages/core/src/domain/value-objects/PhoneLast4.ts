@@ -1,5 +1,5 @@
 import { Either } from "effect"
-import { type DomainError, InvalidPhoneLast4 } from "../errors/DomainError.js"
+import { type DomainError, InvalidPhoneLast4Error } from "../errors/Errors.js"
 import type { Brand } from "../types/Brand.js"
 
 /**
@@ -16,4 +16,4 @@ export const isPhoneLast4 = (value: string): value is PhoneLast4 => PHONE_LAST4_
 export const parsePhoneLast4 = (value: string): Either.Either<PhoneLast4, DomainError> =>
   isPhoneLast4(value)
     ? Either.right(value)
-    : Either.left(InvalidPhoneLast4("must be exactly 4 ASCII digits"))
+    : Either.left(new InvalidPhoneLast4Error({ reason: "must be exactly 4 ASCII digits" }))

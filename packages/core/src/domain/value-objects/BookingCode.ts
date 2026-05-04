@@ -1,5 +1,9 @@
 import { Either } from "effect"
-import { type DomainError, InvalidBookingCode } from "../errors/DomainError.js"
+import {
+  type BookingCodeReason,
+  type DomainError,
+  InvalidBookingCodeError,
+} from "../errors/Errors.js"
 import type { Brand } from "../types/Brand.js"
 
 /**
@@ -28,6 +32,8 @@ const CHECK_INDEX: ReadonlyMap<string, number> = new Map(
 
 /** Maximum representable body value, exclusive. */
 export const BOOKING_CODE_KEYSPACE = ALPHABET_SIZE ** BigInt(BODY_LENGTH)
+
+const fail = (reason: BookingCodeReason) => Either.left(new InvalidBookingCodeError({ reason }))
 
 /**
  * Strip presentational characters and fold Crockford confusables.
@@ -77,12 +83,9 @@ const checksumChar = (value: bigint): string => {
  * Used by the `IdGenerator` port; pure function, no randomness inside.
  */
 export const encodeBookingCode = (value: bigint): Either.Either<BookingCode, DomainError> => {
-  if (value < 0n || value >= BOOKING_CODE_KEYSPACE) {
-    return Either.left(InvalidBookingCode("invalid-character"))
-  }
+  if (value < 0n || value >= BOOKING_CODE_KEYSPACE) return fail("invalid-character")
   const body = encodeBody(value)
-  const code = `${body}${checksumChar(value)}` as BookingCode
-  return Either.right(code)
+  return Either.right(`${body}${checksumChar(value)}` as BookingCode)
 }
 
 /**
@@ -105,22 +108,13 @@ export const formatBookingCode = (code: string): string => `${code.slice(0, 4)}-
  */
 export const parseBookingCode = (raw: string): Either.Either<BookingCode, DomainError> => {
   const normalized = normalizeBookingCode(raw)
-  if (normalized.length !== TOTAL_LENGTH) {
-    return Either.left(InvalidBookingCode("wrong-length"))
-  }
+  if (normalized.length !== TOTAL_LENGTH) return fail("wrong-length")
   const body = normalized.slice(0, BODY_LENGTH)
   const check = normalized.slice(BODY_LENGTH)
   for (const c of body) {
-    if (!isBodyChar(c)) {
-      return Either.left(InvalidBookingCode("invalid-character"))
-    }
+    if (!isBodyChar(c)) return fail("invalid-character")
   }
-  if (!CHECK_INDEX.has(check)) {
-    return Either.left(InvalidBookingCode("invalid-character"))
-  }
-  const value = decodeBody(body)
-  if (checksumChar(value) !== check) {
-    return Either.left(InvalidBookingCode("checksum-mismatch"))
-  }
+  if (!CHECK_INDEX.has(check)) return fail("invalid-character")
+  if (checksumChar(decodeBody(body)) !== check) return fail("checksum-mismatch")
   return Either.right(normalized as BookingCode)
 }

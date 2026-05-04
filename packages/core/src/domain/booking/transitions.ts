@@ -1,11 +1,11 @@
 import { Either } from "effect"
 import {
-  AlreadyCancelled,
-  AlreadyCompleted,
-  AlreadyNoShow,
+  AlreadyCancelledError,
+  AlreadyCompletedError,
+  AlreadyNoShowError,
   type DomainError,
-  InvalidStateTransition,
-} from "../errors/DomainError.js"
+  InvalidStateTransitionError,
+} from "../errors/Errors.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
 import type { BookingEventId } from "../types/EntityId.js"
 import type { Booking, BookingCommon, Cancelled, Completed, Confirmed, NoShow } from "./Booking.js"
@@ -52,11 +52,11 @@ export const apply = (
     case "Confirmed":
       return applyToConfirmed(booking, command, newEventId)
     case "Cancelled":
-      return Either.left(AlreadyCancelled)
+      return Either.left(new AlreadyCancelledError({}))
     case "Completed":
-      return Either.left(AlreadyCompleted)
+      return Either.left(new AlreadyCompletedError({}))
     case "NoShow":
-      return Either.left(AlreadyNoShow)
+      return Either.left(new AlreadyNoShowError({}))
   }
   // Exhaustiveness over `Booking["state"]` is enforced at the type level —
   // every variant returns above, so reaching here is unrepresentable. No
@@ -122,7 +122,7 @@ const applyToHeld = (
     case "Reschedule":
     case "Complete":
     case "MarkNoShow":
-      return Either.left(InvalidStateTransition("Held", command.kind))
+      return Either.left(new InvalidStateTransitionError({ from: "Held", command: command.kind }))
   }
 }
 
@@ -200,6 +200,8 @@ const applyToConfirmed = (
     }
     case "Confirm":
     case "Expire":
-      return Either.left(InvalidStateTransition("Confirmed", command.kind))
+      return Either.left(
+        new InvalidStateTransitionError({ from: "Confirmed", command: command.kind }),
+      )
   }
 }

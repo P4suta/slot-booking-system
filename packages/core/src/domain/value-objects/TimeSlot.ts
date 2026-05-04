@@ -1,6 +1,6 @@
 import { Temporal } from "@js-temporal/polyfill"
 import { Either } from "effect"
-import { type DomainError, InvalidTimeSlot } from "../errors/DomainError.js"
+import { type DomainError, InvalidTimeSlotError } from "../errors/Errors.js"
 
 /**
  * `[start, end)` half-open interval over UTC instants. The minimum
@@ -19,7 +19,7 @@ export const makeTimeSlot = (
   end: Temporal.Instant,
 ): Either.Either<TimeSlot, DomainError> => {
   if (cmp(start, end) >= 0) {
-    return Either.left(InvalidTimeSlot("start must precede end"))
+    return Either.left(new InvalidTimeSlotError({ reason: "start must precede end" }))
   }
   return Either.right({ start, end })
 }

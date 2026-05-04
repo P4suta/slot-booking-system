@@ -1,6 +1,6 @@
 import { Temporal } from "@js-temporal/polyfill"
 import { Either } from "effect"
-import { type DomainError, InvalidOpenWindow } from "../errors/DomainError.js"
+import { type DomainError, InvalidOpenWindowError } from "../errors/Errors.js"
 
 /**
  * `[start, end)` half-open interval within a single civil day. Both
@@ -21,7 +21,9 @@ export const makeOpenWindow = (
   end: Temporal.PlainTime,
 ): Either.Either<OpenWindow, DomainError> => {
   if (cmp(start, end) >= 0) {
-    return Either.left(InvalidOpenWindow("start must precede end (same-day, no wrap)"))
+    return Either.left(
+      new InvalidOpenWindowError({ reason: "start must precede end (same-day, no wrap)" }),
+    )
   }
   return Either.right({ start, end })
 }

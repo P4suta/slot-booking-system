@@ -1,146 +1,39 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import type { Booking, Confirmed } from "../../src/domain/booking/Booking.js"
-import { makeBusinessHours } from "../../src/domain/entities/BusinessHours.js"
 import type { Closure } from "../../src/domain/entities/Closure.js"
-import { makeOpenWindow } from "../../src/domain/entities/OpenWindow.js"
-import type { Provider } from "../../src/domain/entities/Provider.js"
-import type { Resource } from "../../src/domain/entities/Resource.js"
 import type { Service } from "../../src/domain/entities/Service.js"
-import { parseWeekday, type Weekday } from "../../src/domain/entities/Weekday.js"
 import {
   type AvailableSlot,
   computeAvailableSlots,
-  type SlotCalcInput,
 } from "../../src/domain/slot/computeAvailableSlots.js"
 import {
-  type BusinessHoursId,
   type ClosureId,
-  newBookingId,
   newServiceId,
   type ProviderAbsenceId,
   type ProviderId,
-  type ResourceId,
   type ServiceId,
 } from "../../src/domain/types/EntityId.js"
-import { encodeBookingCode } from "../../src/domain/value-objects/BookingCode.js"
-import { parseBusinessTimeZone } from "../../src/domain/value-objects/BusinessTimeZone.js"
 import { minutesUnchecked } from "../../src/domain/value-objects/Duration.js"
-import { parseFreeText } from "../../src/domain/value-objects/FreeText.js"
-import { parseHoldingDays } from "../../src/domain/value-objects/HoldingDays.js"
-import { parseNameKana } from "../../src/domain/value-objects/NameKana.js"
-import { parsePhoneLast4 } from "../../src/domain/value-objects/PhoneLast4.js"
-import { parseResourceType } from "../../src/domain/value-objects/ResourceType.js"
-import { parseSkill } from "../../src/domain/value-objects/Skill.js"
-import { makeTimeSlot, type TimeSlot } from "../../src/domain/value-objects/TimeSlot.js"
-
-const tz = Either.getOrThrow(parseBusinessTimeZone("Asia/Tokyo"))
-const skillGen = Either.getOrThrow(parseSkill("general"))
-const typeWorkspace = Either.getOrThrow(parseResourceType("workspace"))
-const wd = (n: number): Weekday => Either.getOrThrow(parseWeekday(n))
-const t = (h: number, m = 0) => Temporal.PlainTime.from({ hour: h, minute: m })
-const win = (a: number, b: number) => Either.getOrThrow(makeOpenWindow(t(a), t(b)))
-const date = (s: string) => Temporal.PlainDate.from(s)
-
-const SERVICE_ID = "serv_default" as ServiceId
-const PROVIDER_ID_A = "prov_aaa" as ProviderId
-const PROVIDER_ID_B = "prov_bbb" as ProviderId
-const RESOURCE_ID_1 = "rsrc_111" as ResourceId
-const RESOURCE_ID_2 = "rsrc_222" as ResourceId
-
-const baseService: Service = {
-  id: SERVICE_ID,
-  name: "Test Service",
-  description: "",
-  durationMinutes: minutesUnchecked(60),
-  bufferBeforeMinutes: minutesUnchecked(0),
-  bufferAfterMinutes: minutesUnchecked(15),
-  holdingDays: Either.getOrThrow(parseHoldingDays(0)),
-  requiredSkills: new Set([skillGen]),
-  requiredResourceTypes: new Set([typeWorkspace]),
-  enabled: true,
-}
-
-const providerA: Provider = {
-  id: PROVIDER_ID_A,
-  name: "A",
-  skills: new Set([skillGen]),
-  enabled: true,
-}
-const providerB: Provider = {
-  id: PROVIDER_ID_B,
-  name: "B",
-  skills: new Set([skillGen]),
-  enabled: true,
-}
-
-const resource1: Resource = {
-  id: RESOURCE_ID_1,
-  name: "ws-1",
-  type: typeWorkspace,
-  enabled: true,
-}
-const resource2: Resource = {
-  id: RESOURCE_ID_2,
-  name: "ws-2",
-  type: typeWorkspace,
-  enabled: true,
-}
-
-const bhAllWeekdays = new Map([
-  [wd(1), makeBusinessHours("bhrs_mon" as BusinessHoursId, wd(1), [win(10, 18)])],
-  [wd(2), makeBusinessHours("bhrs_tue" as BusinessHoursId, wd(2), [win(10, 18)])],
-  [wd(3), makeBusinessHours("bhrs_wed" as BusinessHoursId, wd(3), [win(10, 18)])],
-  [wd(4), makeBusinessHours("bhrs_thu" as BusinessHoursId, wd(4), [win(10, 18)])],
-  [wd(5), makeBusinessHours("bhrs_fri" as BusinessHoursId, wd(5), [win(10, 18)])],
-  [wd(6), makeBusinessHours("bhrs_sat" as BusinessHoursId, wd(6), [win(10, 18)])],
-  [wd(7), makeBusinessHours("bhrs_sun" as BusinessHoursId, wd(7), [win(10, 18)])],
-])
-
-const baseInput = (overrides: Partial<SlotCalcInput> = {}): SlotCalcInput => {
-  const targetDate = date("2026-05-11") // Monday
-  // "now" is well before the day so no past-cutoff
-  const now = Temporal.Instant.from("2026-05-10T00:00:00Z")
-  return {
-    service: baseService,
-    date: targetDate,
-    timeZone: tz,
-    businessHoursByWeekday: bhAllWeekdays,
-    closures: [],
-    providers: [providerA, providerB],
-    resources: [resource1, resource2],
-    providerAbsences: [],
-    servicesById: new Map([[SERVICE_ID, baseService]]),
-    existingBookings: [],
-    now,
-    slotGranularityMinutes: 30,
-    ...overrides,
-  }
-}
-
-const slot = (a: string, b: string) =>
-  Either.getOrThrow(makeTimeSlot(Temporal.Instant.from(a), Temporal.Instant.from(b)))
-
-const confirmedBooking = (params: {
-  providerId: ProviderId
-  resourceIds: readonly ResourceId[]
-  slot: TimeSlot
-}): Confirmed => ({
-  id: newBookingId(),
-  code: Either.getOrThrow(encodeBookingCode(0n)),
-  serviceId: SERVICE_ID,
-  providerId: params.providerId,
-  resourceIds: params.resourceIds,
-  slot: params.slot,
-  source: "online",
-  nameKana: Either.getOrThrow(parseNameKana("ヤマダ タロウ")),
-  phoneLast4: Either.getOrThrow(parsePhoneLast4("1234")),
-  freeText: Either.getOrThrow(parseFreeText("")),
-  state: "Confirmed",
-  confirmedAt: Temporal.Instant.from("2026-05-09T12:00:00Z"),
-})
+import {
+  baseInput,
+  baseService,
+  bhAllWeekdays,
+  confirmedBooking,
+  date,
+  holdingDays,
+  PROVIDER_ID_A,
+  PROVIDER_ID_B,
+  providerA,
+  RESOURCE_ID_1,
+  RESOURCE_ID_2,
+  resourceType,
+  SERVICE_ID,
+  skill,
+  slot,
+  weekday,
+} from "../_fixtures/index.js"
 
 describe("computeAvailableSlots", () => {
   it("returns slots only within business hours", () => {
@@ -165,9 +58,9 @@ describe("computeAvailableSlots", () => {
   })
 
   it("returns empty when business hours are missing for the weekday", () => {
-    const monBh = bhAllWeekdays.get(wd(1))
+    const monBh = bhAllWeekdays.get(weekday(1))
     if (!monBh) throw new Error("unreachable")
-    const onlyMon = new Map([[wd(1), monBh]])
+    const onlyMon = new Map([[weekday(1), monBh]])
     const sunday = date("2026-05-10") // Sunday
     expect(
       computeAvailableSlots(baseInput({ businessHoursByWeekday: onlyMon, date: sunday })),
@@ -246,7 +139,7 @@ describe("computeAvailableSlots", () => {
   })
 
   it("respects required-resource-type — empty if no matching type", () => {
-    const otherType = Either.getOrThrow(parseResourceType("storage"))
+    const otherType = resourceType("storage")
     const out = computeAvailableSlots(
       baseInput({
         service: { ...baseService, requiredResourceTypes: new Set([otherType]) },
@@ -259,7 +152,7 @@ describe("computeAvailableSlots", () => {
   })
 
   it("provider's required skill filters out non-matching providers", () => {
-    const electric = Either.getOrThrow(parseSkill("electric_assist"))
+    const electric = skill("electric_assist")
     const electricService: Service = {
       ...baseService,
       requiredSkills: new Set([electric]),
@@ -383,7 +276,7 @@ describe("computeAvailableSlots", () => {
   describe("multi-day holding period", () => {
     it("blocks the resource on every day within [bookingDate, bookingDate + holdingDays]", () => {
       // Service with holdingDays = 2 — the rack stays held through D+2.
-      const overhaul = Either.getOrThrow(parseHoldingDays(2))
+      const overhaul = holdingDays(2)
       const overhaulSvc: Service = { ...baseService, holdingDays: overhaul }
       const overhaulId = "serv_overhaul" as ServiceId
       // Existing booking on 2026-05-09 (Sat) holds rsrc_111 through 2026-05-11.
@@ -413,7 +306,7 @@ describe("computeAvailableSlots", () => {
     })
 
     it("releases the resource the day after the holding period ends", () => {
-      const oneDay = Either.getOrThrow(parseHoldingDays(1))
+      const oneDay = holdingDays(1)
       const oneDaySvc: Service = { ...baseService, holdingDays: oneDay }
       const overhaulId = "serv_oneday" as ServiceId
       // Existing booking on 2026-05-09 with holdingDays=1 holds through 2026-05-10.

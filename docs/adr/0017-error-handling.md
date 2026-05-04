@@ -77,12 +77,26 @@ reason strings; the `pii-guard` CI job rejects any source that adds
 field names like `nameKana` / `phoneLast4` / `freeText` / `email` /
 `address` / `birthday` / `gender`.
 
-### Backward compatibility
+### Construction
 
-Existing flat-shape constructors (`InvalidPhoneLast4(reason)`,
-`BookingNotFound`, …) remain as smart-constructor functions; they now
-return class instances instead of plain objects. Callers using `_tag`
-narrowing continue to work without modification.
+Every error is constructed by `new XxxError({…})`. The class itself is
+the "smart constructor": payload typing is enforced at the call site.
+There is no separate factory function layer — call sites read
+
+```ts
+return Either.left(new InvalidBookingCodeError({ reason: "wrong-length" }))
+```
+
+…which keeps the error type, payload shape, and class-instance
+identity in one place. `_tag`-based narrowing and `instanceof` both
+work.
+
+### Top-level alias
+
+`errors/Errors.ts` exports `DomainError = ValidationError | DomainRuleError`
+as the canonical union; `ValidationError` and `DomainRuleError` are
+the two layered subsets so callers can constrain return types
+narrowly when appropriate.
 
 ## Consequences
 

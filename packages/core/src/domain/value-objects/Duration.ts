@@ -1,5 +1,5 @@
 import { Either } from "effect"
-import { type DomainError, InvalidDuration } from "../errors/DomainError.js"
+import { type DomainError, InvalidDurationError } from "../errors/Errors.js"
 import type { Brand } from "../types/Brand.js"
 
 /**
@@ -17,7 +17,7 @@ export const isMinutes = (n: number): n is Minutes =>
 export const parseMinutes = (n: number): Either.Either<Minutes, DomainError> =>
   isMinutes(n)
     ? Either.right(n)
-    : Either.left(InvalidDuration(`must be an integer in [0, ${MAX_MINUTES}]`))
+    : Either.left(new InvalidDurationError({ reason: `must be an integer in [0, ${MAX_MINUTES}]` }))
 
 /** Construction without validation, for callers that already produced a clamped integer. */
 export const minutesUnchecked = (n: number): Minutes => n as Minutes

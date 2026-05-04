@@ -32,8 +32,11 @@ export class InvalidNameKanaError extends Data.TaggedError("InvalidNameKana")<{
   readonly meta?: ErrorMeta
 }> {}
 
+/** Why a booking code failed to parse. */
+export type BookingCodeReason = "wrong-length" | "invalid-character" | "checksum-mismatch"
+
 export class InvalidBookingCodeError extends Data.TaggedError("InvalidBookingCode")<{
-  readonly reason: "wrong-length" | "invalid-character" | "checksum-mismatch"
+  readonly reason: BookingCodeReason
   readonly meta?: ErrorMeta
 }> {}
 
@@ -187,19 +190,23 @@ export type DomainRuleError =
   | ResourceUnavailableError
   | InvalidStateTransitionError
 
-export type AnyError = ValidationError | DomainRuleError
+/**
+ * Top-level union of every error the domain emits. Consumers can
+ * pattern-match on `_tag` or use `instanceof` for narrowing.
+ */
+export type DomainError = ValidationError | DomainRuleError
 
 /* -------------------------------------------------------------------------- */
 /* Helpers.                                                                    */
 /* -------------------------------------------------------------------------- */
 
-const tagOf = (e: AnyError): ErrorTag => e._tag as ErrorTag
+const tagOf = (e: DomainError): ErrorTag => e._tag as ErrorTag
 
-export const codeOf = (e: AnyError): string => errorCode(tagOf(e))
-export const severityOf = (e: AnyError): ErrorSeverity => errorSeverity(tagOf(e))
+export const codeOf = (e: DomainError): string => errorCode(tagOf(e))
+export const severityOf = (e: DomainError): ErrorSeverity => errorSeverity(tagOf(e))
 
 /** Attach metadata to an error without mutating the original. */
-export const withMeta = <E extends AnyError>(e: E, meta: ErrorMeta): E => {
+export const withMeta = <E extends DomainError>(e: E, meta: ErrorMeta): E => {
   const next = Object.create(Object.getPrototypeOf(e)) as E
   Object.assign(next, e, { meta: { ...e.meta, ...meta } })
   return next
@@ -237,7 +244,7 @@ const causeOf = (raw: unknown): LogPayload["cause"] => {
 const isStructuredErrorMeta = (raw: unknown): raw is ErrorMeta =>
   typeof raw === "object" && raw !== null
 
-const dataOf = (e: AnyError): Readonly<Record<string, unknown>> => {
+const dataOf = (e: DomainError): Readonly<Record<string, unknown>> => {
   // `_tag`, `meta` are handled separately. Everything else is the error's
   // domain payload — the constructor args.
   const out: Record<string, unknown> = {}
@@ -249,7 +256,7 @@ const dataOf = (e: AnyError): Readonly<Record<string, unknown>> => {
   return out
 }
 
-export const toLogPayload = (e: AnyError): LogPayload => {
+export const toLogPayload = (e: DomainError): LogPayload => {
   const meta = isStructuredErrorMeta(e.meta) ? e.meta : undefined
   const payload: Mutable<LogPayload> = {
     _tag: e._tag,

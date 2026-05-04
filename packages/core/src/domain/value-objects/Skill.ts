@@ -1,5 +1,5 @@
 import { Either } from "effect"
-import { type DomainError, InvalidSkill } from "../errors/DomainError.js"
+import { type DomainError, InvalidSkillError } from "../errors/Errors.js"
 import type { Brand } from "../types/Brand.js"
 
 /**
@@ -14,4 +14,4 @@ const SKILL_PATTERN = /^[a-z][a-z0-9_]{0,39}$/
 export const parseSkill = (raw: string): Either.Either<Skill, DomainError> =>
   SKILL_PATTERN.test(raw)
     ? Either.right(raw as Skill)
-    : Either.left(InvalidSkill(`skill must match ${SKILL_PATTERN}`))
+    : Either.left(new InvalidSkillError({ reason: `skill must match ${SKILL_PATTERN}` }))

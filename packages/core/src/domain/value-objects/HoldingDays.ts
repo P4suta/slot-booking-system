@@ -1,5 +1,5 @@
 import { Either } from "effect"
-import { type DomainError, InvalidHoldingDays } from "../errors/DomainError.js"
+import { type DomainError, InvalidHoldingDaysError } from "../errors/Errors.js"
 import type { Brand } from "../types/Brand.js"
 
 /**
@@ -17,4 +17,4 @@ export const isHoldingDays = (n: number): n is HoldingDays =>
 export const parseHoldingDays = (n: number): Either.Either<HoldingDays, DomainError> =>
   isHoldingDays(n)
     ? Either.right(n)
-    : Either.left(InvalidHoldingDays(`must be an integer in [0, ${MAX_DAYS}]`))
+    : Either.left(new InvalidHoldingDaysError({ reason: `must be an integer in [0, ${MAX_DAYS}]` }))

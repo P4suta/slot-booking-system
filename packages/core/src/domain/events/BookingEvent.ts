@@ -11,6 +11,16 @@ import type { BookingCode } from "../value-objects/BookingCode.js"
 import type { TimeSlot } from "../value-objects/TimeSlot.js"
 
 /**
+ * Fields shared by every event emitted on a Booking. The discriminator
+ * `type` plus event-specific fields are added per variant.
+ */
+export type BookingEventBase = {
+  readonly id: BookingEventId
+  readonly bookingId: BookingId
+  readonly at: Temporal.Instant
+}
+
+/**
  * Append-only event emitted on every successful state transition.
  * Distinct events for distinct lifecycle moments (ADR-0013).
  *
@@ -19,51 +29,29 @@ import type { TimeSlot } from "../value-objects/TimeSlot.js"
  * trail (ADR-0009) and must outlive PII purge (5y vs 2y).
  */
 export type BookingEvent =
-  | {
-      readonly id: BookingEventId
+  | (BookingEventBase & {
       readonly type: "Held"
-      readonly bookingId: BookingId
       readonly bookingCode: BookingCode
       readonly serviceId: ServiceId
       readonly providerId: ProviderId
       readonly resourceIds: readonly ResourceId[]
       readonly slot: TimeSlot
-      readonly at: Temporal.Instant
-    }
-  | {
-      readonly id: BookingEventId
-      readonly type: "Confirmed"
-      readonly bookingId: BookingId
-      readonly at: Temporal.Instant
-    }
-  | {
-      readonly id: BookingEventId
+    })
+  | (BookingEventBase & { readonly type: "Confirmed" })
+  | (BookingEventBase & {
       readonly type: "Cancelled"
-      readonly bookingId: BookingId
-      readonly at: Temporal.Instant
       readonly reason: string
       readonly by: Actor
-    }
-  | {
-      readonly id: BookingEventId
+    })
+  | (BookingEventBase & {
       readonly type: "Rescheduled"
-      readonly bookingId: BookingId
       readonly from: TimeSlot
       readonly to: TimeSlot
-      readonly at: Temporal.Instant
-    }
-  | {
-      readonly id: BookingEventId
-      readonly type: "Completed"
-      readonly bookingId: BookingId
-      readonly at: Temporal.Instant
-    }
-  | {
-      readonly id: BookingEventId
+    })
+  | (BookingEventBase & { readonly type: "Completed" })
+  | (BookingEventBase & {
       readonly type: "NoShow"
-      readonly bookingId: BookingId
-      readonly at: Temporal.Instant
       readonly by: Actor
-    }
+    })
 
 export type BookingEventType = BookingEvent["type"]
