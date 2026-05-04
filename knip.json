@@ -12,8 +12,7 @@
         "test/**/*.bench.ts",
         "test/_fixtures/index.ts"
       ],
-      "project": ["src/**/*.ts", "test/**/*.ts"],
-      "ignoreDependencies": ["ulidx"]
+      "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/default": {
       "entry": ["src/worker.ts", "drizzle.config.ts"],
