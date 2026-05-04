@@ -15,6 +15,11 @@ export type DomainError =
   | { readonly _tag: "InvalidHoldingDays"; readonly reason: string }
   | { readonly _tag: "InvalidTimeSlot"; readonly reason: string }
   | { readonly _tag: "InvalidBitmap"; readonly reason: string }
+  | { readonly _tag: "InvalidSkill"; readonly reason: string }
+  | { readonly _tag: "InvalidResourceType"; readonly reason: string }
+  | { readonly _tag: "InvalidWeekday"; readonly reason: string }
+  | { readonly _tag: "InvalidOpenWindow"; readonly reason: string }
+  | { readonly _tag: "InvalidAbsence"; readonly reason: string }
   | { readonly _tag: "BookingNotFound" }
   | { readonly _tag: "PhoneMismatch" }
   | { readonly _tag: "AlreadyCancelled" }
@@ -67,6 +72,31 @@ export const InvalidTimeSlot = (reason: string): DomainError => ({
 
 export const InvalidBitmap = (reason: string): DomainError => ({
   _tag: "InvalidBitmap",
+  reason,
+})
+
+export const InvalidSkill = (reason: string): DomainError => ({
+  _tag: "InvalidSkill",
+  reason,
+})
+
+export const InvalidResourceType = (reason: string): DomainError => ({
+  _tag: "InvalidResourceType",
+  reason,
+})
+
+export const InvalidWeekday = (reason: string): DomainError => ({
+  _tag: "InvalidWeekday",
+  reason,
+})
+
+export const InvalidOpenWindow = (reason: string): DomainError => ({
+  _tag: "InvalidOpenWindow",
+  reason,
+})
+
+export const InvalidAbsence = (reason: string): DomainError => ({
+  _tag: "InvalidAbsence",
   reason,
 })
 
