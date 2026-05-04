@@ -1,8 +1,10 @@
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import {
   BOOKING_CODE_KEYSPACE,
+  BookingCodeFromUserInputSchema,
+  BookingCodeSchema,
   encodeBookingCode,
   formatBookingCode,
   normalizeBookingCode,
@@ -126,6 +128,35 @@ describe("BookingCode", () => {
       // we generate is in the body alphabet).
       const acceptRate = accepted / total
       expect(acceptRate).toBeLessThan(0.1)
+    })
+
+    it("BookingCodeSchema encodes a branded code back to the original bigint", () => {
+      const cases = [0n, 1n, 12345n, BOOKING_CODE_KEYSPACE - 1n]
+      for (const v of cases) {
+        const code = expectRight(encodeBookingCode(v))
+        const recovered = Schema.encodeSync(BookingCodeSchema)(code)
+        expect(recovered).toBe(v)
+      }
+    })
+
+    it("BookingCodeFromUserInputSchema encodes a branded code as the normalised string", () => {
+      const code = expectRight(parseBookingCode("0000000"))
+      const recovered = Schema.encodeSync(BookingCodeFromUserInputSchema)(code)
+      expect(recovered).toBe("0000000")
+    })
+
+    it("classifies an unexpected ParseError leaf as invalid-character", () => {
+      // Bypass the typed `parseBookingCode(raw: string)` contract to force a
+      // non-string into the user-input codec. The Schema.String layer fails
+      // first, producing a leaf message that is not one of our three reason
+      // tags — exercise the defensive fallback in classifyBookingCodeReason.
+      const r = parseBookingCode(123 as unknown as string)
+      expect(Either.isLeft(r)).toBe(true)
+      if (Either.isLeft(r)) {
+        const err = r.left
+        expect(err._tag).toBe("InvalidBookingCode")
+        if (err._tag === "InvalidBookingCode") expect(err.reason).toBe("invalid-character")
+      }
     })
 
     it("property: corrupting any single body char triggers checksum-mismatch (or invalid-character)", () => {
