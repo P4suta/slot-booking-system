@@ -24,6 +24,7 @@ back.
 | [0015](./adr/0015-docker-only-development.md)       | Dev, test, and CI run inside the Docker dev container        | accepted |
 | [0016](./adr/0016-always-latest-releases.md)        | Dependencies and tools track the latest release              | accepted |
 | [0017](./adr/0017-error-handling.md)                | Errors as Data.TaggedError with codes, causes, and meta      | accepted |
+| [0018](./adr/0018-functional-core-imperative-shell.md) | Functional Core / Imperative Shell — layer purity contract | accepted |
 
 ## Authoring a new ADR
 
