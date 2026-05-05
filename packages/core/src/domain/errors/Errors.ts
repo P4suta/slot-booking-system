@@ -246,6 +246,23 @@ export class InvalidStateTransitionError extends Data.TaggedError("InvalidStateT
   static readonly severity: ErrorSeverity = "domain"
 }
 
+/**
+ * The bearer's capability does not satisfy the command's requirements
+ * — typically a `StaffCapability` whose `scopes` do not include the
+ * scope the command needs (e.g. issuing `Complete` without the
+ * `"complete"` scope). The `_tag` enum at the schema level filters out
+ * the obvious cases (a Customer cannot issue `Complete`); this error
+ * covers the residual scope-membership check inside `apply`.
+ */
+export class InsufficientCapabilityError extends Data.TaggedError("InsufficientCapability")<{
+  readonly required: string
+  readonly capability: string
+  readonly meta?: ErrorMeta
+}> {
+  static readonly code = "E_DOM_INSUFFICIENT_CAPABILITY"
+  static readonly severity: ErrorSeverity = "domain"
+}
+
 /* -------------------------------------------------------------------------- */
 /* Infrastructure errors — storage / concurrency failures surfaced by ports.   */
 /* -------------------------------------------------------------------------- */
@@ -326,6 +343,7 @@ export type DomainRuleError =
   | ProviderUnavailableError
   | ResourceUnavailableError
   | InvalidStateTransitionError
+  | InsufficientCapabilityError
 
 export type InfrastructureError = AggregateNotFoundError | ConcurrencyError | StorageError
 

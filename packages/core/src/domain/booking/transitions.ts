@@ -1,10 +1,12 @@
 import type { Temporal } from "@js-temporal/polyfill"
 import { Either, Match } from "effect"
+import { type Capability, hasScope, type StaffScope, subjectOf } from "../auth/Capability.js"
 import {
   AlreadyCancelledError,
   AlreadyCompletedError,
   AlreadyNoShowError,
   type DomainError,
+  InsufficientCapabilityError,
   InvalidStateTransitionError,
 } from "../errors/Errors.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
@@ -145,6 +147,23 @@ const invalid = (
 ): Either.Either<ApplyResult, DomainError> =>
   Either.left(new InvalidStateTransitionError({ from, command: kind }))
 
+/**
+ * Scope-membership check for staff-issued commands. Customer and
+ * System capabilities pass through (their schema-level filter at the
+ * Command boundary already restricted the variants they may issue).
+ * Returns `Either.left(InsufficientCapability)` only when a Staff
+ * capability lacks the required scope.
+ */
+const requireScope = (
+  cap: Capability,
+  scope: StaffScope,
+): Either.Either<void, InsufficientCapabilityError> => {
+  if (cap._tag !== "StaffCapability") return Either.right(undefined)
+  return hasScope(cap, scope)
+    ? Either.right(undefined)
+    : Either.left(new InsufficientCapabilityError({ required: scope, capability: cap._tag }))
+}
+
 /* -------------------------------------------------------------------------- */
 /* Per-state dispatch via Match.type / Match.discriminator                     */
 /* -------------------------------------------------------------------------- */
@@ -153,10 +172,12 @@ const dispatchHeld = (held: Held, eventId: BookingEventId) =>
   Match.type<Command>().pipe(
     Match.discriminator("kind")("Confirm", (cmd) => okConfirm(held, cmd.at, eventId)),
     Match.discriminator("kind")("Cancel", (cmd) =>
-      okCancel(held, cmd.at, cmd.reason, cmd.by, eventId),
+      Either.flatMap(requireScope(cmd.capability, "cancel"), () =>
+        okCancel(held, cmd.at, cmd.reason, subjectOf(cmd.capability), eventId),
+      ),
     ),
     Match.discriminator("kind")("Expire", (cmd) =>
-      okCancel(held, cmd.at, "hold expired", "system", eventId),
+      okCancel(held, cmd.at, "hold expired", subjectOf(cmd.capability), eventId),
     ),
     Match.discriminator("kind")("Reschedule", () => invalid("Held", "Reschedule")),
     Match.discriminator("kind")("Complete", () => invalid("Held", "Complete")),
@@ -167,14 +188,24 @@ const dispatchHeld = (held: Held, eventId: BookingEventId) =>
 const dispatchConfirmed = (confirmed: Confirmed, eventId: BookingEventId) =>
   Match.type<Command>().pipe(
     Match.discriminator("kind")("Cancel", (cmd) =>
-      okCancel(confirmed, cmd.at, cmd.reason, cmd.by, eventId),
+      Either.flatMap(requireScope(cmd.capability, "cancel"), () =>
+        okCancel(confirmed, cmd.at, cmd.reason, subjectOf(cmd.capability), eventId),
+      ),
     ),
     Match.discriminator("kind")("Reschedule", (cmd) =>
-      okReschedule(confirmed, cmd.at, cmd.newSlot, eventId),
+      Either.flatMap(requireScope(cmd.capability, "reschedule"), () =>
+        okReschedule(confirmed, cmd.at, cmd.newSlot, eventId),
+      ),
     ),
-    Match.discriminator("kind")("Complete", (cmd) => okComplete(confirmed, cmd.at, eventId)),
+    Match.discriminator("kind")("Complete", (cmd) =>
+      Either.flatMap(requireScope(cmd.capability, "complete"), () =>
+        okComplete(confirmed, cmd.at, eventId),
+      ),
+    ),
     Match.discriminator("kind")("MarkNoShow", (cmd) =>
-      okNoShow(confirmed, cmd.at, cmd.by, eventId),
+      Either.flatMap(requireScope(cmd.capability, "noshow"), () =>
+        okNoShow(confirmed, cmd.at, subjectOf(cmd.capability), eventId),
+      ),
     ),
     Match.discriminator("kind")("Confirm", () => invalid("Confirmed", "Confirm")),
     Match.discriminator("kind")("Expire", () => invalid("Confirmed", "Expire")),
@@ -193,6 +224,15 @@ const dispatchConfirmed = (confirmed: Confirmed, eventId: BookingEventId) =>
  *
  * Exhaustiveness is enforced at compile time by `Match.exhaustive` on both
  * the outer (state) and inner (command kind) dispatchers.
+ *
+ * Capability discipline (Phase 0.7-β1): every state-changing command
+ * carries a `capability` field. The Command schema enforces who may
+ * issue what at the boundary (Customer cannot issue `Complete`, etc.);
+ * `requireScope` does the residual scope-membership check inside the
+ * Staff arm. The actor literal recorded in `Cancelled.cancelledBy` /
+ * `NoShow.markedBy` / `Cancelled` events is derived via
+ * `subjectOf(capability)` so the audit field has a single source of
+ * truth.
  *
  * `newEventId` is injected so callers can run with a deterministic
  * `IdGenerator` port in tests.

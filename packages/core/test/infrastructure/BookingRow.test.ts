@@ -4,6 +4,7 @@ import { apply } from "../../src/domain/booking/transitions.js"
 import { newBookingEventId } from "../../src/domain/types/EntityId.js"
 import { BookingFromRow } from "../../src/infrastructure/schema/BookingRow.js"
 import { baseHeld } from "../_fixtures/bookings.js"
+import { customerCap, staffCap } from "../_fixtures/capabilities.js"
 import { at } from "../_fixtures/instants.js"
 
 const decode = Schema.decodeUnknownEither(BookingFromRow)
@@ -48,7 +49,12 @@ describe("BookingFromRow", () => {
     const r = Either.getOrThrow(
       apply(
         baseHeld(),
-        { kind: "Cancel", at: at("2026-05-09T13:00:00Z"), reason: "test", by: "customer" },
+        {
+          kind: "Cancel",
+          at: at("2026-05-09T13:00:00Z"),
+          reason: "test",
+          capability: customerCap(),
+        },
         newBookingEventId(),
       ),
     )
@@ -68,7 +74,7 @@ describe("BookingFromRow", () => {
     const completedR = Either.getOrThrow(
       apply(
         confirmedR.booking,
-        { kind: "Complete", at: at("2026-05-10T03:00:00Z") },
+        { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
         newBookingEventId(),
       ),
     )
@@ -88,7 +94,7 @@ describe("BookingFromRow", () => {
     const noShowR = Either.getOrThrow(
       apply(
         confirmedR.booking,
-        { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), by: "staff" },
+        { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
         newBookingEventId(),
       ),
     )

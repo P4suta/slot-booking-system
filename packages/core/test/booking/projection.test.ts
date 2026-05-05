@@ -4,7 +4,7 @@ import type { Command } from "../../src/domain/booking/Command.js"
 import { apply } from "../../src/domain/booking/transitions.js"
 import { applyEvent, replay } from "../../src/domain/read/projection.js"
 import { newBookingEventId } from "../../src/domain/types/EntityId.js"
-import { at, baseHeld, slot } from "../_fixtures/index.js"
+import { at, baseHeld, customerCap, slot, staffCap } from "../_fixtures/index.js"
 
 const ev = newBookingEventId
 
@@ -30,7 +30,7 @@ describe("applyEvent ↔ apply equivalence", () => {
       kind: "Cancel",
       at: at("2026-05-09T12:01:00Z"),
       reason: "x",
-      by: "customer",
+      capability: customerCap(),
     }
     const r = expectRight(apply(held, cmd, ev()))
     const projected = applyEvent(held, r.event)
@@ -44,7 +44,16 @@ describe("applyEvent ↔ apply equivalence", () => {
     ).booking
     const newSlot = slot("2026-05-11T01:00:00Z", "2026-05-11T02:00:00Z")
     const r = expectRight(
-      apply(confirmed, { kind: "Reschedule", at: at("2026-05-09T13:00:00Z"), newSlot }, ev()),
+      apply(
+        confirmed,
+        {
+          kind: "Reschedule",
+          at: at("2026-05-09T13:00:00Z"),
+          newSlot,
+          capability: customerCap(),
+        },
+        ev(),
+      ),
     )
     const projected = applyEvent(confirmed, r.event)
     expect(projected).toEqual(r.booking)
@@ -56,7 +65,11 @@ describe("applyEvent ↔ apply equivalence", () => {
       apply(held, { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()),
     ).booking
     const r = expectRight(
-      apply(confirmed, { kind: "Complete", at: at("2026-05-10T03:00:00Z") }, ev()),
+      apply(
+        confirmed,
+        { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
+        ev(),
+      ),
     )
     const projected = applyEvent(confirmed, r.event)
     expect(projected).toEqual(r.booking)
@@ -68,7 +81,11 @@ describe("applyEvent ↔ apply equivalence", () => {
       apply(held, { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()),
     ).booking
     const r = expectRight(
-      apply(confirmed, { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), by: "staff" }, ev()),
+      apply(
+        confirmed,
+        { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
+        ev(),
+      ),
     )
     const projected = applyEvent(confirmed, r.event)
     expect(projected).toEqual(r.booking)
@@ -81,10 +98,23 @@ describe("replay (full event stream → snapshot)", () => {
     const r1 = expectRight(apply(held, { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()))
     const newSlot = slot("2026-05-11T01:00:00Z", "2026-05-11T02:00:00Z")
     const r2 = expectRight(
-      apply(r1.booking, { kind: "Reschedule", at: at("2026-05-09T13:00:00Z"), newSlot }, ev()),
+      apply(
+        r1.booking,
+        {
+          kind: "Reschedule",
+          at: at("2026-05-09T13:00:00Z"),
+          newSlot,
+          capability: customerCap(),
+        },
+        ev(),
+      ),
     )
     const r3 = expectRight(
-      apply(r2.booking, { kind: "Complete", at: at("2026-05-10T03:00:00Z") }, ev()),
+      apply(
+        r2.booking,
+        { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
+        ev(),
+      ),
     )
     const final = replay(held, [r1.event, r2.event, r3.event])
     expect(final).toEqual(r3.booking)
@@ -126,7 +156,12 @@ describe("applyEvent no-op safety", () => {
     const cancelled = expectRight(
       apply(
         held,
-        { kind: "Cancel", at: at("2026-05-09T12:01:00Z"), reason: "x", by: "customer" },
+        {
+          kind: "Cancel",
+          at: at("2026-05-09T12:01:00Z"),
+          reason: "x",
+          capability: customerCap(),
+        },
         ev(),
       ),
     ).booking
@@ -150,7 +185,12 @@ describe("applyEvent no-op safety", () => {
     const cancelled = expectRight(
       apply(
         held,
-        { kind: "Cancel", at: at("2026-05-09T12:01:00Z"), reason: "x", by: "customer" },
+        {
+          kind: "Cancel",
+          at: at("2026-05-09T12:01:00Z"),
+          reason: "x",
+          capability: customerCap(),
+        },
         ev(),
       ),
     ).booking

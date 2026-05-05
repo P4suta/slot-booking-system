@@ -11,26 +11,32 @@ import {
 } from "../../src/domain/booking/machine.js"
 import { apply } from "../../src/domain/booking/transitions.js"
 import { newBookingEventId } from "../../src/domain/types/EntityId.js"
-import { at, baseHeld, slot } from "../_fixtures/index.js"
+import { at, baseHeld, customerCap, slot, staffCap, systemExpire } from "../_fixtures/index.js"
 
 const commandFor = (kind: BookingMachineEventType): Command => {
   switch (kind) {
     case "Confirm":
       return { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }
     case "Cancel":
-      return { kind: "Cancel", at: at("2026-05-09T12:01:00Z"), reason: "test", by: "customer" }
+      return {
+        kind: "Cancel",
+        at: at("2026-05-09T12:01:00Z"),
+        reason: "test",
+        capability: customerCap(),
+      }
     case "Expire":
-      return { kind: "Expire", at: at("2026-05-09T12:05:00Z") }
+      return { kind: "Expire", at: at("2026-05-09T12:05:00Z"), capability: systemExpire() }
     case "Reschedule":
       return {
         kind: "Reschedule",
         at: at("2026-05-09T12:01:00Z"),
         newSlot: slot("2026-05-11T01:00:00Z", "2026-05-11T02:00:00Z"),
+        capability: customerCap(),
       }
     case "Complete":
-      return { kind: "Complete", at: at("2026-05-10T03:00:00Z") }
+      return { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() }
     case "MarkNoShow":
-      return { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), by: "staff" }
+      return { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() }
   }
 }
 
@@ -60,19 +66,28 @@ const buildBookingInState = (state: BookingMachineState): ReturnType<typeof base
   if (state === "Cancelled") {
     const r2 = apply(
       r1.right.booking,
-      { kind: "Cancel", at: at("2026-05-09T13:00:00Z"), reason: "t", by: "customer" },
+      {
+        kind: "Cancel",
+        at: at("2026-05-09T13:00:00Z"),
+        reason: "t",
+        capability: customerCap(),
+      },
       ev(),
     )
     return Either.isRight(r2) ? (r2.right.booking as ReturnType<typeof baseHeld>) : null
   }
   if (state === "Completed") {
-    const r2 = apply(r1.right.booking, { kind: "Complete", at: at("2026-05-10T03:00:00Z") }, ev())
+    const r2 = apply(
+      r1.right.booking,
+      { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
+      ev(),
+    )
     return Either.isRight(r2) ? (r2.right.booking as ReturnType<typeof baseHeld>) : null
   }
   // NoShow
   const r2 = apply(
     r1.right.booking,
-    { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), by: "staff" },
+    { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
     newBookingEventId(),
   )
   return Either.isRight(r2) ? (r2.right.booking as ReturnType<typeof baseHeld>) : null

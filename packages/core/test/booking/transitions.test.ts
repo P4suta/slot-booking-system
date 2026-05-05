@@ -5,7 +5,7 @@ import type { Booking, Confirmed } from "../../src/domain/booking/Booking.js"
 import type { Command } from "../../src/domain/booking/Command.js"
 import { apply } from "../../src/domain/booking/transitions.js"
 import { type BookingEventId, newBookingEventId } from "../../src/domain/types/EntityId.js"
-import { at, baseHeld, slot } from "../_fixtures/index.js"
+import { at, baseHeld, customerCap, slot, staffCap, systemExpire } from "../_fixtures/index.js"
 
 const ev = (): BookingEventId => newBookingEventId()
 
@@ -40,12 +40,12 @@ describe("apply (transitions)", () => {
   })
 
   describe("Held + Cancel → Cancelled", () => {
-    it("preserves cancelledBy and reason, emits Cancelled event", () => {
+    it("preserves cancelledBy (subjectOf customer cap) and reason, emits Cancelled event", () => {
       const cmd: Command = {
         kind: "Cancel",
         at: at("2026-05-09T12:01:00Z"),
         reason: "test",
-        by: "customer",
+        capability: customerCap(),
       }
       const r = expectRight(apply(baseHeld(), cmd, ev()))
       expect(r.booking.state).toBe("Cancelled")
@@ -55,11 +55,25 @@ describe("apply (transitions)", () => {
       }
       expect(r.event.type).toBe("Cancelled")
     })
+
+    it("staff capability without 'cancel' scope is rejected", () => {
+      const cmd: Command = {
+        kind: "Cancel",
+        at: at("2026-05-09T12:01:00Z"),
+        reason: "t",
+        capability: staffCap(["complete"]),
+      }
+      expectLeftTag(apply(baseHeld(), cmd, ev()), "InsufficientCapability")
+    })
   })
 
   describe("Held + Expire → Cancelled by=system", () => {
     it("annotates the cancellation as system-driven", () => {
-      const cmd: Command = { kind: "Expire", at: at("2026-05-09T12:05:00Z") }
+      const cmd: Command = {
+        kind: "Expire",
+        at: at("2026-05-09T12:05:00Z"),
+        capability: systemExpire(),
+      }
       const r = expectRight(apply(baseHeld(), cmd, ev()))
       expect(r.booking.state).toBe("Cancelled")
       if (r.booking.state === "Cancelled") {
@@ -77,10 +91,11 @@ describe("apply (transitions)", () => {
               kind: "Reschedule",
               at: at("2026-05-09T12:01:00Z"),
               newSlot: slot("2026-05-10T03:00:00Z", "2026-05-10T04:00:00Z"),
+              capability: customerCap(),
             }
           : kind === "Complete"
-            ? { kind: "Complete", at: at("2026-05-09T12:01:00Z") }
-            : { kind: "MarkNoShow", at: at("2026-05-09T12:01:00Z"), by: "staff" }
+            ? { kind: "Complete", at: at("2026-05-09T12:01:00Z"), capability: staffCap() }
+            : { kind: "MarkNoShow", at: at("2026-05-09T12:01:00Z"), capability: staffCap() }
       expectLeftTag(apply(baseHeld(), cmd, ev()), "InvalidStateTransition")
     })
   })
@@ -95,6 +110,7 @@ describe("apply (transitions)", () => {
         kind: "Reschedule",
         at: at("2026-05-09T13:00:00Z"),
         newSlot,
+        capability: customerCap(),
       }
       const r = expectRight(apply(confirmed, cmd, ev()))
       expect(r.booking.state).toBe("Confirmed")
@@ -104,32 +120,68 @@ describe("apply (transitions)", () => {
       }
       expect(r.event.type).toBe("Rescheduled")
     })
+
+    it("staff capability missing 'reschedule' scope is rejected", () => {
+      const confirmed = expectRight(
+        apply(baseHeld(), { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()),
+      ).booking as Confirmed
+      const cmd: Command = {
+        kind: "Reschedule",
+        at: at("2026-05-09T13:00:00Z"),
+        newSlot: slot("2026-05-11T01:00:00Z", "2026-05-11T02:00:00Z"),
+        capability: staffCap(["cancel"]),
+      }
+      expectLeftTag(apply(confirmed, cmd, ev()), "InsufficientCapability")
+    })
   })
 
   describe("Confirmed + Complete / MarkNoShow / Cancel", () => {
-    it("Complete moves to Completed", () => {
+    it("Complete moves to Completed when staff has 'complete' scope", () => {
       const confirmed = expectRight(
         apply(baseHeld(), { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()),
       ).booking as Confirmed
       const r = expectRight(
-        apply(confirmed, { kind: "Complete", at: at("2026-05-10T03:00:00Z") }, ev()),
+        apply(
+          confirmed,
+          { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
+          ev(),
+        ),
       )
       expect(r.booking.state).toBe("Completed")
       expect(r.event.type).toBe("Completed")
     })
 
-    it("MarkNoShow moves to NoShow", () => {
+    it("Complete is rejected when staff lacks 'complete' scope", () => {
+      const confirmed = expectRight(
+        apply(baseHeld(), { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()),
+      ).booking as Confirmed
+      const cmd: Command = {
+        kind: "Complete",
+        at: at("2026-05-10T03:00:00Z"),
+        capability: staffCap(["cancel"]),
+      }
+      expectLeftTag(apply(confirmed, cmd, ev()), "InsufficientCapability")
+    })
+
+    it("MarkNoShow moves to NoShow when staff has 'noshow' scope", () => {
       const confirmed = expectRight(
         apply(baseHeld(), { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()),
       ).booking as Confirmed
       const r = expectRight(
-        apply(confirmed, { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), by: "staff" }, ev()),
+        apply(
+          confirmed,
+          { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
+          ev(),
+        ),
       )
       expect(r.booking.state).toBe("NoShow")
+      if (r.booking.state === "NoShow") {
+        expect(r.booking.markedBy).toBe("staff")
+      }
       expect(r.event.type).toBe("NoShow")
     })
 
-    it("Cancel moves to Cancelled", () => {
+    it("Cancel moves to Cancelled (customer cap)", () => {
       const confirmed = expectRight(
         apply(baseHeld(), { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()),
       ).booking as Confirmed
@@ -140,7 +192,7 @@ describe("apply (transitions)", () => {
             kind: "Cancel",
             at: at("2026-05-09T13:00:00Z"),
             reason: "test",
-            by: "customer",
+            capability: customerCap(),
           },
           ev(),
         ),
@@ -162,16 +214,17 @@ describe("apply (transitions)", () => {
         kind: "Cancel",
         at: at("2026-05-09T12:01:00Z"),
         reason: "x",
-        by: "customer",
+        capability: customerCap(),
       },
       {
         kind: "Reschedule",
         at: at("2026-05-09T12:01:00Z"),
         newSlot: slot("2026-05-12T01:00:00Z", "2026-05-12T02:00:00Z"),
+        capability: customerCap(),
       },
-      { kind: "Complete", at: at("2026-05-09T12:01:00Z") },
-      { kind: "MarkNoShow", at: at("2026-05-09T12:01:00Z"), by: "staff" },
-      { kind: "Expire", at: at("2026-05-09T12:01:00Z") },
+      { kind: "Complete", at: at("2026-05-09T12:01:00Z"), capability: staffCap() },
+      { kind: "MarkNoShow", at: at("2026-05-09T12:01:00Z"), capability: staffCap() },
+      { kind: "Expire", at: at("2026-05-09T12:01:00Z"), capability: systemExpire() },
     ]
 
     for (const tState of terminals) {
@@ -191,7 +244,7 @@ describe("apply (transitions)", () => {
                     kind: "Cancel",
                     at: at("2026-05-09T13:00:00Z"),
                     reason: "t",
-                    by: "customer",
+                    capability: customerCap(),
                   },
                   ev(),
                 ),
@@ -199,14 +252,18 @@ describe("apply (transitions)", () => {
               break
             case "Completed":
               terminal = expectRight(
-                apply(confirmed, { kind: "Complete", at: at("2026-05-10T03:00:00Z") }, ev()),
+                apply(
+                  confirmed,
+                  { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
+                  ev(),
+                ),
               ).booking
               break
             case "NoShow":
               terminal = expectRight(
                 apply(
                   confirmed,
-                  { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), by: "staff" },
+                  { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
                   ev(),
                 ),
               ).booking
@@ -282,15 +339,30 @@ describe("apply (transitions)", () => {
         fc.constant(makeCommand({ kind: "Confirm", at: at("2026-05-09T12:30:00Z") }, "Confirm")),
         fc.constant(
           makeCommand(
-            { kind: "Cancel", at: at("2026-05-09T12:30:00Z"), reason: "t", by: "customer" },
+            {
+              kind: "Cancel",
+              at: at("2026-05-09T12:30:00Z"),
+              reason: "t",
+              capability: customerCap(),
+            },
             "Cancel",
           ),
         ),
-        fc.constant(makeCommand({ kind: "Expire", at: at("2026-05-09T13:00:00Z") }, "Expire")),
-        fc.constant(makeCommand({ kind: "Complete", at: at("2026-05-10T03:00:00Z") }, "Complete")),
         fc.constant(
           makeCommand(
-            { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), by: "staff" },
+            { kind: "Expire", at: at("2026-05-09T13:00:00Z"), capability: systemExpire() },
+            "Expire",
+          ),
+        ),
+        fc.constant(
+          makeCommand(
+            { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
+            "Complete",
+          ),
+        ),
+        fc.constant(
+          makeCommand(
+            { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
             "MarkNoShow",
           ),
         ),
@@ -300,6 +372,7 @@ describe("apply (transitions)", () => {
               kind: "Reschedule",
               at: at("2026-05-09T12:30:00Z"),
               newSlot: slot("2026-05-11T01:00:00Z", "2026-05-11T02:00:00Z"),
+              capability: customerCap(),
             },
             "Reschedule",
           ),

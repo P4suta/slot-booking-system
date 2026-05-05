@@ -57,6 +57,11 @@ export const RescheduleBooking = (
       kind: "Reschedule",
       at,
       newSlot: newSlotInstants,
+      capability: {
+        _tag: "CustomerCapability",
+        bookingCode: input.code,
+        phoneLast4: input.phoneLast4,
+      },
     })
 
     yield* logger.info(

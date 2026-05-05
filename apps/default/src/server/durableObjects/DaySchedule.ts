@@ -11,6 +11,7 @@ import {
   codeOf,
   type DomainError,
   type ErrorSeverity,
+  ExpireBooking,
   HoldSlot,
   type HoldSlotInput,
   type HoldSlotResult,
@@ -202,11 +203,7 @@ export class DaySchedule extends DurableObject<Env> {
     await Promise.all(
       toExpire.map((b) =>
         Effect.runPromise(
-          CancelBooking({
-            code: b.code,
-            phoneLast4: b.phoneLast4,
-            reason: "hold expired",
-          }).pipe(
+          ExpireBooking({ bookingId: b.id }).pipe(
             Effect.provide(layer),
             Effect.catchAll(() => Effect.void),
           ),

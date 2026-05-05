@@ -53,7 +53,11 @@ export const CancelBooking = (
       kind: "Cancel",
       at,
       reason: input.reason,
-      by: "customer",
+      capability: {
+        _tag: "CustomerCapability",
+        bookingCode: input.code,
+        phoneLast4: input.phoneLast4,
+      },
     })
 
     yield* logger.info(
