@@ -10,6 +10,7 @@ import type {
   ProviderId,
   ResourceId,
   ServiceId,
+  StaffId,
 } from "../../src/domain/types/EntityId.js"
 import type { BookingCode } from "../../src/domain/value-objects/BookingCode.js"
 import type { BusinessTimeZone } from "../../src/domain/value-objects/BusinessTimeZone.js"
@@ -78,9 +79,11 @@ test("EntityId brands behave like phantom strings", () => {
   expectTypeOf<BookingEventId>().toExtend<string>()
   expectTypeOf<AuditLogId>().toExtend<string>()
   expectTypeOf<IdempotencyKeyId>().toExtend<string>()
+  expectTypeOf<StaffId>().toExtend<string>()
 
   expectTypeOf<string>().not.toExtend<BookingId>()
   expectTypeOf<string>().not.toExtend<ServiceId>()
+  expectTypeOf<string>().not.toExtend<StaffId>()
 })
 
 test("EntityId brands are mutually disjoint (no crossover)", () => {
@@ -90,4 +93,6 @@ test("EntityId brands are mutually disjoint (no crossover)", () => {
   expectTypeOf<ResourceId>().not.toExtend<ClosureId>()
   expectTypeOf<BookingEventId>().not.toExtend<BookingId>()
   expectTypeOf<AuditLogId>().not.toExtend<IdempotencyKeyId>()
+  expectTypeOf<StaffId>().not.toExtend<BookingId>()
+  expectTypeOf<StaffId>().not.toExtend<BookingEventId>()
 })

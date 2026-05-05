@@ -24,6 +24,7 @@ export const BusinessHoursIdSchema = makeIdSchema("bhrs", "BusinessHoursId")
 export const BookingEventIdSchema = makeIdSchema("evnt", "BookingEventId")
 export const AuditLogIdSchema = makeIdSchema("audt", "AuditLogId")
 export const IdempotencyKeyIdSchema = makeIdSchema("idem", "IdempotencyKeyId")
+export const StaffIdSchema = makeIdSchema("staf", "StaffId")
 
 export type BookingId = Schema.Schema.Type<typeof BookingIdSchema>
 export type ServiceId = Schema.Schema.Type<typeof ServiceIdSchema>
@@ -35,6 +36,7 @@ export type BusinessHoursId = Schema.Schema.Type<typeof BusinessHoursIdSchema>
 export type BookingEventId = Schema.Schema.Type<typeof BookingEventIdSchema>
 export type AuditLogId = Schema.Schema.Type<typeof AuditLogIdSchema>
 export type IdempotencyKeyId = Schema.Schema.Type<typeof IdempotencyKeyIdSchema>
+export type StaffId = Schema.Schema.Type<typeof StaffIdSchema>
 
 /** Stable union of every TypeID prefix the system mints. */
 export type EntityPrefix =
@@ -48,6 +50,7 @@ export type EntityPrefix =
   | "evnt"
   | "audt"
   | "idem"
+  | "staf"
 
 const makeParser =
   <Id>(prefix: EntityPrefix, schema: Schema.Schema<Id, string>) =>
@@ -67,6 +70,7 @@ export const parseBusinessHoursId = makeParser("bhrs", BusinessHoursIdSchema)
 export const parseBookingEventId = makeParser("evnt", BookingEventIdSchema)
 export const parseAuditLogId = makeParser("audt", AuditLogIdSchema)
 export const parseIdempotencyKeyId = makeParser("idem", IdempotencyKeyIdSchema)
+export const parseStaffId = makeParser("staf", StaffIdSchema)
 
 /**
  * TypeID-prefixed string generator. The return type is fixed at the
@@ -90,3 +94,4 @@ export const newAuditLogId: () => AuditLogId = generator("audt") as () => AuditL
 export const newIdempotencyKeyId: () => IdempotencyKeyId = generator(
   "idem",
 ) as () => IdempotencyKeyId
+export const newStaffId: () => StaffId = generator("staf") as () => StaffId

@@ -3,6 +3,7 @@
 // across the layer. The one exception is `slot/index.ts`, which keeps
 // `Bitmap` namespaced because its API is a small toolkit of generic
 // names (`empty`, `full`, `and`, `or`, …) that would clash with anything.
+export * from "./auth/index.js"
 export * from "./booking/index.js"
 export * from "./entities/index.js"
 export * from "./errors/index.js"
