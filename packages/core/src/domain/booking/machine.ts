@@ -1,22 +1,27 @@
-import { createMachine } from "xstate"
-
 /**
- * Declarative xstate v5 description of the Booking lifecycle. This is
- * the **specification** of the state graph; the implementation lives in
- * `transitions.ts` (`apply`). The two are cross-validated by
- * `transitions.test.ts` so any drift between the diagram and the
- * implementation surfaces immediately.
+ * Specification of the Booking lifecycle as a pure adjacency table.
+ * The transition map below is the **single source of truth**; the
+ * implementation in `transitions.ts` (`apply`) is cross-validated
+ * against it by `machine.test.ts`.
  *
- * The machine carries no domain data — it is intentionally
- * context-free so its emitted form can be rendered as an SVG by the
- * xstate inspector or stately.ai without leaking PII or fixtures.
+ * The spec carries no domain data — it is intentionally context-free
+ * so it can be visualised by an external renderer (DOT/Mermaid emitter
+ * is one short pure function away) without leaking PII or fixtures.
  *
  * Five states (`Held`, `Confirmed`, `Cancelled`, `Completed`, `NoShow`)
- * mirror `Booking["state"]`. Six command-typed events
- * (`Confirm`, `Cancel`, `Expire`, `Reschedule`, `Complete`, `MarkNoShow`)
- * mirror `Command["kind"]`. The terminal-state semantics from
- * `transitions.ts` are encoded as `type: "final"` on Cancelled /
- * Completed / NoShow.
+ * mirror `Booking["state"]`. Six command-typed events (`Confirm`,
+ * `Cancel`, `Expire`, `Reschedule`, `Complete`, `MarkNoShow`) mirror
+ * `Command["kind"]`. The terminal-state semantics from `transitions.ts`
+ * are reified in `TERMINAL`.
+ *
+ * History (Phase 0.6 / ADR-0031): the previous version constructed an
+ * xstate v5 `createMachine(...)` from this same table. The xstate value
+ * was used by exactly one test (`bookingMachine.states.keys`); every
+ * other consumer read from `TRANSITIONS` directly. Dropping the
+ * xstate runtime dependency removes ~30 KB from the bundle and one
+ * external surface, with no semantic loss — the table *is* the
+ * specification, and `keyof typeof TRANSITIONS[State]` already gives
+ * us compile-time exhaustiveness over the (state, event) lattice.
  */
 
 export type BookingMachineState = "Held" | "Confirmed" | "Cancelled" | "Completed" | "NoShow"
@@ -30,12 +35,12 @@ export type BookingMachineEventType =
   | "MarkNoShow"
 
 /**
- * Adjacency list mirroring the machine's transition map. Kept as a
- * const so `machineAllows` is a pure lookup; the static layout below is
- * the **only** source of truth — `bookingMachine` is constructed from
- * this same table, so editing one updates the other automatically.
+ * Adjacency table mirroring the booking state graph. Editing this table
+ * editsthe specification — `apply` is cross-validated against it in
+ * `machine.test.ts`. Self-loops (e.g. Reschedule on Confirmed) appear
+ * explicitly so they round-trip through `machineNext`.
  */
-const TRANSITIONS: Readonly<
+export const TRANSITIONS: Readonly<
   Record<
     BookingMachineState,
     Readonly<Partial<Record<BookingMachineEventType, BookingMachineState>>>
@@ -57,7 +62,13 @@ const TRANSITIONS: Readonly<
   NoShow: {},
 }
 
-const TERMINAL: Readonly<Record<BookingMachineState, boolean>> = {
+/**
+ * Whether `state` accepts no further commands. Three terminal states;
+ * `apply` rejects every command for them. Re-derivable as
+ * `Object.keys(TRANSITIONS[state]).length === 0` but materialised here
+ * for documentation symmetry with the xstate predecessor.
+ */
+export const TERMINAL: Readonly<Record<BookingMachineState, boolean>> = {
   Held: false,
   Confirmed: false,
   Cancelled: true,
@@ -65,35 +76,15 @@ const TERMINAL: Readonly<Record<BookingMachineState, boolean>> = {
   NoShow: true,
 }
 
-export const bookingMachine = createMachine({
-  id: "booking",
-  initial: "Held",
-  states: Object.fromEntries(
-    (Object.keys(TRANSITIONS) as BookingMachineState[]).map((state) => [
-      state,
-      {
-        ...(TERMINAL[state] ? { type: "final" as const } : {}),
-        on: Object.fromEntries(
-          Object.entries(TRANSITIONS[state]).map(([eventType, target]) => [eventType, target]),
-        ),
-      },
-    ]),
-  ),
-})
-
-/**
- * Pure predicate over the spec: would `eventType` cause a transition
- * out of `state`? Used by `transitions.test.ts` to cross-validate
- * `apply` against this declarative state graph.
- */
+/** Pure predicate: would `eventType` cause a transition out of `state`? */
 export const machineAllows = (
   state: BookingMachineState,
   eventType: BookingMachineEventType,
 ): boolean => eventType in TRANSITIONS[state]
 
 /**
- * The state `eventType` would transition `state` to. Returns `null`
- * when the (state, event) pair is not in the spec.
+ * Successor state for a (state, event) pair, or `null` when the
+ * pair is not in the spec.
  */
 export const machineNext = (
   state: BookingMachineState,

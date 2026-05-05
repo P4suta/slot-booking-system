@@ -4,9 +4,10 @@ import type { Command } from "../../src/domain/booking/Command.js"
 import {
   type BookingMachineEventType,
   type BookingMachineState,
-  bookingMachine,
   machineAllows,
   machineNext,
+  TERMINAL,
+  TRANSITIONS,
 } from "../../src/domain/booking/machine.js"
 import { apply } from "../../src/domain/booking/transitions.js"
 import { newBookingEventId } from "../../src/domain/types/EntityId.js"
@@ -77,10 +78,26 @@ const buildBookingInState = (state: BookingMachineState): ReturnType<typeof base
   return Either.isRight(r2) ? (r2.right.booking as ReturnType<typeof baseHeld>) : null
 }
 
-describe("bookingMachine vs apply (cross-validation)", () => {
-  it("the machine config exposes 5 states", () => {
-    const ids = Object.keys(bookingMachine.states)
+describe("TRANSITIONS spec vs apply (cross-validation)", () => {
+  it("the spec exposes exactly 5 states", () => {
+    const ids = Object.keys(TRANSITIONS)
     expect(ids.sort()).toEqual([...STATES].sort())
+  })
+
+  it("TERMINAL marks Cancelled / Completed / NoShow as terminal, others as live", () => {
+    expect(TERMINAL.Held).toBe(false)
+    expect(TERMINAL.Confirmed).toBe(false)
+    expect(TERMINAL.Cancelled).toBe(true)
+    expect(TERMINAL.Completed).toBe(true)
+    expect(TERMINAL.NoShow).toBe(true)
+  })
+
+  it("terminal states have no outgoing transitions", () => {
+    for (const state of STATES) {
+      if (TERMINAL[state]) {
+        expect(Object.keys(TRANSITIONS[state])).toEqual([])
+      }
+    }
   })
 
   it("machineNext returns null for an undefined (state, event) pair", () => {

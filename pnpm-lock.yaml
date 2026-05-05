@@ -81,9 +81,6 @@ importers:
       ulidx:
         specifier: ^2.4.1
         version: 2.4.1
-      xstate:
-        specifier: ^5.31.0
-        version: 5.31.0
     devDependencies:
       '@stryker-mutator/core':
         specifier: ^9.6.0
@@ -3580,9 +3577,6 @@ packages:
       utf-8-validate:
         optional: true
 
-  xstate@5.31.0:
-    resolution: {integrity: sha512-5B+0DqC0uNUrcLUEY3pn3iNy+swvK2E0ZpYp5gnV3oxMX5y87vzXkU5YXv9CAtyG5c5FOJ1SzvTWHrwE8fMZNQ==}
-
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
@@ -6668,8 +6662,6 @@ snapshots:
       strip-ansi: 6.0.1
 
   ws@8.18.0: {}
-
-  xstate@5.31.0: {}
 
   y18n@5.0.8: {}
 
