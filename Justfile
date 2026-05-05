@@ -108,6 +108,13 @@ attw:
     {{DEV}} {{PNPM}} -F @booking/core run build
     {{DEV}} {{PNPM}} -F @booking/core run attw
 
+# size-limit gate for @booking/core — enforces a gzip ceiling on the
+# library bundle so additions do not silently bloat downstream apps.
+# Threshold lives in `packages/core/package.json#size-limit`.
+size-limit-core:
+    {{DEV}} {{PNPM}} -F @booking/core run build
+    {{DEV}} {{PNPM}} -F @booking/core run size-limit
+
 # PII guard: forbids field/column declarations and URL/email-host literals
 # tied to PII, throughout source. See ADR-0009.
 pii-guard:
@@ -180,9 +187,10 @@ migrate-local:
 
 # Pre-push mirror: every check the lefthook pre-push hook runs,
 # plus markdownlint (host-side, not in lefthook because the host
-# binary is mise-managed and faster to invoke directly). Skip
-# mutation testing (heavy) and bench (informational).
-check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage
+# binary is mise-managed and faster to invoke directly), plus the
+# core library size-limit gate. Skip mutation testing (heavy) and
+# bench (informational).
+check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage size-limit-core
 
 # Full CI gate: check + build (and the apps/default dev smoke happens
 # externally on demand via `just dev-default`).
