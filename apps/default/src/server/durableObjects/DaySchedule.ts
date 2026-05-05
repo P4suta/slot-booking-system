@@ -1,11 +1,24 @@
 import { DurableObject } from "cloudflare:workers"
-import type { DomainError, ErrorSeverity } from "@booking/core"
 import {
+  type BookingEventSourcedRepository,
   CancelBooking,
+  type CancelBookingInput,
+  type CancelBookingResult,
+  type Clock,
   ConfirmBooking,
+  type ConfirmBookingInput,
+  type ConfirmBookingResult,
   codeOf,
+  type DomainError,
+  type ErrorSeverity,
   HoldSlot,
+  type HoldSlotInput,
+  type HoldSlotResult,
+  type IdGenerator,
+  type Logger,
   RescheduleBooking,
+  type RescheduleBookingInput,
+  type RescheduleBookingResult,
   SilentLoggerLive,
   SystemClockLive,
   severityOf,
@@ -22,8 +35,8 @@ import { ensureDurableObjectSchema } from "./schema.js"
 
 /**
  * Per-day actor (ADR-0005). One DO instance per `(deployment, date)`
- * tuple. Concurrency through the actor model — every fetch is
- * processed serially by the runtime, so no two `HoldSlot` calls for
+ * tuple. Concurrency through the actor model — every RPC method call
+ * is processed serially by the runtime, so no two `holdSlot` calls for
  * the same day can interleave at the application layer.
  *
  * **Persistence layout** — DO local SQLite (ADR-0028) holds:
@@ -37,26 +50,67 @@ import { ensureDurableObjectSchema } from "./schema.js"
  * `ctx.blockConcurrencyWhile`, so every subsequent fetch sees a
  * fully-migrated schema.
  *
+ * **RPC surface** (ADR-0030 / 2026 mainstream): each booking mutation
+ * is an `async` method that returns `Either<EncodedDomainError,
+ * EncodedResult>`. The Either values cross the structured-clone
+ * boundary as plain JSON; the caller (GraphQL resolver) narrows on
+ * `_tag` and either re-encodes the success or maps the failure to a
+ * GraphQL error. Throwing across the RPC boundary is **avoided** —
+ * Cloudflare strips custom Error subclass fields, which would erase
+ * the discriminated union (ADR-0030).
+ *
  * **Cold start** — none required. The `(code → id)` lookup is a SQL
  * query against `bookings.code` (unique index), exact on every cold
  * or warm path. Phase 0.6 dropped the bloom filter pre-screen.
  *
  * **Hold expiry** — `alarm()` finds every `Held` booking past its TTL
- * and emits a `Cancel` command. Outbox relay piggybacks on the same
- * alarm tick.
+ * and emits a `Cancel` command; the outbox relay piggybacks on the
+ * same alarm tick. `setAlarm()` schedules the next fire to the
+ * minimum of (earliest hold expiry, earliest outbox retry, +60s).
  */
-
-const Op = Schema.Union(
-  Schema.Struct({ type: Schema.Literal("hold"), payload: Schema.Unknown }),
-  Schema.Struct({ type: Schema.Literal("confirm"), payload: Schema.Unknown }),
-  Schema.Struct({ type: Schema.Literal("cancel"), payload: Schema.Unknown }),
-  Schema.Struct({ type: Schema.Literal("reschedule"), payload: Schema.Unknown }),
-)
-type Op = Schema.Schema.Type<typeof Op>
 
 type Env = {
   DB: D1Database
 }
+
+/* ----- Encoded result shapes returned across the RPC boundary ----- */
+
+type EncodedDomainError = {
+  readonly _tag: string
+  readonly code: string
+  readonly severity: ErrorSeverity
+}
+
+type EncodedHoldResult = Schema.Schema.Encoded<typeof BookingResultSchema>
+type EncodedConfirmResult = Schema.Schema.Encoded<typeof BookingResultSchema>
+type EncodedCancelResult = Schema.Schema.Encoded<typeof BookingResultSchema>
+type EncodedRescheduleResult = Schema.Schema.Encoded<typeof BookingResultSchema>
+
+/* Lightweight caller-facing result schema — the DO returns the
+ * minimum fields the GraphQL surface needs. The full Booking + Event
+ * remain inside the DO's storage; callers query separately via D1. */
+const BookingResultSchema = Schema.Struct({
+  bookingId: Schema.String,
+  state: Schema.Literal("Held", "Confirmed", "Cancelled", "Completed", "NoShow"),
+  eventType: Schema.Literal("Held", "Confirmed", "Cancelled", "Rescheduled", "Completed", "NoShow"),
+})
+type BookingResult = Schema.Schema.Type<typeof BookingResultSchema>
+
+const encodeResult = Schema.encodeSync(BookingResultSchema)
+
+const encodeDomainError = (e: DomainError): EncodedDomainError => ({
+  _tag: e._tag,
+  code: codeOf(e),
+  severity: severityOf(e),
+})
+
+const projectResult = (
+  r: HoldSlotResult | ConfirmBookingResult | CancelBookingResult | RescheduleBookingResult,
+): BookingResult => ({
+  bookingId: r.booking.id,
+  state: r.booking.state,
+  eventType: r.event.type,
+})
 
 export class DaySchedule extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -67,19 +121,37 @@ export class DaySchedule extends DurableObject<Env> {
     })
   }
 
-  override async fetch(request: Request): Promise<Response> {
-    let body: unknown
-    try {
-      body = await request.json()
-    } catch {
-      return jsonError(400, "INVALID_JSON", "request body is not valid JSON")
-    }
-    const opResult = Schema.decodeUnknownEither(Op)(body)
-    if (opResult._tag === "Left") {
-      return jsonError(400, "INVALID_OPERATION", "unrecognised operation tag")
-    }
-    return this.runOp(opResult.right)
+  /* -------------------------------------------------------------------- */
+  /* RPC methods — caller invokes via `stub.<name>(input)`                */
+  /* -------------------------------------------------------------------- */
+
+  async holdSlot(
+    input: HoldSlotInput,
+  ): Promise<Either.Either<EncodedHoldResult, EncodedDomainError>> {
+    return this.runUseCase(HoldSlot(input))
   }
+
+  async confirmBooking(
+    input: ConfirmBookingInput,
+  ): Promise<Either.Either<EncodedConfirmResult, EncodedDomainError>> {
+    return this.runUseCase(ConfirmBooking(input))
+  }
+
+  async cancelBooking(
+    input: CancelBookingInput,
+  ): Promise<Either.Either<EncodedCancelResult, EncodedDomainError>> {
+    return this.runUseCase(CancelBooking(input))
+  }
+
+  async rescheduleBooking(
+    input: RescheduleBookingInput,
+  ): Promise<Either.Either<EncodedRescheduleResult, EncodedDomainError>> {
+    return this.runUseCase(RescheduleBooking(input))
+  }
+
+  /* -------------------------------------------------------------------- */
+  /* System handlers                                                      */
+  /* -------------------------------------------------------------------- */
 
   override async alarm(): Promise<void> {
     const storage = this.ctx.storage as unknown as DurableObjectStorageLike
@@ -97,6 +169,28 @@ export class DaySchedule extends DurableObject<Env> {
     if (earliestHoldExpiry !== null) candidates.push(earliestHoldExpiry)
     const nextAlarm = Math.min(...candidates)
     await this.ctx.storage.setAlarm(nextAlarm)
+  }
+
+  /* -------------------------------------------------------------------- */
+  /* Private helpers                                                      */
+  /* -------------------------------------------------------------------- */
+
+  private async runUseCase<
+    R extends HoldSlotResult | ConfirmBookingResult | CancelBookingResult | RescheduleBookingResult,
+  >(
+    program: Effect.Effect<
+      R,
+      DomainError,
+      BookingEventSourcedRepository | Clock | IdGenerator | Logger
+    >,
+  ): Promise<Either.Either<EncodedHoldResult, EncodedDomainError>> {
+    const storage = this.ctx.storage as unknown as DurableObjectStorageLike
+    const layer = this.layer(storage)
+    const result = await Effect.runPromise(Effect.either(program.pipe(Effect.provide(layer))))
+    if (Either.isRight(result)) {
+      return Either.right(encodeResult(projectResult(result.right)))
+    }
+    return Either.left(encodeDomainError(result.left))
   }
 
   private async expireStaleHolds(storage: DurableObjectStorageLike): Promise<void> {
@@ -121,43 +215,6 @@ export class DaySchedule extends DurableObject<Env> {
     )
   }
 
-  private async runOp(op: Op): Promise<Response> {
-    const storage = this.ctx.storage as unknown as DurableObjectStorageLike
-    const layer = this.layer(storage)
-
-    const program: Effect.Effect<unknown, DomainError> = ((): Effect.Effect<
-      unknown,
-      DomainError
-    > => {
-      switch (op.type) {
-        case "hold":
-          return HoldSlot(op.payload as Parameters<typeof HoldSlot>[0]).pipe(Effect.provide(layer))
-        case "confirm":
-          return ConfirmBooking(op.payload as Parameters<typeof ConfirmBooking>[0]).pipe(
-            Effect.provide(layer),
-          )
-        case "cancel":
-          return CancelBooking(op.payload as Parameters<typeof CancelBooking>[0]).pipe(
-            Effect.provide(layer),
-          )
-        case "reschedule":
-          return RescheduleBooking(op.payload as Parameters<typeof RescheduleBooking>[0]).pipe(
-            Effect.provide(layer),
-          )
-      }
-    })()
-
-    const result = await Effect.runPromise(Effect.either(program))
-    if (Either.isRight(result)) {
-      return new Response(JSON.stringify({ ok: true, result: result.right }), {
-        status: 200,
-        headers: { "content-type": "application/json; charset=utf-8" },
-      })
-    }
-    const e = result.left
-    return jsonError(domainErrorToStatus(e), codeOf(e), e._tag, severityOf(e))
-  }
-
   private layer(storage: DurableObjectStorageLike) {
     return Layer.mergeAll(
       makeDurableObjectEventSourcedRepository(storage),
@@ -168,25 +225,18 @@ export class DaySchedule extends DurableObject<Env> {
   }
 }
 
-const jsonError = (
-  status: number,
-  code: string,
-  tag: string,
-  severity: ErrorSeverity = "domain",
-): Response =>
-  new Response(JSON.stringify({ ok: false, error: { _tag: tag, code, severity } }), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  })
-
 /**
- * HTTP status mapping for domain errors. Validation failures → 400,
- * not-found / phone-mismatch → 404 (deliberately conflated to avoid
- * leaking which half of the credential pair was wrong), terminal
- * state / availability → 409, infra storage → 500.
+ * HTTP status mapping for domain errors. Re-exported so the GraphQL
+ * resolver can map an `EncodedDomainError._tag` to a GraphQL error
+ * extension `status` field.
+ *
+ * Validation failures → 400, not-found / phone-mismatch → 404
+ * (deliberately conflated to avoid leaking which half of the credential
+ * pair was wrong), terminal state / availability → 409, infra storage
+ * → 500.
  */
-const domainErrorToStatus = (e: DomainError): number => {
-  switch (e._tag) {
+export const domainErrorTagToStatus = (tag: string): number => {
+  switch (tag) {
     case "BookingNotFound":
     case "PhoneMismatch":
     case "AggregateNotFound":

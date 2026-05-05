@@ -1,17 +1,21 @@
+import { Either } from "effect"
 import { GraphQLError } from "graphql"
-import { builder } from "../builder.js"
+import type { DaySchedule } from "../../durableObjects/DaySchedule.js"
+import { domainErrorTagToStatus } from "../../durableObjects/DaySchedule.js"
+import { builder, type GraphQLContext } from "../builder.js"
 
 /**
  * Booking mutations — `holdSlot`, `confirmBooking`, `cancelBooking`,
  * `rescheduleBooking`. Each resolver delegates to the per-day
- * `DaySchedule` Durable Object so writes serialise inside the actor;
- * the DO runs the corresponding use case under its own per-request
- * Effect runtime and returns a JSON envelope (`{ ok, result | error }`)
- * that the resolver re-shapes into a GraphQL response.
+ * `DaySchedule` Durable Object via direct RPC method invocation
+ * (ADR-0030 / 2026 mainstream). Writes serialise inside the actor
+ * model; the DO returns `Either<EncodedDomainError, EncodedResult>`,
+ * the resolver narrows on `_tag` and either returns the encoded
+ * success or throws a typed `GraphQLError`.
  *
- * The DO id is derived from the booking's date so two requests for the
- * same day always land on the same actor; cross-day independence is
- * preserved automatically.
+ * Throwing the domain error directly across the RPC boundary would
+ * lose its discriminated-union shape (Cloudflare strips custom Error
+ * subclass fields); the explicit `Either` channel preserves it.
  */
 
 type BookingResultShape = {
@@ -29,49 +33,25 @@ const BookingResultType = builder.objectRef<BookingResultShape>("BookingResult")
   }),
 })
 
-type DOEnvelope = {
-  readonly ok: boolean
-  readonly result?: {
-    readonly booking?: { readonly id?: string; readonly state?: string }
-    readonly event?: { readonly type?: string }
-  }
-  readonly error?: { readonly _tag?: string; readonly code?: string }
-}
-
-const dayDoFor = (env: GraphQLContext["env"], date: string): DurableObjectStub => {
+const dayDoFor = (env: GraphQLContext["env"], date: string): DurableObjectStub<DaySchedule> => {
   const id = env.DAY_SCHEDULE.idFromName(date)
   return env.DAY_SCHEDULE.get(id)
 }
 
-const callDO = async (
-  ctx: GraphQLContext,
-  date: string,
-  body: Readonly<Record<string, unknown>>,
-): Promise<{ bookingId: string; state: string; eventType: string }> => {
-  const stub = dayDoFor(ctx.env, date)
-  const res = await stub.fetch("https://do.invalid/", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+/** Unwrap an `Either<EncResult, EncDomainError>` from the DO into a GraphQL response. */
+const unwrap = <R extends BookingResultShape>(
+  result: Either.Either<R, { readonly _tag: string; readonly code: string }>,
+): R => {
+  if (Either.isRight(result)) return result.right
+  const err = result.left
+  throw new GraphQLError(`${err._tag} (${err.code})`, {
+    extensions: {
+      code: err.code,
+      tag: err._tag,
+      status: domainErrorTagToStatus(err._tag),
+    },
   })
-  const envelope: DOEnvelope = await res.json()
-  if (!envelope.ok || envelope.result === undefined) {
-    const tag = envelope.error?._tag ?? "InternalError"
-    const code = envelope.error?.code ?? "E_INTERNAL"
-    throw new GraphQLError(`${tag} (${code})`, {
-      extensions: { code, status: res.status, tag },
-    })
-  }
-  const booking = envelope.result.booking
-  const event = envelope.result.event
-  return {
-    bookingId: booking?.id ?? "",
-    state: booking?.state ?? "",
-    eventType: event?.type ?? "",
-  }
 }
-
-import type { GraphQLContext } from "../builder.js"
 
 builder.mutationType({
   fields: (t) => ({
@@ -90,10 +70,10 @@ builder.mutationType({
         freeText: t.arg.string({ required: false }),
         source: t.arg.string({ required: true }),
       },
-      resolve: (_root, args, ctx) =>
-        callDO(ctx, args.date, {
-          type: "hold",
-          payload: {
+      resolve: async (_root, args, ctx) => {
+        const stub = dayDoFor(ctx.env, args.date)
+        const result = await Promise.resolve(
+          stub.holdSlot({
             slot: {
               serviceId: args.serviceId,
               providerId: args.providerId,
@@ -105,8 +85,10 @@ builder.mutationType({
             phoneLast4: args.phoneLast4,
             freeText: args.freeText ?? null,
             source: args.source,
-          },
-        }),
+          } as unknown as Parameters<DaySchedule["holdSlot"]>[0]),
+        )
+        return unwrap(result)
+      },
     }),
 
     confirmBooking: t.field({
@@ -117,11 +99,16 @@ builder.mutationType({
         code: t.arg.string({ required: true }),
         phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
       },
-      resolve: (_root, args, ctx) =>
-        callDO(ctx, args.date, {
-          type: "confirm",
-          payload: { code: args.code, phoneLast4: args.phoneLast4 },
-        }),
+      resolve: async (_root, args, ctx) => {
+        const stub = dayDoFor(ctx.env, args.date)
+        const result = await Promise.resolve(
+          stub.confirmBooking({
+            code: args.code,
+            phoneLast4: args.phoneLast4,
+          } as unknown as Parameters<DaySchedule["confirmBooking"]>[0]),
+        )
+        return unwrap(result)
+      },
     }),
 
     cancelBooking: t.field({
@@ -133,15 +120,17 @@ builder.mutationType({
         phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
         reason: t.arg.string({ required: true }),
       },
-      resolve: (_root, args, ctx) =>
-        callDO(ctx, args.date, {
-          type: "cancel",
-          payload: {
+      resolve: async (_root, args, ctx) => {
+        const stub = dayDoFor(ctx.env, args.date)
+        const result = await Promise.resolve(
+          stub.cancelBooking({
             code: args.code,
             phoneLast4: args.phoneLast4,
             reason: args.reason,
-          },
-        }),
+          } as unknown as Parameters<DaySchedule["cancelBooking"]>[0]),
+        )
+        return unwrap(result)
+      },
     }),
 
     rescheduleBooking: t.field({
@@ -157,10 +146,10 @@ builder.mutationType({
         slotStart: t.arg({ type: "Instant", required: true }),
         slotEnd: t.arg({ type: "Instant", required: true }),
       },
-      resolve: (_root, args, ctx) =>
-        callDO(ctx, args.date, {
-          type: "reschedule",
-          payload: {
+      resolve: async (_root, args, ctx) => {
+        const stub = dayDoFor(ctx.env, args.date)
+        const result = await Promise.resolve(
+          stub.rescheduleBooking({
             code: args.code,
             phoneLast4: args.phoneLast4,
             newSlot: {
@@ -170,8 +159,10 @@ builder.mutationType({
               start: args.slotStart,
               end: args.slotEnd,
             },
-          },
-        }),
+          } as unknown as Parameters<DaySchedule["rescheduleBooking"]>[0]),
+        )
+        return unwrap(result)
+      },
     }),
   }),
 })

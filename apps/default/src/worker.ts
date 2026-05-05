@@ -1,13 +1,14 @@
 import { PurgeStalePii, SilentLoggerLive, SystemClockLive } from "@booking/core"
 import { Effect, Layer } from "effect"
 import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
+import type { DaySchedule } from "./server/durableObjects/DaySchedule.js"
 import { yoga } from "./server/graphql/yoga.js"
 
 export { DaySchedule } from "./server/durableObjects/DaySchedule.js"
 
 type Env = {
   DB: D1Database
-  DAY_SCHEDULE: DurableObjectNamespace
+  DAY_SCHEDULE: DurableObjectNamespace<DaySchedule>
   DEPLOYMENT_NAME: string
   DEPLOYMENT_TIMEZONE: string
 }

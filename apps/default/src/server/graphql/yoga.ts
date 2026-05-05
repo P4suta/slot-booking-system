@@ -1,10 +1,11 @@
 import { createYoga } from "graphql-yoga"
+import type { DaySchedule } from "../durableObjects/DaySchedule.js"
 import type { GraphQLContext } from "./builder.js"
 import { schema } from "./schema.js"
 
 type Env = {
   readonly DB: D1Database
-  readonly DAY_SCHEDULE: DurableObjectNamespace
+  readonly DAY_SCHEDULE: DurableObjectNamespace<DaySchedule>
 }
 
 /**

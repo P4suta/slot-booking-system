@@ -1,15 +1,20 @@
 import SchemaBuilder from "@pothos/core"
 import { GraphQLError } from "graphql"
+import type { DaySchedule } from "../durableObjects/DaySchedule.js"
 
 /**
  * Pothos GraphQL schema builder.
  *
  * **Context shape** — every resolver gets `{ env, request }` so it can:
- *   - reach the per-day DurableObject (`env.DAY_SCHEDULE.idFromName(date)`)
- *     for write paths; the DO is the actor that serialises mutations
- *     within a single day (ADR-0005)
+ *   - reach the per-day DurableObject via typed RPC method invocation
+ *     (`env.DAY_SCHEDULE.get(id).holdSlot(input)` etc.); the DO is the
+ *     actor that serialises mutations within a single day (ADR-0005)
  *   - reach D1 directly (`env.DB`) for the long-retention read
  *     projections (ADR-0006)
+ *
+ * The `DurableObjectNamespace<DaySchedule>` typing pulls the RPC
+ * method signatures through to the resolver — `stub.holdSlot(input)`
+ * etc. type-check end-to-end without any cast (ADR-0030).
  *
  * **Custom scalars** validate at the GraphQL boundary so the types
  * threaded into use cases are already narrowed (`PlainDate`, `Instant`
@@ -21,7 +26,7 @@ import { GraphQLError } from "graphql"
 export type GraphQLContext = {
   readonly env: {
     readonly DB: D1Database
-    readonly DAY_SCHEDULE: DurableObjectNamespace
+    readonly DAY_SCHEDULE: DurableObjectNamespace<DaySchedule>
   }
   readonly request: Request
 }
