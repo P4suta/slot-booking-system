@@ -12,10 +12,12 @@ import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import type { ResourceType } from "../value-objects/ResourceType.js"
 import * as B from "./Bitmap.js"
 
-/** Inputs for slot computation. All fields are read-only and pure data. */
-export type SlotCalcInput = {
-  readonly service: Service
-  readonly date: Temporal.PlainDate
+/**
+ * Deployment-scoped, request-independent inputs to slot computation.
+ * Cacheable across many `computeAvailableSlots(env, query)` calls within
+ * a single HTTP request batch.
+ */
+export type SlotCalcEnv = {
   readonly timeZone: BusinessTimeZone
   readonly businessHoursByWeekday: ReadonlyMap<Weekday, BusinessHours>
   readonly closures: readonly Closure[]
@@ -24,9 +26,43 @@ export type SlotCalcInput = {
   readonly providerAbsences: readonly ProviderAbsence[]
   readonly servicesById: ReadonlyMap<ServiceId, Service>
   readonly existingBookings: readonly Booking[]
-  readonly now: Temporal.Instant
   readonly slotGranularityMinutes: number
 }
+
+/** Per-call query against a {@link SlotCalcEnv}. */
+export type SlotCalcQuery = {
+  readonly service: Service
+  readonly date: Temporal.PlainDate
+  readonly now: Temporal.Instant
+}
+
+/**
+ * Backwards-compatible flat shape (env ∪ query). Existing callers /
+ * fixtures that build a single object can pass it through
+ * {@link splitInput} or use the legacy convenience overload of
+ * {@link computeAvailableSlots}.
+ */
+export type SlotCalcInput = SlotCalcEnv & SlotCalcQuery
+
+/** Project a flat {@link SlotCalcInput} into the env / query pair. */
+export const splitInput = (input: SlotCalcInput): readonly [SlotCalcEnv, SlotCalcQuery] => [
+  {
+    timeZone: input.timeZone,
+    businessHoursByWeekday: input.businessHoursByWeekday,
+    closures: input.closures,
+    providers: input.providers,
+    resources: input.resources,
+    providerAbsences: input.providerAbsences,
+    servicesById: input.servicesById,
+    existingBookings: input.existingBookings,
+    slotGranularityMinutes: input.slotGranularityMinutes,
+  },
+  {
+    service: input.service,
+    date: input.date,
+    now: input.now,
+  },
+]
 
 /** A single bookable slot derived from `computeAvailableSlots`. */
 export type AvailableSlot = {
@@ -249,6 +285,11 @@ const groupByType = (
  * Pure, deterministic computation of bookable slots on a single day,
  * driven by ADR-0012 bitmap arithmetic. Same input → same output.
  *
+ * Two call shapes:
+ *   - `(env, query)` — explicit, the canonical form.
+ *   - `(input)` — flat object that combines env + query, retained for
+ *     compatibility with fixtures that build the merged shape.
+ *
  * Algorithm:
  *   1. Drop the date if it falls in a Closure or has no business hours.
  *   2. Build a 1440-bit per-day mask: open windows ∧ ¬past.
@@ -263,45 +304,61 @@ const groupByType = (
  *      a free `[start, start + D)`. ID order makes the result
  *      deterministic.
  */
-export const computeAvailableSlots = (input: SlotCalcInput): readonly AvailableSlot[] => {
-  if (!input.service.enabled) return []
-  if (input.slotGranularityMinutes <= 0) return []
+export function computeAvailableSlots(
+  env: SlotCalcEnv,
+  query: SlotCalcQuery,
+): readonly AvailableSlot[]
+export function computeAvailableSlots(input: SlotCalcInput): readonly AvailableSlot[]
+export function computeAvailableSlots(
+  envOrInput: SlotCalcEnv | SlotCalcInput,
+  maybeQuery?: SlotCalcQuery,
+): readonly AvailableSlot[] {
+  const [env, query] =
+    maybeQuery === undefined
+      ? splitInput(envOrInput as SlotCalcInput)
+      : [envOrInput as SlotCalcEnv, maybeQuery]
+  return computeImpl(env, query)
+}
 
-  const weekday = input.date.dayOfWeek as Weekday
-  const bh = input.businessHoursByWeekday.get(weekday)
+const computeImpl = (env: SlotCalcEnv, query: SlotCalcQuery): readonly AvailableSlot[] => {
+  if (!query.service.enabled) return []
+  if (env.slotGranularityMinutes <= 0) return []
+
+  const weekday = query.date.dayOfWeek as Weekday
+  const bh = env.businessHoursByWeekday.get(weekday)
   if (!bh || bh.windows.length === 0) return []
-  if (input.closures.some((c) => c.date.equals(input.date))) return []
+  if (env.closures.some((c) => c.date.equals(query.date))) return []
 
-  const dayStart = input.date.toZonedDateTime({ timeZone: input.timeZone })
-  const baseMask = buildBusinessAndPastMask(bh, input.date, input.now, input.timeZone)
+  const dayStart = query.date.toZonedDateTime({ timeZone: env.timeZone })
+  const baseMask = buildBusinessAndPastMask(bh, query.date, query.now, env.timeZone)
   if (baseMask === null) return []
 
-  const resolved = resolveBookings(input.existingBookings, input.servicesById)
+  const resolved = resolveBookings(env.existingBookings, env.servicesById)
 
   const providerAvailabilities = computeProviderAvailabilities(
     baseMask,
-    input.service,
-    input.providers,
-    input.providerAbsences,
+    query.service,
+    env.providers,
+    env.providerAbsences,
     resolved,
     dayStart,
   )
 
   const resourceAvailabilities = computeResourceAvailabilities(
     baseMask,
-    input.service,
-    input.resources,
+    query.service,
+    env.resources,
     resolved,
-    input.date,
+    query.date,
     dayStart,
-    input.timeZone,
+    env.timeZone,
   )
   const resourcesByType = groupByType(resourceAvailabilities)
 
-  const D = input.service.durationMinutes
-  const bufBefore = input.service.bufferBeforeMinutes
-  const bufAfter = input.service.bufferAfterMinutes
-  const G = input.slotGranularityMinutes
+  const D = query.service.durationMinutes
+  const bufBefore = query.service.bufferBeforeMinutes
+  const bufAfter = query.service.bufferAfterMinutes
+  const G = env.slotGranularityMinutes
 
   const out: AvailableSlot[] = []
   for (let startMin = 0; startMin + D <= MINUTES_PER_DAY; startMin += G) {
@@ -314,7 +371,7 @@ export const computeAvailableSlots = (input: SlotCalcInput): readonly AvailableS
 
     const resourceIds = pickResources(
       resourcesByType,
-      input.service.requiredResourceTypes,
+      query.service.requiredResourceTypes,
       startMin,
       startMin + D,
     )

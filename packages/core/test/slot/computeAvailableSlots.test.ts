@@ -7,6 +7,7 @@ import type { Service } from "../../src/domain/entities/Service.js"
 import {
   type AvailableSlot,
   computeAvailableSlots,
+  splitInput,
 } from "../../src/domain/slot/computeAvailableSlots.js"
 import {
   type ClosureId,
@@ -403,6 +404,13 @@ describe("computeAvailableSlots", () => {
       // Provider A should be available since the booking is cancelled — the
       // ID-asc tiebreak picks A.
       expect(at13?.providerId).toBe(PROVIDER_ID_A)
+    })
+
+    it("(env, query) explicit form returns the same result as the flat form", () => {
+      const flat = baseInput()
+      const direct = computeAvailableSlots(flat)
+      const split = computeAvailableSlots(...splitInput(flat))
+      expect(split).toEqual(direct)
     })
   })
 })

@@ -1,3 +1,5 @@
+import { dual } from "effect/Function"
+
 /**
  * Fixed-length boolean array, backed by an arbitrary-precision `bigint`.
  * Used as the primitive for per-day Provider / Resource availability so
@@ -11,6 +13,11 @@
  * impossible by construction. No array indexing is required, which
  * eliminates the `noUncheckedIndexedAccess` friction and lets every
  * function be a total expression with no defensive branches.
+ *
+ * **Calling style** — combinators that take a Bitmap as their first
+ * non-trivial argument are dual: they accept either `op(bm, …)` (data-
+ * first) or `pipe(bm, op(…))` (data-last). Unary operations stay
+ * data-first only.
  */
 export type Bitmap = {
   readonly value: bigint
@@ -51,34 +58,52 @@ const rangeMask = (start: number, end: number, length: number): bigint => {
 }
 
 /** Returns a new bitmap with bits in `[start, end)` set to 1, clamped to the bitmap. */
-export const setRange = (bm: Bitmap, start: number, end: number): Bitmap => ({
-  value: (bm.value | rangeMask(start, end, bm.length)) & lenMask(bm.length),
-  length: bm.length,
-})
+export const setRange: {
+  (start: number, end: number): (bm: Bitmap) => Bitmap
+  (bm: Bitmap, start: number, end: number): Bitmap
+} = dual(
+  3,
+  (bm: Bitmap, start: number, end: number): Bitmap => ({
+    value: (bm.value | rangeMask(start, end, bm.length)) & lenMask(bm.length),
+    length: bm.length,
+  }),
+)
 
 /** Returns a new bitmap with bits in `[start, end)` cleared to 0. */
-export const clearRange = (bm: Bitmap, start: number, end: number): Bitmap => ({
-  value: bm.value & ~rangeMask(start, end, bm.length) & lenMask(bm.length),
-  length: bm.length,
-})
+export const clearRange: {
+  (start: number, end: number): (bm: Bitmap) => Bitmap
+  (bm: Bitmap, start: number, end: number): Bitmap
+} = dual(
+  3,
+  (bm: Bitmap, start: number, end: number): Bitmap => ({
+    value: bm.value & ~rangeMask(start, end, bm.length) & lenMask(bm.length),
+    length: bm.length,
+  }),
+)
 
 /**
  * Bitwise AND. The shorter length wins; the result is the union over
  * the common prefix (bits above the shorter length are dropped).
  */
-export const and = (a: Bitmap, b: Bitmap): Bitmap => {
+export const and: {
+  (b: Bitmap): (a: Bitmap) => Bitmap
+  (a: Bitmap, b: Bitmap): Bitmap
+} = dual(2, (a: Bitmap, b: Bitmap): Bitmap => {
   const len = Math.min(a.length, b.length)
   return { value: a.value & b.value & lenMask(len), length: len }
-}
+})
 
 /**
  * Bitwise OR. The shorter length wins; bits above the shorter length
  * are masked off so the result is a well-formed bitmap.
  */
-export const or = (a: Bitmap, b: Bitmap): Bitmap => {
+export const or: {
+  (b: Bitmap): (a: Bitmap) => Bitmap
+  (a: Bitmap, b: Bitmap): Bitmap
+} = dual(2, (a: Bitmap, b: Bitmap): Bitmap => {
   const len = Math.min(a.length, b.length)
   return { value: (a.value | b.value) & lenMask(len), length: len }
-}
+})
 
 /** Bitwise NOT, masked to the bitmap length. */
 export const not = (bm: Bitmap): Bitmap => ({
@@ -92,14 +117,17 @@ export const not = (bm: Bitmap): Bitmap => ({
  *
  * `n <= 0` is the identity; `n >= bm.length` is the all-zeros bitmap.
  */
-export const shiftDown = (bm: Bitmap, n: number): Bitmap => {
+export const shiftDown: {
+  (n: number): (bm: Bitmap) => Bitmap
+  (bm: Bitmap, n: number): Bitmap
+} = dual(2, (bm: Bitmap, n: number): Bitmap => {
   if (n <= 0) return bm
   if (n >= bm.length) return empty(bm.length)
   return {
     value: (bm.value >> BigInt(n)) & lenMask(bm.length),
     length: bm.length,
   }
-}
+})
 
 /** Population count. */
 export const popcount = (bm: Bitmap): number => {
@@ -123,7 +151,10 @@ export const popcount = (bm: Bitmap): number => {
  * `runLength <= 0` returns every valid offset; `runLength > bm.length`
  * returns the empty array.
  */
-export const findRunsOfLength = (bm: Bitmap, runLength: number): readonly number[] => {
+export const findRunsOfLength: {
+  (runLength: number): (bm: Bitmap) => readonly number[]
+  (bm: Bitmap, runLength: number): readonly number[]
+} = dual(2, (bm: Bitmap, runLength: number): readonly number[] => {
   if (runLength <= 0) {
     return Array.from({ length: bm.length }, (_, i) => i)
   }
@@ -138,11 +169,13 @@ export const findRunsOfLength = (bm: Bitmap, runLength: number): readonly number
     if (((acc >> BigInt(i)) & ONE) === ONE) out.push(i)
   }
   return out
-}
+})
 
 /** Equality (same length, same value). */
-export const equals = (a: Bitmap, b: Bitmap): boolean =>
-  a.length === b.length && a.value === b.value
+export const equals: {
+  (b: Bitmap): (a: Bitmap) => boolean
+  (a: Bitmap, b: Bitmap): boolean
+} = dual(2, (a: Bitmap, b: Bitmap): boolean => a.length === b.length && a.value === b.value)
 
 /** Diagnostic: render as a `0`/`1` string of `bm.length` chars, bit 0 first. */
 export const toBinaryString = (bm: Bitmap): string => {
