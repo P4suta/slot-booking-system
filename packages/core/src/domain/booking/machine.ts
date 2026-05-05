@@ -1,7 +1,8 @@
 /**
- * Specification of the Booking lifecycle as a pure adjacency table.
- * The transition map below is the **single source of truth**; the
- * implementation in `transitions.ts` (`apply`) is cross-validated
+ * Specification of the Booking lifecycle as a typed adjacency table.
+ * The {@link TransitionTable} type is the **single source of truth at
+ * the type level**; the runtime constant {@link TRANSITIONS} is its
+ * value-level mirror, and `apply` in `transitions.ts` is cross-validated
  * against it by `machine.test.ts`.
  *
  * The spec carries no domain data — it is intentionally context-free
@@ -15,13 +16,11 @@
  * are reified in `TERMINAL`.
  *
  * History (Phase 0.6 / ADR-0031): the previous version constructed an
- * xstate v5 `createMachine(...)` from this same table. The xstate value
- * was used by exactly one test (`bookingMachine.states.keys`); every
- * other consumer read from `TRANSITIONS` directly. Dropping the
- * xstate runtime dependency removes ~30 KB from the bundle and one
- * external surface, with no semantic loss — the table *is* the
- * specification, and `keyof typeof TRANSITIONS[State]` already gives
- * us compile-time exhaustiveness over the (state, event) lattice.
+ * xstate v5 `createMachine(...)` from this same table. Phase 0.7-α3
+ * promotes the table to the type level so callers can derive
+ * `AllowedCommandKinds<S>` and `NextState<S, K>` at compile time —
+ * the (state, command) lattice is now queryable as a mapped type, not
+ * just an `Object.keys` lookup.
  */
 
 export type BookingMachineState = "Held" | "Confirmed" | "Cancelled" | "Completed" | "NoShow"
@@ -35,17 +34,36 @@ export type BookingMachineEventType =
   | "MarkNoShow"
 
 /**
- * Adjacency table mirroring the booking state graph. Editing this table
- * editsthe specification — `apply` is cross-validated against it in
+ * Type-level adjacency lattice over `(state, event) → state`. Empty
+ * objects encode terminal states (no outgoing edges). The runtime
+ * {@link TRANSITIONS} satisfies this type, so a missing or misnamed
+ * entry is a compile-time error.
+ */
+export type TransitionTable = {
+  readonly Held: {
+    readonly Confirm: "Confirmed"
+    readonly Cancel: "Cancelled"
+    readonly Expire: "Cancelled"
+  }
+  readonly Confirmed: {
+    readonly Cancel: "Cancelled"
+    readonly Reschedule: "Confirmed"
+    readonly Complete: "Completed"
+    readonly MarkNoShow: "NoShow"
+  }
+  readonly Cancelled: Record<never, never>
+  readonly Completed: Record<never, never>
+  readonly NoShow: Record<never, never>
+}
+
+/**
+ * Adjacency table mirroring the booking state graph. Editing this
+ * value (and its corresponding {@link TransitionTable} entry) edits
+ * the specification — `apply` is cross-validated against it in
  * `machine.test.ts`. Self-loops (e.g. Reschedule on Confirmed) appear
  * explicitly so they round-trip through `machineNext`.
  */
-export const TRANSITIONS: Readonly<
-  Record<
-    BookingMachineState,
-    Readonly<Partial<Record<BookingMachineEventType, BookingMachineState>>>
-  >
-> = {
+export const TRANSITIONS: TransitionTable = {
   Held: {
     Confirm: "Confirmed",
     Cancel: "Cancelled",
@@ -60,7 +78,28 @@ export const TRANSITIONS: Readonly<
   Cancelled: {},
   Completed: {},
   NoShow: {},
-}
+} as const
+
+/**
+ * Command kinds that are valid while in state `S`. Equivalent to
+ * `keyof TransitionTable[S]`, intersected with the closed
+ * `BookingMachineEventType` union to keep stray strings out of the
+ * type. Terminal states resolve to `never`, which makes
+ * `applyTyped(b, c)` (Phase 0.7+ overload) refuse to compile when
+ * `b` is in a terminal state.
+ */
+export type AllowedCommandKinds<S extends BookingMachineState> = keyof TransitionTable[S] &
+  BookingMachineEventType
+
+/**
+ * Successor state when command `K` is dispatched while in state `S`.
+ * `K` is constrained to `AllowedCommandKinds<S>`, so an invalid
+ * (state, command) pair is rejected at the call site.
+ */
+export type NextState<
+  S extends BookingMachineState,
+  K extends AllowedCommandKinds<S>,
+> = TransitionTable[S][K] extends BookingMachineState ? TransitionTable[S][K] : never
 
 /**
  * Whether `state` accepts no further commands. Three terminal states;
@@ -89,4 +128,7 @@ export const machineAllows = (
 export const machineNext = (
   state: BookingMachineState,
   eventType: BookingMachineEventType,
-): BookingMachineState | null => TRANSITIONS[state][eventType] ?? null
+): BookingMachineState | null => {
+  const row = TRANSITIONS[state] as Readonly<Record<string, BookingMachineState | undefined>>
+  return row[eventType] ?? null
+}
