@@ -29,3 +29,9 @@ new_sqlite_classes = ["DaySchedule"]
 [vars]
 DEPLOYMENT_NAME = "default"
 DEPLOYMENT_TIMEZONE = "UTC"
+
+# Daily cron at 04:00 UTC. Drives the `scheduled` handler in
+# `src/worker.ts` which NULLs PII fields on bookings whose terminal
+# state was reached more than 2 years ago (ADR-0009 / SYSTEM §6).
+[triggers]
+crons = ["0 4 * * *"]

@@ -1,3 +1,6 @@
+import { PurgeStalePii, SilentLoggerLive, SystemClockLive } from "@booking/core"
+import { Effect, Layer } from "effect"
+import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
 import { yoga } from "./server/graphql/yoga.js"
 
 export { DaySchedule } from "./server/durableObjects/DaySchedule.js"
@@ -20,6 +23,11 @@ type Env = {
  * that mutate bookings will resolve the DO via `env.DAY_SCHEDULE.get(...)`
  * and forward the parsed operation; the DO's actor model is what
  * serialises concurrent writes per day (ADR-0005).
+ *
+ * The `scheduled` handler runs the daily PII-purge job (ADR-0009 +
+ * SYSTEM §6): any booking whose terminal timestamp is more than 2
+ * years old has its `nameKana` / `phoneLast4` / `freeText` columns
+ * NULL'd. Cron schedule lives in `wrangler.toml` `[triggers].crons`.
  */
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -46,5 +54,14 @@ export default {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     })
+  },
+
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
+    const layer = Layer.mergeAll(makeD1PiiPurger(env.DB), SystemClockLive, SilentLoggerLive)
+    await Effect.runPromise(PurgeStalePii().pipe(Effect.provide(layer)))
   },
 } satisfies ExportedHandler<Env>
