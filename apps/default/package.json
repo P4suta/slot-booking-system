@@ -13,7 +13,10 @@
   },
   "dependencies": {
     "@booking/core": "workspace:*",
-    "drizzle-orm": "^0.45.0"
+    "@pothos/core": "^4.12.0",
+    "drizzle-orm": "^0.45.0",
+    "graphql": "^16.13.2",
+    "graphql-yoga": "^5.21.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260504.0",
