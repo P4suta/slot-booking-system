@@ -1,6 +1,8 @@
 import SchemaBuilder from "@pothos/core"
+import ErrorsPlugin from "@pothos/plugin-errors"
 import { GraphQLError } from "graphql"
 import type { DaySchedule } from "../durableObjects/DaySchedule.js"
+import { BookingError } from "./errors.js"
 
 /**
  * Pothos GraphQL schema builder.
@@ -22,6 +24,14 @@ import type { DaySchedule } from "../durableObjects/DaySchedule.js"
  * The same Effect Schema parsers run downstream inside the use cases,
  * but failing fast at the GraphQL parser keeps the error responses
  * uniform.
+ *
+ * **Errors plugin (Phase 0.7-β4)** — `@pothos/plugin-errors` is
+ * registered with `BookingError` as the default thrown type. Resolvers
+ * declare `errors: { types: [BookingError] }` and `throw new
+ * BookingError(payload)` instead of `throw new GraphQLError(...)`;
+ * the plugin emits a typed GraphQL union `<Result> | BookingError`
+ * for each field, so the client narrows on `__typename` rather than
+ * inspecting the legacy `errors[]` blob.
  */
 export type GraphQLContext = {
   readonly env: {
@@ -38,7 +48,12 @@ export const builder = new SchemaBuilder<{
     PhoneLast4: { Input: string; Output: string }
   }
   Context: GraphQLContext
-}>({})
+}>({
+  plugins: [ErrorsPlugin],
+  errors: {
+    defaultTypes: [BookingError],
+  },
+})
 
 const expectString =
   (typeName: string) =>
@@ -65,4 +80,18 @@ builder.scalarType("PhoneLast4", {
   description: "Last four digits of a phone number — exactly four ASCII digits.",
   serialize: (v) => v,
   parseValue: expectString("PhoneLast4"),
+})
+
+builder.objectType(BookingError, {
+  name: "BookingError",
+  description:
+    "A booking operation refused by the domain. Carries the discriminator tag, " +
+    "stable error code, severity, and an i18n key the frontend can localize.",
+  fields: (t) => ({
+    tag: t.exposeString("tag"),
+    code: t.exposeString("code"),
+    severity: t.exposeString("severity"),
+    i18nKey: t.exposeString("i18nKey"),
+    message: t.exposeString("message"),
+  }),
 })

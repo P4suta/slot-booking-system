@@ -38,6 +38,9 @@ importers:
       '@pothos/core':
         specifier: ^4.12.0
         version: 4.12.0(graphql@16.13.2)
+      '@pothos/plugin-errors':
+        specifier: ^4.9.0
+        version: 4.9.0(@pothos/core@4.12.0(graphql@16.13.2))(graphql@16.13.2)
       drizzle-orm:
         specifier: ^0.45.0
         version: 0.45.2(@cloudflare/workers-types@4.20260504.1)
@@ -1711,6 +1714,12 @@ packages:
   '@pothos/core@4.12.0':
     resolution: {integrity: sha512-PeiODrj3GjQ7Nbs/5p65DEyBWZTSGGjgGO/BgaMEqS1jBNX/2zJTEQJA9zM5uPmCHUCDjE7Qn2U7lOi0ALp/8A==}
     peerDependencies:
+      graphql: ^16.10.0
+
+  '@pothos/plugin-errors@4.9.0':
+    resolution: {integrity: sha512-RargBiHpg+LTQb8VcpR3FHX0cSLR2+rpU70v1Hhj2caOoNOMP7J+T2Y9vyXqJo3d+DtchPBjtixZ3lkQ11S/wQ==}
+    peerDependencies:
+      '@pothos/core': '*'
       graphql: ^16.10.0
 
   '@repeaterjs/repeater@3.0.6':
@@ -4791,6 +4800,11 @@ snapshots:
 
   '@pothos/core@4.12.0(graphql@16.13.2)':
     dependencies:
+      graphql: 16.13.2
+
+  '@pothos/plugin-errors@4.9.0(@pothos/core@4.12.0(graphql@16.13.2))(graphql@16.13.2)':
+    dependencies:
+      '@pothos/core': 4.12.0(graphql@16.13.2)
       graphql: 16.13.2
 
   '@repeaterjs/repeater@3.0.6': {}

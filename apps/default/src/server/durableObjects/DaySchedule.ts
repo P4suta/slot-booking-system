@@ -221,38 +221,3 @@ export class DaySchedule extends DurableObject<Env> {
     )
   }
 }
-
-/**
- * HTTP status mapping for domain errors. Re-exported so the GraphQL
- * resolver can map an `EncodedDomainError._tag` to a GraphQL error
- * extension `status` field.
- *
- * Validation failures → 400, not-found / phone-mismatch → 404
- * (deliberately conflated to avoid leaking which half of the credential
- * pair was wrong), terminal state / availability → 409, infra storage
- * → 500.
- */
-export const domainErrorTagToStatus = (tag: string): number => {
-  switch (tag) {
-    case "BookingNotFound":
-    case "PhoneMismatch":
-    case "AggregateNotFound":
-      return 404
-    case "AlreadyCancelled":
-    case "AlreadyCompleted":
-    case "AlreadyNoShow":
-    case "InvalidStateTransition":
-    case "SlotUnavailable":
-    case "SlotExpired":
-    case "OutsideBusinessHours":
-    case "ServiceDisabled":
-    case "ProviderUnavailable":
-    case "ResourceUnavailable":
-    case "Concurrency":
-      return 409
-    case "Storage":
-      return 500
-    default:
-      return 400
-  }
-}

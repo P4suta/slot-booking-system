@@ -1,8 +1,7 @@
 import { Either } from "effect"
-import { GraphQLError } from "graphql"
 import type { DaySchedule } from "../../durableObjects/DaySchedule.js"
-import { domainErrorTagToStatus } from "../../durableObjects/DaySchedule.js"
 import { builder, type GraphQLContext } from "../builder.js"
+import { BookingError, type EncodedDomainError } from "../errors.js"
 
 /**
  * Booking mutations — `holdSlot`, `confirmBooking`, `cancelBooking`,
@@ -11,11 +10,19 @@ import { builder, type GraphQLContext } from "../builder.js"
  * (ADR-0030 / 2026 mainstream). Writes serialise inside the actor
  * model; the DO returns `Either<EncodedDomainError, EncodedResult>`,
  * the resolver narrows on `_tag` and either returns the encoded
- * success or throws a typed `GraphQLError`.
+ * success or throws a typed `BookingError`.
+ *
+ * Phase 0.7-β4 — the `@pothos/plugin-errors` plugin renders
+ * `BookingError` as a typed union arm in the GraphQL schema (rather
+ * than the legacy `throw new GraphQLError` path); the
+ * `EncodedDomainError → BookingError` lift is the single boundary
+ * surface that turns a domain refusal into a wire-shape error.
  *
  * Throwing the domain error directly across the RPC boundary would
  * lose its discriminated-union shape (Cloudflare strips custom Error
- * subclass fields); the explicit `Either` channel preserves it.
+ * subclass fields); the explicit `Either` channel preserves it, then
+ * the resolver re-lifts it onto a typed Error class on the GraphQL
+ * side.
  */
 
 type BookingResultShape = {
@@ -38,25 +45,21 @@ const dayDoFor = (env: GraphQLContext["env"], date: string): DurableObjectStub<D
   return env.DAY_SCHEDULE.get(id)
 }
 
-/** Unwrap an `Either<EncResult, EncDomainError>` from the DO into a GraphQL response. */
-const unwrap = <R extends BookingResultShape>(
-  result: Either.Either<R, { readonly _tag: string; readonly code: string }>,
-): R => {
+/**
+ * Lift a DO RPC `Either` into a typed GraphQL response. On Right,
+ * return the success value. On Left, raise `BookingError` so the
+ * Pothos errors plugin renders the typed union arm.
+ */
+const unwrap = <R extends BookingResultShape>(result: Either.Either<R, EncodedDomainError>): R => {
   if (Either.isRight(result)) return result.right
-  const err = result.left
-  throw new GraphQLError(`${err._tag} (${err.code})`, {
-    extensions: {
-      code: err.code,
-      tag: err._tag,
-      status: domainErrorTagToStatus(err._tag),
-    },
-  })
+  throw new BookingError(result.left)
 }
 
 builder.mutationType({
   fields: (t) => ({
     holdSlot: t.field({
       type: BookingResultType,
+      errors: { types: [BookingError] },
       description: "Place a 5-minute hold on the supplied AvailableSlot.",
       args: {
         date: t.arg({ type: "PlainDate", required: true }),
@@ -72,6 +75,15 @@ builder.mutationType({
       },
       resolve: async (_root, args, ctx) => {
         const stub = dayDoFor(ctx.env, args.date)
+        // The DO RPC method declares its argument with branded
+        // domain types (`AvailableSlot` carrying `Temporal.ZonedDateTime`),
+        // but the Cloudflare runtime passes values through
+        // `structuredClone` which strips brands and turns Temporal
+        // values back into ISO-8601 strings. The DO body re-decodes
+        // through Effect Schema before reaching the use case, so the
+        // cast here marks the wire boundary explicitly. Phase 0.10
+        // will close the loop with HMAC-signed slot tokens that
+        // re-mint the brand at the DO boundary.
         const result = await Promise.resolve(
           stub.holdSlot({
             slot: {
@@ -87,12 +99,13 @@ builder.mutationType({
             source: args.source,
           } as unknown as Parameters<DaySchedule["holdSlot"]>[0]),
         )
-        return unwrap(result)
+        return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
     }),
 
     confirmBooking: t.field({
       type: BookingResultType,
+      errors: { types: [BookingError] },
       description: "Promote a Held booking to Confirmed via code + phoneLast4.",
       args: {
         date: t.arg({ type: "PlainDate", required: true }),
@@ -107,12 +120,13 @@ builder.mutationType({
             phoneLast4: args.phoneLast4,
           } as unknown as Parameters<DaySchedule["confirmBooking"]>[0]),
         )
-        return unwrap(result)
+        return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
     }),
 
     cancelBooking: t.field({
       type: BookingResultType,
+      errors: { types: [BookingError] },
       description: "Cancel a Held or Confirmed booking via code + phoneLast4.",
       args: {
         date: t.arg({ type: "PlainDate", required: true }),
@@ -129,12 +143,13 @@ builder.mutationType({
             reason: args.reason,
           } as unknown as Parameters<DaySchedule["cancelBooking"]>[0]),
         )
-        return unwrap(result)
+        return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
     }),
 
     rescheduleBooking: t.field({
       type: BookingResultType,
+      errors: { types: [BookingError] },
       description: "Move a Confirmed booking to a different AvailableSlot on the same day.",
       args: {
         date: t.arg({ type: "PlainDate", required: true }),
@@ -161,7 +176,7 @@ builder.mutationType({
             },
           } as unknown as Parameters<DaySchedule["rescheduleBooking"]>[0]),
         )
-        return unwrap(result)
+        return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
     }),
   }),
