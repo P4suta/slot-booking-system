@@ -2,27 +2,25 @@ import { Temporal } from "@js-temporal/polyfill"
 import { Effect, Either, Layer } from "effect"
 import { describe, expect, it } from "vitest"
 import { BookingCodeIndex } from "../../../src/application/ports/BookingCodeIndex.js"
-import { BookingRepository } from "../../../src/application/ports/BookingRepository.js"
+import { BookingEventSourcedRepository } from "../../../src/application/ports/EventSourcedRepository.js"
 import { HoldSlot } from "../../../src/application/usecases/HoldSlot.js"
 import { parseTraceId } from "../../../src/domain/errors/TraceId.js"
 import type { AvailableSlot } from "../../../src/domain/slot/computeAvailableSlots.js"
 import { newProviderId, newResourceId, newServiceId } from "../../../src/domain/types/EntityId.js"
 import { BloomBookingCodeIndexLive } from "../../../src/infrastructure/bloom/BloomBookingCodeIndexLive.js"
 import { SystemClockLive } from "../../../src/infrastructure/clock/SystemClockLive.js"
-import { InMemoryEventStoreLive } from "../../../src/infrastructure/eventstore/InMemoryEventStoreLive.js"
+import { InMemoryEventSourcedBookingRepositoryLive } from "../../../src/infrastructure/eventsourced/InMemoryEventSourcedRepositoryLive.js"
 import { DeterministicIdGeneratorLive } from "../../../src/infrastructure/id/DeterministicIdGeneratorLive.js"
 import {
   makeSilentLogger,
   SilentLoggerLive,
 } from "../../../src/infrastructure/logger/SilentLoggerLive.js"
-import { InMemoryBookingRepositoryLive } from "../../../src/infrastructure/repository/InMemoryBookingRepositoryLive.js"
 import { freeText, kana, phone } from "../../_fixtures/parsers.js"
 
 const TEST_LAYER = Layer.mergeAll(
   SystemClockLive,
   DeterministicIdGeneratorLive,
-  InMemoryBookingRepositoryLive,
-  InMemoryEventStoreLive,
+  InMemoryEventSourcedBookingRepositoryLive,
   BloomBookingCodeIndexLive,
   SilentLoggerLive,
 )
@@ -81,9 +79,10 @@ describe("HoldSlot", () => {
         freeText: null,
         source: "online",
       })
-      const repo = yield* BookingRepository
-      const found = yield* repo.findByCode(held.booking.code)
-      return { held, found }
+      const repo = yield* BookingEventSourcedRepository
+      const id = yield* repo.findByKey(held.booking.code)
+      const loaded = yield* repo.load(id)
+      return { held, found: loaded.state }
     })
     const { held, found } = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER)))
     expect(found.id).toBe(held.booking.id)
@@ -140,8 +139,7 @@ describe("HoldSlot", () => {
         handle.layer,
         SystemClockLive,
         DeterministicIdGeneratorLive,
-        InMemoryBookingRepositoryLive,
-        InMemoryEventStoreLive,
+        InMemoryEventSourcedBookingRepositoryLive,
         BloomBookingCodeIndexLive,
       )
       yield* HoldSlot({

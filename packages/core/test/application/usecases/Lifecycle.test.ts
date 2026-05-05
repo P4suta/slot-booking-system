@@ -9,17 +9,15 @@ import type { AvailableSlot } from "../../../src/domain/slot/computeAvailableSlo
 import { newProviderId, newResourceId, newServiceId } from "../../../src/domain/types/EntityId.js"
 import { BloomBookingCodeIndexLive } from "../../../src/infrastructure/bloom/BloomBookingCodeIndexLive.js"
 import { SystemClockLive } from "../../../src/infrastructure/clock/SystemClockLive.js"
-import { InMemoryEventStoreLive } from "../../../src/infrastructure/eventstore/InMemoryEventStoreLive.js"
+import { InMemoryEventSourcedBookingRepositoryLive } from "../../../src/infrastructure/eventsourced/InMemoryEventSourcedRepositoryLive.js"
 import { DeterministicIdGeneratorLive } from "../../../src/infrastructure/id/DeterministicIdGeneratorLive.js"
 import { SilentLoggerLive } from "../../../src/infrastructure/logger/SilentLoggerLive.js"
-import { InMemoryBookingRepositoryLive } from "../../../src/infrastructure/repository/InMemoryBookingRepositoryLive.js"
 import { kana, phone } from "../../_fixtures/parsers.js"
 
 const TEST_LAYER = Layer.mergeAll(
   SystemClockLive,
   DeterministicIdGeneratorLive,
-  InMemoryBookingRepositoryLive,
-  InMemoryEventStoreLive,
+  InMemoryEventSourcedBookingRepositoryLive,
   BloomBookingCodeIndexLive,
   SilentLoggerLive,
 )
@@ -76,7 +74,7 @@ describe("ConfirmBooking", () => {
     const result = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER)))
     expect(Either.isLeft(result)).toBe(true)
     if (Either.isLeft(result)) {
-      expect(["BookingNotFound", "InvalidBookingCode"]).toContain(result.left._tag)
+      expect(["AggregateNotFound", "InvalidBookingCode"]).toContain(result.left._tag)
     }
   })
 

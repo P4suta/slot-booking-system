@@ -1,15 +1,14 @@
 import { Effect } from "effect"
 import type { Booking } from "../../domain/booking/Booking.js"
-import type { DomainError } from "../../domain/errors/Errors.js"
+import type { ConcurrencyError, DomainError, StorageError } from "../../domain/errors/Errors.js"
 import type { TraceId } from "../../domain/errors/TraceId.js"
 import type { BookingEvent } from "../../domain/events/BookingEvent.js"
 import type { AvailableSlot } from "../../domain/slot/computeAvailableSlots.js"
 import type { BookingCode } from "../../domain/value-objects/BookingCode.js"
 import type { PhoneLast4 } from "../../domain/value-objects/PhoneLast4.js"
 import type { BookingCodeIndex } from "../ports/BookingCodeIndex.js"
-import type { BookingRepository } from "../ports/BookingRepository.js"
 import { Clock } from "../ports/Clock.js"
-import type { EventStore } from "../ports/EventStore.js"
+import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../ports/IdGenerator.js"
 import { Logger } from "../ports/Logger.js"
 import { applyAndPersist } from "./_applyAndPersist.js"
@@ -42,20 +41,20 @@ export const RescheduleBooking = (
   input: RescheduleBookingInput,
 ): Effect.Effect<
   RescheduleBookingResult,
-  DomainError,
-  Clock | IdGenerator | BookingRepository | EventStore | BookingCodeIndex | Logger
+  DomainError | ConcurrencyError | StorageError,
+  Clock | IdGenerator | BookingEventSourcedRepository | BookingCodeIndex | Logger
 > =>
   Effect.gen(function* () {
     const clock = yield* Clock
     const logger = yield* Logger
 
-    const booking = yield* authenticateCustomer(input.code, input.phoneLast4)
+    const loaded = yield* authenticateCustomer(input.code, input.phoneLast4)
     const at = yield* clock.nowInstant
     const newSlotInstants = {
       start: input.newSlot.start.toInstant(),
       end: input.newSlot.end.toInstant(),
     }
-    const result = yield* applyAndPersist(booking, {
+    const result = yield* applyAndPersist(loaded.state.id, loaded, {
       kind: "Reschedule",
       at,
       newSlot: newSlotInstants,
@@ -65,10 +64,10 @@ export const RescheduleBooking = (
       infoPayload(
         "BookingRescheduled",
         "I_USECASE_RESCHEDULE",
-        { bookingId: booking.id },
+        { bookingId: loaded.state.id },
         input.traceId,
       ),
     )
 
-    return result
+    return { booking: result.booking, event: result.event }
   })

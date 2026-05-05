@@ -1,6 +1,6 @@
 import { Duration, Effect } from "effect"
 import type { Booking } from "../../domain/booking/Booking.js"
-import type { DomainError } from "../../domain/errors/Errors.js"
+import type { ConcurrencyError, DomainError, StorageError } from "../../domain/errors/Errors.js"
 import type { TraceId } from "../../domain/errors/TraceId.js"
 import type { BookingEvent } from "../../domain/events/BookingEvent.js"
 import type { AvailableSlot } from "../../domain/slot/computeAvailableSlots.js"
@@ -8,9 +8,8 @@ import type { FreeText } from "../../domain/value-objects/FreeText.js"
 import type { NameKana } from "../../domain/value-objects/NameKana.js"
 import type { PhoneLast4 } from "../../domain/value-objects/PhoneLast4.js"
 import { BookingCodeIndex } from "../ports/BookingCodeIndex.js"
-import { BookingRepository } from "../ports/BookingRepository.js"
 import { Clock } from "../ports/Clock.js"
-import { EventStore } from "../ports/EventStore.js"
+import { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import { IdGenerator } from "../ports/IdGenerator.js"
 import { Logger } from "../ports/Logger.js"
 import { infoPayload } from "./_log.js"
@@ -28,11 +27,11 @@ import { infoPayload } from "./_log.js"
  * conflicting hold lands in the same window.
  *
  * **Phase pipeline** — read clock → mint ids → assemble Held + event →
- * persist (events are the source of truth, repository is the read-side
- * projection) → register the booking code in the bloom-filter index
- * (best-effort: a registry miss is recoverable, a registry forge is
- * not). All steps run inside a single `Effect.gen` so a failure at any
- * stage short-circuits without partial commit.
+ * `repo.save(id, 0, [event], booking)` (atomic event append + snapshot
+ * write inside one storage transaction; ADR-0029 D3) → register the
+ * booking code in the secondary index. All steps run inside a single
+ * `Effect.gen` so a failure at any stage short-circuits without partial
+ * commit.
  */
 export type HoldSlotInput = {
   readonly slot: AvailableSlot
@@ -55,14 +54,13 @@ export const HoldSlot = (
   input: HoldSlotInput,
 ): Effect.Effect<
   HoldSlotResult,
-  DomainError,
-  Clock | IdGenerator | BookingRepository | EventStore | BookingCodeIndex | Logger
+  DomainError | ConcurrencyError | StorageError,
+  Clock | IdGenerator | BookingEventSourcedRepository | BookingCodeIndex | Logger
 > =>
   Effect.gen(function* () {
     const clock = yield* Clock
     const idgen = yield* IdGenerator
-    const repo = yield* BookingRepository
-    const store = yield* EventStore
+    const repo = yield* BookingEventSourcedRepository
     const index = yield* BookingCodeIndex
     const logger = yield* Logger
 
@@ -105,9 +103,9 @@ export const HoldSlot = (
       slot: slotInstants,
     }
 
-    // Append the event first — events are the source of truth (ADR-0024).
-    yield* store.appendEvent(event)
-    yield* repo.upsert(booking)
+    // expected revision = 0 — Held is the seed event for a brand-new
+    // aggregate id, so storage must currently have nothing for `id`.
+    yield* repo.save(id, 0, [event], booking)
     yield* index.add(code)
 
     yield* logger.info(

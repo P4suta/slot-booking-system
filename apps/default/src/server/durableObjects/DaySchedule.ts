@@ -3,7 +3,6 @@ import type { DomainError, ErrorSeverity } from "@booking/core"
 import {
   BloomBookingCodeIndexLive,
   BookingCodeIndex,
-  BookingRepository,
   CancelBooking,
   ConfirmBooking,
   codeOf,
@@ -15,16 +14,13 @@ import {
   UlidIdGeneratorLive,
 } from "@booking/core"
 import { Effect, Either, Layer, Schema } from "effect"
-import { makeD1BookingRepository } from "../adapters/D1BookingRepositoryLive.js"
-import {
-  loadAllEvents,
-  makeDurableObjectEventStore,
-} from "../adapters/DurableObjectEventStoreLive.js"
+import { upsertBookingsToD1 } from "../adapters/D1BookingMirror.js"
 import {
   type DurableStorage,
   loadAllBookings,
-  makeDurableObjectRepository,
-} from "../adapters/DurableObjectRepositoryLive.js"
+  loadAllEvents,
+  makeDurableObjectEventSourcedRepository,
+} from "../adapters/DurableObjectEventSourcedRepositoryLive.js"
 
 /**
  * Per-day actor (ADR-0005). One DO instance per `(deployment, date)`
@@ -113,29 +109,23 @@ export class DaySchedule extends DurableObject<Env> {
    *
    * On each alarm tick we:
    *   1. snapshot every booking from the DO's local store
-   *   2. upsert each into D1 via {@link makeD1BookingRepository}
+   *   2. upsert each into D1 via {@link upsertBookingsToD1}
    *
-   * The use of `BookingRepository.upsert` (not raw `INSERT`) gives us
-   * idempotency: re-applying the same snapshot is a no-op, so the relay
-   * is at-least-once safe even if the alarm fires twice or wrangler
-   * restarts the worker mid-flush.
+   * `INSERT … ON CONFLICT DO UPDATE` gives us idempotency: re-applying
+   * the same snapshot is a no-op, so the relay is at-least-once safe
+   * even if the alarm fires twice or wrangler restarts the worker
+   * mid-flush.
    *
-   * Phase 1 ships the snapshot-based projector; the per-event log
+   * Phase 0.6 ships the snapshot-based projector; the per-event log
    * (`loadAllEvents`) is loaded only for the future event-sourcing
-   * relay (Phase 1.x), where each event will additionally be appended
-   * to D1's `booking_events` table for the audit trail.
+   * relay (T1-D), where each event will additionally be appended to
+   * D1's `booking_events` table for the audit trail.
    */
   private async drainOutboxToD1(storage: DurableStorage): Promise<void> {
     const events = await loadAllEvents(storage)
     if (events.length === 0) return
     const bookings = await loadAllBookings(storage)
-    const d1Layer = makeD1BookingRepository(this.env.DB)
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const repo = yield* BookingRepository
-        for (const booking of bookings) yield* repo.upsert(booking)
-      }).pipe(Effect.provide(d1Layer)),
-    )
+    await Effect.runPromise(upsertBookingsToD1(this.env.DB, bookings))
   }
 
   private async runOp(op: Op): Promise<Response> {
@@ -193,8 +183,7 @@ export class DaySchedule extends DurableObject<Env> {
 
   private layer(storage: DurableStorage) {
     return Layer.mergeAll(
-      makeDurableObjectRepository(storage),
-      makeDurableObjectEventStore(storage),
+      makeDurableObjectEventSourcedRepository(storage),
       BloomBookingCodeIndexLive,
       SystemClockLive,
       UlidIdGeneratorLive,
