@@ -22,10 +22,13 @@
     "arch": "depcruise --config .dependency-cruiser.cjs packages apps"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.2",
     "@biomejs/biome": "^2.4.0",
     "dependency-cruiser": "^17.4.0",
+    "eslint": "10.3.0",
     "knip": "^6.11.0",
-    "typescript": "^6.0.0"
+    "typescript": "^6.0.0",
+    "typescript-eslint": "8.59.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

@@ -2,7 +2,7 @@ import { yoga } from "./server/graphql/yoga.js"
 
 export { DaySchedule } from "./server/durableObjects/DaySchedule.js"
 
-interface Env {
+type Env = {
   DB: D1Database
   DAY_SCHEDULE: DurableObjectNamespace
   DEPLOYMENT_NAME: string

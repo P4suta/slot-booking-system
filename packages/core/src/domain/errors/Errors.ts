@@ -307,7 +307,8 @@ export const severityOf = (e: DomainError): ErrorSeverity => metadataOf(e).sever
 
 /** Attach metadata to an error without mutating the original. */
 export const withMeta = <E extends DomainError>(e: E, meta: ErrorMeta): E => {
-  const next = Object.create(Object.getPrototypeOf(e)) as E
+  const proto = Object.getPrototypeOf(e) as object | null
+  const next = Object.create(proto) as E
   Object.assign(next, e, { meta: { ...e.meta, ...meta } })
   return next
 }

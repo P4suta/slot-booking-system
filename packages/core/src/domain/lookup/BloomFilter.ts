@@ -38,7 +38,7 @@ const validate = (size: number, hashCount: number): void => {
     throw new RangeError("BloomFilter: size must be a positive integer")
   }
   if (!isFiniteInt(hashCount) || hashCount <= 0 || hashCount > MAX_HASH_COUNT) {
-    throw new RangeError(`BloomFilter: hashCount must be in [1, ${MAX_HASH_COUNT}]`)
+    throw new RangeError(`BloomFilter: hashCount must be in [1, ${MAX_HASH_COUNT.toString()}]`)
   }
 }
 

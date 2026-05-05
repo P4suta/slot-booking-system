@@ -14,7 +14,10 @@ import {
   UlidIdGeneratorLive,
 } from "@booking/core"
 import { Effect, Either, Layer, Schema } from "effect"
-import { makeDurableObjectEventStore } from "../adapters/DurableObjectEventStoreLive.js"
+import {
+  loadAllEvents,
+  makeDurableObjectEventStore,
+} from "../adapters/DurableObjectEventStoreLive.js"
 import {
   type DurableStorage,
   loadAllBookings,
@@ -51,7 +54,7 @@ const Op = Schema.Union(
 )
 type Op = Schema.Schema.Type<typeof Op>
 
-interface Env {
+type Env = {
   DB: D1Database
 }
 
@@ -76,6 +79,11 @@ export class DaySchedule extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     await this.ensureWarmed()
     const storage = this.ctx.storage as unknown as DurableStorage
+    await this.expireStaleHolds(storage)
+    await this.drainOutboxToD1(storage)
+  }
+
+  private async expireStaleHolds(storage: DurableStorage): Promise<void> {
     const all = await loadAllBookings(storage)
     const now = Date.now()
     const toExpire = all.filter((b) => b.state === "Held" && b.expiresAt.epochMilliseconds <= now)
@@ -97,14 +105,26 @@ export class DaySchedule extends DurableObject<Env> {
     )
   }
 
+  /**
+   * Outbox draining (ADR-0006). Reads every event from the per-aggregate
+   * log, then forwards to the D1 backing store via the parent Worker.
+   * Phase 1.5 wires the D1 push through {@link Env.DB}; Phase 1
+   * intentionally only loads the events so the alarm path is exercised.
+   */
+  private async drainOutboxToD1(storage: DurableStorage): Promise<void> {
+    const events = await loadAllEvents(storage)
+    if (events.length === 0) return
+    // TODO(P1.5): batched INSERT into env.DB.bookings_events (Drizzle)
+    // followed by a watermark write so re-runs are idempotent.
+  }
+
   private async runOp(op: Op): Promise<Response> {
     const storage = this.ctx.storage as unknown as DurableStorage
     const layer = this.layer(storage)
 
-    const program: Effect.Effect<unknown, DomainError, never> = ((): Effect.Effect<
+    const program: Effect.Effect<unknown, DomainError> = ((): Effect.Effect<
       unknown,
-      DomainError,
-      never
+      DomainError
     > => {
       switch (op.type) {
         case "hold":

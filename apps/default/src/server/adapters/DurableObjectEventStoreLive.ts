@@ -43,7 +43,7 @@ export const makeDurableObjectEventStore = (storage: DurableStorage): Layer.Laye
 
 /** Read every event in the log, in (bookingId, seq) ascending order. */
 export const loadAllEvents = async (storage: DurableStorage): Promise<readonly BookingEvent[]> => {
-  const entries = await storage.list<unknown>({ prefix: "e:" })
+  const entries = await storage.list({ prefix: "e:" })
   // Map insertion order matches lexicographic key order in DO storage,
   // and the zero-padded seq guarantees that order matches numeric
   // (bookingId, seq) order.

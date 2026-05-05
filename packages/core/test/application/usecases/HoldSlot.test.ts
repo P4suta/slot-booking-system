@@ -116,10 +116,8 @@ describe("HoldSlot", () => {
       source: "walkin",
     })
     const r = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER)))
-    if (r.event.type === "Held") {
-      expect(r.event.bookingCode).toBe(r.booking.code)
-      expect(r.event.providerId).toBe(r.booking.providerId)
-    }
+    expect(r.event.bookingCode).toBe(r.booking.code)
+    expect(r.event.providerId).toBe(r.booking.providerId)
   })
 
   it("does not leak Either internals into the use case result", async () => {

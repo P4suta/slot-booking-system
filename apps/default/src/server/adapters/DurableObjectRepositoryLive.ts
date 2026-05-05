@@ -42,7 +42,7 @@ const encodeBooking = Schema.encodeSync(BookingSchema)
  * any in-process caches (the `BookingCodeIndex` Bloom filter).
  */
 export const loadAllBookings = (storage: DurableStorage): Promise<readonly Booking[]> =>
-  storage.list<unknown>({ prefix: "b:" }).then((entries) => {
+  storage.list({ prefix: "b:" }).then((entries) => {
     const out: Booking[] = []
     for (const [, raw] of entries) {
       const decoded = decodeBooking(raw)
@@ -69,7 +69,7 @@ export const makeDurableObjectRepository = (
     BookingRepository.of({
       findById: (id) =>
         Effect.tryPromise({
-          try: () => storage.get<unknown>(bookingKey(id)),
+          try: () => storage.get(bookingKey(id)),
           catch: () => new BookingNotFoundError({}),
         }).pipe(
           Effect.flatMap((raw: unknown) =>
@@ -86,7 +86,7 @@ export const makeDurableObjectRepository = (
             id === undefined
               ? Effect.fail(new BookingNotFoundError({}))
               : Effect.tryPromise({
-                  try: () => storage.get<unknown>(bookingKey(id)),
+                  try: () => storage.get(bookingKey(id)),
                   catch: () => new BookingNotFoundError({}),
                 }).pipe(
                   Effect.flatMap((raw: unknown) =>

@@ -78,7 +78,7 @@ export const resource2: Resource = {
   enabled: true,
 }
 
-const bhId = (n: number): BusinessHoursId => `bhrs_${n}` as BusinessHoursId
+const bhId = (n: number): BusinessHoursId => `bhrs_${n.toString()}` as BusinessHoursId
 
 /** Mon..Sun, all open 10:00..18:00. Tests override entries when needed. */
 export const bhAllWeekdays = new Map(

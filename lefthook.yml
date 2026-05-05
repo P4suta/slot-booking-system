@@ -53,6 +53,8 @@ pre-push:
       run: docker compose run --rm dev ./node_modules/.bin/tsc -b --pretty
     biome-full:
       run: docker compose run --rm dev ./node_modules/.bin/biome check .
+    eslint-full:
+      run: docker compose run --rm dev ./node_modules/.bin/eslint .
     arch:
       run: docker compose run --rm dev ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
     test:
@@ -68,3 +70,5 @@ pre-push:
         docker compose run --rm dev bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src apps/default/src 2>/dev/null'
     dead-code:
       run: docker compose run --rm dev ./node_modules/.bin/knip
+    type-coverage:
+      run: docker compose run --rm dev corepack pnpm -F @booking/core run type-coverage

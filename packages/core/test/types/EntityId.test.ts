@@ -36,8 +36,8 @@ describe("EntityId TypeIDs", () => {
   })
 
   it("brand types are mutually disjoint at the type level", () => {
-    expectTypeOf<BookingId>().not.toMatchTypeOf<ProviderId>()
-    expectTypeOf<ProviderId>().not.toMatchTypeOf<ResourceId>()
-    expectTypeOf<BookingId>().toMatchTypeOf<string>()
+    expectTypeOf<BookingId>().not.toExtend<ProviderId>()
+    expectTypeOf<ProviderId>().not.toExtend<ResourceId>()
+    expectTypeOf<BookingId>().toExtend<string>()
   })
 })

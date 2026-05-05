@@ -315,9 +315,7 @@ export function computeAvailableSlots(
   maybeQuery?: SlotCalcQuery,
 ): readonly AvailableSlot[] {
   const [env, query] =
-    maybeQuery === undefined
-      ? splitInput(envOrInput as SlotCalcInput)
-      : [envOrInput as SlotCalcEnv, maybeQuery]
+    maybeQuery === undefined ? splitInput(envOrInput as SlotCalcInput) : [envOrInput, maybeQuery]
   return computeImpl(env, query)
 }
 

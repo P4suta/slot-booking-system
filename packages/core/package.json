@@ -36,7 +36,17 @@
     "test:coverage": "vitest run --coverage",
     "test:property": "vitest run --reporter=verbose test/property",
     "test:bench": "vitest bench --run",
-    "test:mutation": "stryker run"
+    "test:mutation": "stryker run",
+    "type-coverage": "type-coverage --at-least 99.5 --strict --detail --ignore-files \"test/**\" --project tsconfig.src.json",
+    "attw": "attw --pack . --ignore-rules cjs-resolves-to-esm no-resolution"
+  },
+  "typeCoverage": {
+    "atLeast": 99.5,
+    "strict": true,
+    "ignoreFiles": [
+      "test/**"
+    ],
+    "project": "tsconfig.src.json"
   },
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",
@@ -49,9 +59,11 @@
     "@stryker-mutator/core": "^9.6.0",
     "@stryker-mutator/typescript-checker": "^9.6.0",
     "@stryker-mutator/vitest-runner": "^9.6.0",
+    "@total-typescript/ts-reset": "0.6.1",
     "@vitest/coverage-v8": "^4.1.0",
     "expect-type": "^1.3.0",
     "fast-check": "^4.7.0",
+    "type-coverage": "2.29.7",
     "vitest": "^4.1.0"
   }
 }

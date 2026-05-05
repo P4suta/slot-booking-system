@@ -59,6 +59,16 @@ lint-biome:
 lint-biome-fix:
     {{DEV}} ./node_modules/.bin/biome check --write .
 
+# Type-aware lints — typescript-eslint strict-type-checked +
+# stylistic-type-checked presets. Catches bugs Biome's structural
+# linter cannot (no-floating-promises, switch-exhaustiveness-check,
+# no-misused-promises, no-unsafe-*).
+lint-eslint:
+    {{DEV}} ./node_modules/.bin/eslint .
+
+lint-eslint-fix:
+    {{DEV}} ./node_modules/.bin/eslint . --fix
+
 markdownlint:
     markdownlint-cli2 \
         "**/*.md" \
@@ -68,7 +78,7 @@ markdownlint:
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**"
 
-lint: lint-biome markdownlint
+lint: lint-biome lint-eslint markdownlint
 
 # ---------------------------------------------------------------------------
 # Type / arch / strict-code / dead-code gates
@@ -85,6 +95,18 @@ arch:
 # Dead-code / unused-export detection.
 dead-code:
     {{DEV}} ./node_modules/.bin/knip
+
+# Type-coverage: percentage of expressions whose types are precisely
+# known (not `any`). Threshold lives in `packages/core/package.json`'s
+# `typeCoverage` block; default 99.5 %.
+type-coverage:
+    {{DEV}} {{PNPM}} -F @booking/core run type-coverage
+
+# arethetypeswrong: validates the published package's `exports` map
+# resolves correctly across Node 16+, ESM, and bundler conditions.
+attw:
+    {{DEV}} {{PNPM}} -F @booking/core run build
+    {{DEV}} {{PNPM}} -F @booking/core run attw
 
 # PII guard: forbids field/column declarations and URL/email-host literals
 # tied to PII, throughout source. See ADR-0009.
@@ -153,7 +175,7 @@ migrate-local:
 
 # Pre-push mirror: every check the CI workflow runs, but skip mutation
 # testing (heavy) and bench (informational).
-check: lint typecheck arch pii-guard domain-purity strict-code dead-code test-coverage
+check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage
 
 # Full CI gate: check + build (and the apps/default dev smoke happens
 # externally on demand via `just dev-default`).

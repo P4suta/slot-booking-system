@@ -66,12 +66,12 @@ describe("Bloom filter invariants", () => {
   })
 
   it("false-positive rate stays well below 5 % at design load (n=200, m=8192, k=6)", () => {
-    const inserted = Array.from({ length: 200 }, (_, i) => `key-${i}`)
+    const inserted = Array.from({ length: 200 }, (_, i) => `key-${i.toString()}`)
     const bf = inserted.reduce<BloomFilter>((acc, k) => add(acc, k), empty(8192, 6))
     let collisions = 0
     const probes = 5000
     for (let i = 0; i < probes; i++) {
-      const probe = `probe-${i}`
+      const probe = `probe-${i.toString()}`
       if (contains(bf, probe)) collisions++
     }
     // Theoretical FP for k=6, m=8192, n=200 is ≈ 0.0024 %; margin × 200.

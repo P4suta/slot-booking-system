@@ -36,31 +36,26 @@ export type BookingEventId = Schema.Schema.Type<typeof BookingEventIdSchema>
 export type AuditLogId = Schema.Schema.Type<typeof AuditLogIdSchema>
 export type IdempotencyKeyId = Schema.Schema.Type<typeof IdempotencyKeyIdSchema>
 
-/** Stable mapping from TypeID prefix to brand-name string. */
-const PREFIXES = {
-  book: "BookingId",
-  serv: "ServiceId",
-  prov: "ProviderId",
-  rsrc: "ResourceId",
-  clos: "ClosureId",
-  absn: "ProviderAbsenceId",
-  bhrs: "BusinessHoursId",
-  evnt: "BookingEventId",
-  audt: "AuditLogId",
-  idem: "IdempotencyKeyId",
-} as const
-
-export type EntityPrefix = keyof typeof PREFIXES
+/** Stable union of every TypeID prefix the system mints. */
+export type EntityPrefix =
+  | "book"
+  | "serv"
+  | "prov"
+  | "rsrc"
+  | "clos"
+  | "absn"
+  | "bhrs"
+  | "evnt"
+  | "audt"
+  | "idem"
 
 const makeParser =
-  <Id, P extends string>(prefix: P, schema: Schema.Schema<Id, string>) =>
-  (s: string): Either.Either<Id, DomainError> => {
-    const decode = Schema.decodeUnknownEither(schema)
-    return Either.mapLeft(
-      decode(s),
+  <Id>(prefix: EntityPrefix, schema: Schema.Schema<Id, string>) =>
+  (s: string): Either.Either<Id, DomainError> =>
+    Either.mapLeft(
+      Schema.decodeUnknownEither(schema)(s),
       () => new InvalidEntityIdError({ expectedPrefix: `${prefix}_`, received: s }),
     )
-  }
 
 export const parseBookingId = makeParser("book", BookingIdSchema)
 export const parseServiceId = makeParser("serv", ServiceIdSchema)
@@ -73,18 +68,25 @@ export const parseBookingEventId = makeParser("evnt", BookingEventIdSchema)
 export const parseAuditLogId = makeParser("audt", AuditLogIdSchema)
 export const parseIdempotencyKeyId = makeParser("idem", IdempotencyKeyIdSchema)
 
-const generator =
-  <Id extends string>(prefix: EntityPrefix) =>
-  (): Id =>
-    typeid(prefix).toString() as unknown as Id
+/**
+ * TypeID-prefixed string generator. The return type is fixed at the
+ * callsite (`newBookingId: () => BookingId = ...`) rather than via
+ * a type parameter, because a single-use type parameter triggers
+ * `@typescript-eslint/no-unnecessary-type-parameters`.
+ */
+const generator = (prefix: EntityPrefix) => (): string => typeid(prefix).toString()
 
-export const newBookingId = generator<BookingId>("book")
-export const newServiceId = generator<ServiceId>("serv")
-export const newProviderId = generator<ProviderId>("prov")
-export const newResourceId = generator<ResourceId>("rsrc")
-export const newClosureId = generator<ClosureId>("clos")
-export const newProviderAbsenceId = generator<ProviderAbsenceId>("absn")
-export const newBusinessHoursId = generator<BusinessHoursId>("bhrs")
-export const newBookingEventId = generator<BookingEventId>("evnt")
-export const newAuditLogId = generator<AuditLogId>("audt")
-export const newIdempotencyKeyId = generator<IdempotencyKeyId>("idem")
+export const newBookingId: () => BookingId = generator("book") as () => BookingId
+export const newServiceId: () => ServiceId = generator("serv") as () => ServiceId
+export const newProviderId: () => ProviderId = generator("prov") as () => ProviderId
+export const newResourceId: () => ResourceId = generator("rsrc") as () => ResourceId
+export const newClosureId: () => ClosureId = generator("clos") as () => ClosureId
+export const newProviderAbsenceId: () => ProviderAbsenceId = generator(
+  "absn",
+) as () => ProviderAbsenceId
+export const newBusinessHoursId: () => BusinessHoursId = generator("bhrs") as () => BusinessHoursId
+export const newBookingEventId: () => BookingEventId = generator("evnt") as () => BookingEventId
+export const newAuditLogId: () => AuditLogId = generator("audt") as () => AuditLogId
+export const newIdempotencyKeyId: () => IdempotencyKeyId = generator(
+  "idem",
+) as () => IdempotencyKeyId

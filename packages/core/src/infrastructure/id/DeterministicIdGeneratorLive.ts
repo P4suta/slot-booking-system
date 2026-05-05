@@ -43,7 +43,7 @@ const ulidLikeBody = (counter: bigint): string => {
  * id sequence, eliminating the wall-clock leak that ULID-based
  * generators introduce.
  */
-export const makeDeterministicIdGenerator = (seed: bigint = 0n): Layer.Layer<IdGenerator> =>
+export const makeDeterministicIdGenerator = (seed = 0n): Layer.Layer<IdGenerator> =>
   Layer.effect(
     IdGenerator,
     Effect.gen(function* () {

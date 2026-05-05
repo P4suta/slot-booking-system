@@ -25,8 +25,9 @@ import { parseSkill, type Skill } from "../../src/domain/value-objects/Skill.js"
 const skill = (s: string) => Either.getOrThrow(parseSkill(s))
 
 describe("Skill", () => {
-  it.each(["a", "general", "electric_assist", "skill_1"])("accepts %s", (s) =>
-    expect(Either.isRight(parseSkill(s))).toBe(true))
+  it.each(["a", "general", "electric_assist", "skill_1"])("accepts %s", (s) => {
+    expect(Either.isRight(parseSkill(s))).toBe(true)
+  })
 
   it.each([
     "",
@@ -34,22 +35,29 @@ describe("Skill", () => {
     "Has-Hyphen",
     "Has Space",
     `TooLong${"x".repeat(40)}`,
-  ])("rejects %s", (s) => expect(Either.isLeft(parseSkill(s))).toBe(true))
+  ])("rejects %s", (s) => {
+    expect(Either.isLeft(parseSkill(s))).toBe(true)
+  })
 })
 
 describe("ResourceType", () => {
-  it.each(["workspace", "storage", "chair_a"])("accepts %s", (s) =>
-    expect(Either.isRight(parseResourceType(s))).toBe(true))
+  it.each(["workspace", "storage", "chair_a"])("accepts %s", (s) => {
+    expect(Either.isRight(parseResourceType(s))).toBe(true)
+  })
 
-  it.each(["", "1bad", "Workspace"])("rejects %s", (s) =>
-    expect(Either.isLeft(parseResourceType(s))).toBe(true))
+  it.each(["", "1bad", "Workspace"])("rejects %s", (s) => {
+    expect(Either.isLeft(parseResourceType(s))).toBe(true)
+  })
 })
 
 describe("Weekday", () => {
-  it.each([1, 2, 3, 4, 5, 6, 7])("accepts %d", (n) =>
-    expect(Either.isRight(parseWeekday(n))).toBe(true))
+  it.each([1, 2, 3, 4, 5, 6, 7])("accepts %d", (n) => {
+    expect(Either.isRight(parseWeekday(n))).toBe(true)
+  })
 
-  it.each([0, 8, 1.5, -1])("rejects %p", (n) => expect(Either.isLeft(parseWeekday(n))).toBe(true))
+  it.each([0, 8, 1.5, -1])("rejects %p", (n) => {
+    expect(Either.isLeft(parseWeekday(n))).toBe(true)
+  })
 
   it("isWeekday narrows", () => {
     expect(isWeekday(3)).toBe(true)

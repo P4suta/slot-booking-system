@@ -135,7 +135,9 @@ describe("TraceId", () => {
     "too-short",
     "01H8XRQMKQDNFGXT7NH3AVH3X",
     "01H8XRQMKQDNFGXT7NH3AVH3XSI",
-  ])("rejects %p", (s) => expect(Either.isLeft(parseTraceId(s))).toBe(true))
+  ])("rejects %p", (s) => {
+    expect(Either.isLeft(parseTraceId(s))).toBe(true)
+  })
 
   it("brand prevents accidental crossover (compile-time assertion)", () => {
     const t = Either.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))

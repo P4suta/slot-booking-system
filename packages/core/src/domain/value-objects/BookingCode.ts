@@ -17,12 +17,16 @@ const TOTAL_LENGTH = 7
 const ALPHABET_SIZE = 32n
 const CHECK_MOD = 37n
 
-const ALPHABET_INDEX: ReadonlyMap<string, number> = new Map(
-  [...ALPHABET].map((c, i) => [c, i] as const),
-)
-const CHECK_INDEX: ReadonlyMap<string, number> = new Map(
-  [...CHECK_ALPHABET].map((c, i) => [c, i] as const),
-)
+// Both alphabets are ASCII-only (Crockford Base32 + 5 sentinel chars)
+// so iterating by code unit is safe and avoids the surrogate-pair
+// pitfall flagged by `no-misused-spread`.
+const indexMap = (chars: string): ReadonlyMap<string, number> => {
+  const out = new Map<string, number>()
+  for (let i = 0; i < chars.length; i++) out.set(chars.charAt(i), i)
+  return out
+}
+const ALPHABET_INDEX: ReadonlyMap<string, number> = indexMap(ALPHABET)
+const CHECK_INDEX: ReadonlyMap<string, number> = indexMap(CHECK_ALPHABET)
 
 /** Maximum representable body value, exclusive. */
 export const BOOKING_CODE_KEYSPACE = ALPHABET_SIZE ** BigInt(BODY_LENGTH)

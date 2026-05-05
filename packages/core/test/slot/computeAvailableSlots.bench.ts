@@ -8,7 +8,7 @@ import { baseInput, SKILL_GENERAL, TYPE_WORKSPACE } from "../_fixtures/index.js"
 const providers = (n: number): Provider[] =>
   Array.from({ length: n }, (_, i) => ({
     id: `prov_${String(i).padStart(8, "0")}` as ProviderId,
-    name: `P${i}`,
+    name: `P${i.toString()}`,
     skills: new Set([SKILL_GENERAL]),
     enabled: true,
   }))
@@ -16,7 +16,7 @@ const providers = (n: number): Provider[] =>
 const resources = (n: number): Resource[] =>
   Array.from({ length: n }, (_, i) => ({
     id: `rsrc_${String(i).padStart(8, "0")}` as ResourceId,
-    name: `R${i}`,
+    name: `R${i.toString()}`,
     type: TYPE_WORKSPACE,
     enabled: true,
   }))

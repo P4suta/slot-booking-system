@@ -25,8 +25,8 @@ const TEST_LAYER = Layer.mergeAll(
 )
 
 const sampleSlot = (
-  startIso: string = "2026-05-09T01:00:00Z",
-  endIso: string = "2026-05-09T02:00:00Z",
+  startIso = "2026-05-09T01:00:00Z",
+  endIso = "2026-05-09T02:00:00Z",
 ): AvailableSlot => ({
   serviceId: newServiceId(),
   start: Temporal.Instant.from(startIso).toZonedDateTimeISO("UTC"),

@@ -17,15 +17,9 @@
     "apps/default": {
       "entry": ["src/worker.ts", "drizzle.config.ts"],
       "project": ["src/**/*.ts"],
-      "ignoreDependencies": [
-        "@booking/core",
-        "drizzle-orm",
-        "@cloudflare/workers-types",
-        "@types/node",
-        "cloudflare",
-        "miniflare"
-      ],
-      "ignore": ["src/server/adapters/DurableObjectEventStoreLive.ts", "src/server/schema/**"]
+      "wrangler": {
+        "config": ["wrangler.toml"]
+      }
     }
   }
 }
