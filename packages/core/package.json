@@ -18,6 +18,10 @@
     "./application": {
       "types": "./dist/application/index.d.ts",
       "import": "./dist/application/index.js"
+    },
+    "./infrastructure": {
+      "types": "./dist/infrastructure/index.d.ts",
+      "import": "./dist/infrastructure/index.js"
     }
   },
   "files": [

@@ -32,6 +32,9 @@ importers:
       drizzle-orm:
         specifier: ^0.45.0
         version: 0.45.2(@cloudflare/workers-types@4.20260504.1)
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.2
       graphql:
         specifier: ^16.13.2
         version: 16.13.2

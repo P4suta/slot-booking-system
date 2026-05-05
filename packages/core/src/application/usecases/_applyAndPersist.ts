@@ -21,7 +21,7 @@ import { IdGenerator } from "../ports/IdGenerator.js"
  * Returns the next snapshot + emitted event so callers can surface
  * both to the GraphQL response.
  */
-export type TransitionResult = {
+type TransitionResult = {
   readonly booking: Booking
   readonly event: BookingEvent
 }

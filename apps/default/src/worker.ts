@@ -1,15 +1,26 @@
 import { yoga } from "./server/graphql/yoga.js"
 
+export { DaySchedule } from "./server/durableObjects/DaySchedule.js"
+
 interface Env {
   DB: D1Database
+  DAY_SCHEDULE: DurableObjectNamespace
   DEPLOYMENT_NAME: string
   DEPLOYMENT_TIMEZONE: string
 }
 
-// Phase 0.5 entry. `/healthz` is the readiness probe; `/graphql` serves
-// the Phase 0.5 GraphQL stub (Pothos schema + Yoga adapter, ADR-0025
-// draft). Real wiring (Effect runtime, BookingRepository adapter, slot
-// routes, …) lands in Phase 1.
+/**
+ * Phase 1 entry. Routes:
+ *   - `GET  /healthz`   readiness probe
+ *   - `*    /graphql`   Pothos schema served via GraphQL Yoga
+ *   - default JSON      diagnostic body (deployment metadata)
+ *
+ * The `DaySchedule` Durable Object is exported from this module so
+ * Wrangler can construct one per `(deployment, date)` tuple. Routes
+ * that mutate bookings will resolve the DO via `env.DAY_SCHEDULE.get(...)`
+ * and forward the parsed operation; the DO's actor model is what
+ * serialises concurrent writes per day (ADR-0005).
+ */
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
@@ -26,7 +37,7 @@ export default {
       {
         deployment: env.DEPLOYMENT_NAME,
         timezone: env.DEPLOYMENT_TIMEZONE,
-        message: "phase 0.5 sanity — POST /graphql for the schema stub",
+        message: "phase 1 — POST /graphql for the booking API",
       },
       null,
       2,
