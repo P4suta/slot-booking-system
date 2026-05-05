@@ -12,8 +12,12 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
  * an exponential backoff (1s / 5s / 30s / 5m / 30m). After the 6th
  * failure the row is moved to `outbox_dead` (rare; alerts an operator).
  *
- * `snapshot` carries the latest folded `Booking` so the relay can
- * upsert both the event log and the read-side projection in one batch.
+ * Phase 0.7-β5 dropped the inline `snapshot` column; the relay now
+ * reads the current `bookings` row from DO local SQLite at drain
+ * time. N events on the same booking previously produced N copies
+ * of the snapshot inside this table; the new shape stores it once
+ * (in `bookings`) and links by `bookingId`. The relay handles the
+ * "snapshot vanished mid-flight" case by dead-lettering.
  *
  * Phase 0.6 / ADR-0006 / T1-D.
  */
@@ -25,9 +29,6 @@ export const outbox = sqliteTable(
     seq: integer("seq").notNull(),
     type: text("type").notNull(),
     payload: text("payload", { mode: "json" }).$type<Readonly<Record<string, unknown>>>().notNull(),
-    snapshot: text("snapshot", { mode: "json" })
-      .$type<Readonly<Record<string, unknown>>>()
-      .notNull(),
     enqueuedAt: text("enqueued_at").notNull(),
     nextAttemptAt: text("next_attempt_at").notNull(),
     attempts: integer("attempts").notNull().default(0),
@@ -41,6 +42,11 @@ export const outbox = sqliteTable(
  * moved here so the live `outbox` queue stays drainable. Operator
  * inspects rows here, fixes the root cause, then re-enqueues if
  * appropriate.
+ *
+ * Phase 0.7-β5: the snapshot is intentionally not carried here either
+ * — by the time a row dead-letters, the live `bookings` row is the
+ * authoritative source, and operators can re-enqueue with a fresh
+ * snapshot read.
  */
 export const outboxDead = sqliteTable("outbox_dead", {
   id: text("id").primaryKey(),
@@ -48,7 +54,6 @@ export const outboxDead = sqliteTable("outbox_dead", {
   seq: integer("seq").notNull(),
   type: text("type").notNull(),
   payload: text("payload", { mode: "json" }).$type<Readonly<Record<string, unknown>>>().notNull(),
-  snapshot: text("snapshot", { mode: "json" }).$type<Readonly<Record<string, unknown>>>().notNull(),
   enqueuedAt: text("enqueued_at").notNull(),
   diedAt: text("died_at").notNull(),
   attempts: integer("attempts").notNull(),

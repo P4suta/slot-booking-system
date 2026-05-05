@@ -270,8 +270,9 @@ export const makeDurableObjectEventSourcedRepository = (
                   })
                   .run()
 
-                /* 4. outbox enqueue (one row per event, snapshot embedded for D1 relay) */
-                const encodedSnapshot = encodeBooking(next) as Readonly<Record<string, unknown>>
+                /* 4. outbox enqueue (one row per event; snapshot is read
+                 *    fresh from the bookings table at relay time, ADR-0029
+                 *    revised by Phase 0.7-β5) */
                 const outboxRows = events.map((event, i) => {
                   const seq = current + i + 1
                   const enc = encodeEvent(event)
@@ -281,7 +282,6 @@ export const makeDurableObjectEventSourcedRepository = (
                     seq,
                     type: enc.type,
                     payload: enc,
-                    snapshot: encodedSnapshot,
                     enqueuedAt: recordedAt,
                     nextAttemptAt: recordedAt,
                     attempts: 0,

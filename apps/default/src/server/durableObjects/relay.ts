@@ -88,6 +88,17 @@ export const drainOutbox = async (
 
   for (const row of due) {
     try {
+      /* Phase 0.7-β5: read the live snapshot from DO storage at drain
+       * time rather than carrying a stale embedded copy. If the row is
+       * gone (purge / manual delete), the relay treats this as a
+       * dead-letter — we cannot reconstruct the projection. */
+      const snapshot = doDb.select().from(bookings).where(eq(bookings.id, row.bookingId)).get() as
+        | typeof bookings.$inferInsert
+        | undefined
+      if (snapshot === undefined) {
+        throw new Error(`outbox row ${row.id} references missing bookings.id ${row.bookingId}`)
+      }
+
       const eventInsert = d1Db
         .insert(bookingEvents)
         .values({
@@ -102,7 +113,6 @@ export const drainOutbox = async (
         })
         .onConflictDoNothing({ target: bookingEvents.id })
 
-      const snapshot = row.snapshot as typeof bookings.$inferInsert
       const snapshotInsert = d1Db
         .insert(bookings)
         .values(snapshot)
@@ -121,7 +131,9 @@ export const drainOutbox = async (
       const errMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
 
       if (attempts >= MAX_ATTEMPTS) {
-        /* Dead-letter: move to outbox_dead, drop from outbox. */
+        /* Dead-letter: move to outbox_dead, drop from outbox. The
+         * snapshot is intentionally not carried — operators inspecting
+         * a dead-lettered row read the live `bookings` row directly. */
         doStorage.transactionSync(() => {
           doDb
             .insert(outboxDead)
@@ -131,7 +143,6 @@ export const drainOutbox = async (
               seq: row.seq,
               type: row.type,
               payload: row.payload,
-              snapshot: row.snapshot,
               enqueuedAt: row.enqueuedAt,
               diedAt: nowIso,
               attempts,

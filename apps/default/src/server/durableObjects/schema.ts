@@ -56,14 +56,16 @@ const DURABLE_OBJECT_DDL = [
    )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS ux_booking_events_booking_seq
      ON booking_events (booking_id, seq)`,
-  /* outbox — pending DO → D1 relay rows, with retry budget. */
+  /* outbox — pending DO → D1 relay rows, with retry budget.
+   * Phase 0.7-β5 dropped the inline `snapshot` column; the relay
+   * reads `bookings` at drain time so N events on the same booking
+   * no longer carry N copies of the snapshot. */
   `CREATE TABLE IF NOT EXISTS outbox (
      id text PRIMARY KEY NOT NULL,
      booking_id text NOT NULL,
      seq integer NOT NULL,
      type text NOT NULL,
      payload text NOT NULL,
-     snapshot text NOT NULL,
      enqueued_at text NOT NULL,
      next_attempt_at text NOT NULL,
      attempts integer NOT NULL DEFAULT 0,
@@ -71,14 +73,14 @@ const DURABLE_OBJECT_DDL = [
    )`,
   `CREATE INDEX IF NOT EXISTS ix_outbox_next_attempt
      ON outbox (next_attempt_at)`,
-  /* outbox_dead — rows that exhausted the retry budget. */
+  /* outbox_dead — rows that exhausted the retry budget. Snapshot
+   * intentionally absent (operator reads the live `bookings` row). */
   `CREATE TABLE IF NOT EXISTS outbox_dead (
      id text PRIMARY KEY NOT NULL,
      booking_id text NOT NULL,
      seq integer NOT NULL,
      type text NOT NULL,
      payload text NOT NULL,
-     snapshot text NOT NULL,
      enqueued_at text NOT NULL,
      died_at text NOT NULL,
      attempts integer NOT NULL,
