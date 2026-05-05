@@ -1,8 +1,8 @@
 import { Either } from "effect"
 import { describe, expect, it } from "vitest"
 import type { Command } from "../../src/domain/booking/Command.js"
-import { applyEvent, replay } from "../../src/domain/booking/projection.js"
 import { apply } from "../../src/domain/booking/transitions.js"
+import { applyEvent, replay } from "../../src/domain/read/projection.js"
 import { newBookingEventId } from "../../src/domain/types/EntityId.js"
 import { at, baseHeld, slot } from "../_fixtures/index.js"
 
