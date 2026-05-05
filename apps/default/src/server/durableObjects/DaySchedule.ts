@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers"
-import type { DomainError } from "@booking/core"
+import type { DomainError, ErrorSeverity } from "@booking/core"
 import {
   BloomBookingCodeIndexLive,
   BookingCodeIndex,
@@ -207,7 +207,7 @@ const jsonError = (
   status: number,
   code: string,
   tag: string,
-  severity: "validation" | "domain" = "domain",
+  severity: ErrorSeverity = "domain",
 ): Response =>
   new Response(JSON.stringify({ ok: false, error: { _tag: tag, code, severity } }), {
     status,
@@ -224,6 +224,7 @@ const domainErrorToStatus = (e: DomainError): number => {
   switch (e._tag) {
     case "BookingNotFound":
     case "PhoneMismatch":
+    case "AggregateNotFound":
       return 404
     case "AlreadyCancelled":
     case "AlreadyCompleted":
@@ -235,7 +236,10 @@ const domainErrorToStatus = (e: DomainError): number => {
     case "ServiceDisabled":
     case "ProviderUnavailable":
     case "ResourceUnavailable":
+    case "Concurrency":
       return 409
+    case "Storage":
+      return 500
     default:
       return 400
   }

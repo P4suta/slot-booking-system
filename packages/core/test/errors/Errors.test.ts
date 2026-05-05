@@ -1,7 +1,9 @@
 import { Either } from "effect"
 import { describe, expect, it } from "vitest"
 import {
+  AggregateNotFoundError,
   BookingNotFoundError,
+  ConcurrencyError,
   codeOf,
   type DomainError,
   InvalidBookingCodeError,
@@ -9,6 +11,7 @@ import {
   InvalidStateTransitionError,
   isTraceId,
   parseTraceId,
+  StorageError,
   severityOf,
   type TraceId,
   toLogPayload,
@@ -42,9 +45,18 @@ describe("codeOf / severityOf", () => {
     )
   })
 
-  it("classifies severity (validation vs domain)", () => {
+  it("classifies severity (validation vs domain vs infrastructure)", () => {
     expect(severityOf(new InvalidBookingCodeError({ reason: "wrong-length" }))).toBe("validation")
     expect(severityOf(new BookingNotFoundError({}))).toBe("domain")
+    expect(severityOf(new AggregateNotFoundError({}))).toBe("infrastructure")
+    expect(severityOf(new ConcurrencyError({ expected: 0, actual: 1 }))).toBe("infrastructure")
+    expect(severityOf(new StorageError({ reason: "txn aborted" }))).toBe("infrastructure")
+  })
+
+  it("returns infra-class codes for port-level failures", () => {
+    expect(codeOf(new AggregateNotFoundError({}))).toBe("E_INF_AGG_NOT_FOUND")
+    expect(codeOf(new ConcurrencyError({ expected: 0, actual: 1 }))).toBe("E_INF_CONCURRENCY")
+    expect(codeOf(new StorageError({ reason: "txn aborted" }))).toBe("E_INF_STORAGE")
   })
 })
 
@@ -114,6 +126,9 @@ describe("toLogPayload", () => {
       new InvalidBookingCodeError({ reason: "wrong-length" }),
       new BookingNotFoundError({}),
       new InvalidStateTransitionError({ from: "Held", command: "Complete" }),
+      new AggregateNotFoundError({}),
+      new ConcurrencyError({ expected: 0, actual: 1 }),
+      new StorageError({ reason: "txn aborted" }),
     ]
     const forbidden = new Set(["nameKana", "phoneLast4", "freeText", "email", "address"])
     for (const e of errors) {
@@ -122,6 +137,19 @@ describe("toLogPayload", () => {
         expect(forbidden.has(key)).toBe(false)
       }
     }
+  })
+
+  it("surfaces ConcurrencyError's expected/actual revisions in log payload", () => {
+    const e = new ConcurrencyError({ expected: 3, actual: 5 })
+    const p = toLogPayload(e)
+    expect(p.data.expected).toBe(3)
+    expect(p.data.actual).toBe(5)
+  })
+
+  it("surfaces StorageError's reason in log payload", () => {
+    const e = new StorageError({ reason: "txn aborted" })
+    const p = toLogPayload(e)
+    expect(p.data.reason).toBe("txn aborted")
   })
 })
 

@@ -3,10 +3,14 @@ import type { TraceId } from "./TraceId.js"
 
 /**
  * Severity classification surfaced alongside the stable error code.
- * `"validation"` errors stem from boundary parsing failures; `"domain"`
- * errors stem from business-rule violations.
+ *   - `"validation"`: boundary parsing failure (input shape rejected)
+ *   - `"domain"`: business-rule violation (transition disallowed, lookup miss)
+ *   - `"infrastructure"`: storage / concurrency failure (race detected, txn aborted)
+ *
+ * The classification feeds HTTP status mapping and log routing (operator
+ * dashboards split on severity).
  */
-export type ErrorSeverity = "validation" | "domain"
+export type ErrorSeverity = "validation" | "domain" | "infrastructure"
 
 /**
  * Optional metadata carried by every error. Filled by the use-case /
@@ -243,6 +247,52 @@ export class InvalidStateTransitionError extends Data.TaggedError("InvalidStateT
 }
 
 /* -------------------------------------------------------------------------- */
+/* Infrastructure errors — storage / concurrency failures surfaced by ports.   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * An aggregate id has no recorded events and no snapshot. Distinct from
+ * `BookingNotFoundError` which is a domain-level "the booking the user
+ * asked about does not exist". `AggregateNotFoundError` is raised by the
+ * `EventSourcedRepository.load` port when the underlying storage has no
+ * entry for the requested id (e.g. invalid id, purged aggregate).
+ */
+export class AggregateNotFoundError extends Data.TaggedError("AggregateNotFound")<{
+  readonly meta?: ErrorMeta
+}> {
+  static readonly code = "E_INF_AGG_NOT_FOUND"
+  static readonly severity: ErrorSeverity = "infrastructure"
+}
+
+/**
+ * Optimistic-concurrency check failed at `EventSourcedRepository.save`:
+ * caller's `expected` revision does not match the storage's current
+ * revision (another writer slipped in). Caller should re-read via
+ * `load` and retry, or surface a 409 to the user.
+ */
+export class ConcurrencyError extends Data.TaggedError("Concurrency")<{
+  readonly expected: number
+  readonly actual: number
+  readonly meta?: ErrorMeta
+}> {
+  static readonly code = "E_INF_CONCURRENCY"
+  static readonly severity: ErrorSeverity = "infrastructure"
+}
+
+/**
+ * Generic storage failure — disk I/O error, schema drift, txn aborted,
+ * `D1Database` rejected the batch, etc. Carries `reason` (operator-facing
+ * string, never PII) and optional `cause` via `meta`.
+ */
+export class StorageError extends Data.TaggedError("Storage")<{
+  readonly reason: string
+  readonly meta?: ErrorMeta
+}> {
+  static readonly code = "E_INF_STORAGE"
+  static readonly severity: ErrorSeverity = "infrastructure"
+}
+
+/* -------------------------------------------------------------------------- */
 /* Aggregate union types.                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -277,11 +327,16 @@ export type DomainRuleError =
   | ResourceUnavailableError
   | InvalidStateTransitionError
 
+export type InfrastructureError = AggregateNotFoundError | ConcurrencyError | StorageError
+
 /**
- * Top-level union of every error the domain emits. Consumers can
- * pattern-match on `_tag` or use `instanceof` for narrowing.
+ * Top-level union of every tagged error the core emits across its three
+ * stratifications (boundary parse, domain rule, port-side infra). Consumers
+ * pattern-match on `_tag` or narrow with `instanceof`. The helpers
+ * `codeOf` / `severityOf` / `toLogPayload` accept the union without
+ * branching — metadata is read from the constructor.
  */
-export type DomainError = ValidationError | DomainRuleError
+export type DomainError = ValidationError | DomainRuleError | InfrastructureError
 
 /* -------------------------------------------------------------------------- */
 /* Helpers.                                                                    */
