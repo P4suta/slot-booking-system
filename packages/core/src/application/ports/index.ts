@@ -1,4 +1,3 @@
-export * from "./BookingCodeIndex.js"
 export * from "./Clock.js"
 export * from "./EventSourcedRepository.js"
 export * from "./IdGenerator.js"

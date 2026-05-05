@@ -1,8 +1,6 @@
 import { DurableObject } from "cloudflare:workers"
 import type { DomainError, ErrorSeverity } from "@booking/core"
 import {
-  BloomBookingCodeIndexLive,
-  BookingCodeIndex,
   CancelBooking,
   ConfirmBooking,
   codeOf,
@@ -34,9 +32,9 @@ import {
  *   - `e:<bookingId>:<seq>` → encoded `BookingEvent` (truth)
  *   - `s:<bookingId>` → current sequence number
  *
- * **Cold start** — on the first fetch after eviction, `ensureWarmed`
- * walks the existing booking-code keys and re-warms the in-process
- * `BookingCodeIndex` Bloom filter.
+ * **Cold start** — none required. `(c:<bookingCode> → bookingId)` is
+ * a persistent secondary index in DO storage itself; lookup is exact
+ * on every cold or warm path (Phase 0.6 dropped the bloom filter).
  *
  * **Hold expiry** — `alarm()` finds every `Held` booking past its TTL
  * and emits a `Cancel` command (with `cancelledBy = "system"` per the
@@ -57,10 +55,7 @@ type Env = {
 }
 
 export class DaySchedule extends DurableObject<Env> {
-  private warmed = false
-
   override async fetch(request: Request): Promise<Response> {
-    await this.ensureWarmed()
     let body: unknown
     try {
       body = await request.json()
@@ -75,7 +70,6 @@ export class DaySchedule extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
-    await this.ensureWarmed()
     const storage = this.ctx.storage as unknown as DurableStorage
     await this.expireStaleHolds(storage)
     await this.drainOutboxToD1(storage)
@@ -165,26 +159,9 @@ export class DaySchedule extends DurableObject<Env> {
     return jsonError(domainErrorToStatus(e), codeOf(e), e._tag, severityOf(e))
   }
 
-  private async ensureWarmed(): Promise<void> {
-    if (this.warmed) return
-    const storage = this.ctx.storage as unknown as DurableStorage
-    const all = await loadAllBookings(storage)
-    if (all.length > 0) {
-      const layer = this.layer(storage)
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const idx = yield* BookingCodeIndex
-          for (const b of all) yield* idx.add(b.code)
-        }).pipe(Effect.provide(layer)),
-      )
-    }
-    this.warmed = true
-  }
-
   private layer(storage: DurableStorage) {
     return Layer.mergeAll(
       makeDurableObjectEventSourcedRepository(storage),
-      BloomBookingCodeIndexLive,
       SystemClockLive,
       UlidIdGeneratorLive,
       SilentLoggerLive,

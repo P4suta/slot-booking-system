@@ -7,7 +7,6 @@ import type { AvailableSlot } from "../../domain/slot/computeAvailableSlots.js"
 import type { FreeText } from "../../domain/value-objects/FreeText.js"
 import type { NameKana } from "../../domain/value-objects/NameKana.js"
 import type { PhoneLast4 } from "../../domain/value-objects/PhoneLast4.js"
-import { BookingCodeIndex } from "../ports/BookingCodeIndex.js"
 import { Clock } from "../ports/Clock.js"
 import { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import { IdGenerator } from "../ports/IdGenerator.js"
@@ -55,13 +54,12 @@ export const HoldSlot = (
 ): Effect.Effect<
   HoldSlotResult,
   DomainError | ConcurrencyError | StorageError,
-  Clock | IdGenerator | BookingEventSourcedRepository | BookingCodeIndex | Logger
+  Clock | IdGenerator | BookingEventSourcedRepository | Logger
 > =>
   Effect.gen(function* () {
     const clock = yield* Clock
     const idgen = yield* IdGenerator
     const repo = yield* BookingEventSourcedRepository
-    const index = yield* BookingCodeIndex
     const logger = yield* Logger
 
     const now = yield* clock.nowInstant
@@ -107,8 +105,9 @@ export const HoldSlot = (
 
     // expected revision = 0 — Held is the seed event for a brand-new
     // aggregate id, so storage must currently have nothing for `id`.
+    // The persistence layer maintains the (code → id) secondary index
+    // inside `save` itself; no separate `index.add` step needed.
     yield* repo.save(id, 0, [event], booking)
-    yield* index.add(code)
 
     yield* logger.info(
       infoPayload("BookingHeld", "I_USECASE_HOLD_SLOT", { bookingId: id }, input.traceId),

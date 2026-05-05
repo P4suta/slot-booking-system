@@ -6,7 +6,6 @@ import type { BookingEvent } from "../../domain/events/BookingEvent.js"
 import type { AvailableSlot } from "../../domain/slot/computeAvailableSlots.js"
 import type { BookingCode } from "../../domain/value-objects/BookingCode.js"
 import type { PhoneLast4 } from "../../domain/value-objects/PhoneLast4.js"
-import type { BookingCodeIndex } from "../ports/BookingCodeIndex.js"
 import { Clock } from "../ports/Clock.js"
 import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../ports/IdGenerator.js"
@@ -42,7 +41,7 @@ export const RescheduleBooking = (
 ): Effect.Effect<
   RescheduleBookingResult,
   DomainError | ConcurrencyError | StorageError,
-  Clock | IdGenerator | BookingEventSourcedRepository | BookingCodeIndex | Logger
+  Clock | IdGenerator | BookingEventSourcedRepository | Logger
 > =>
   Effect.gen(function* () {
     const clock = yield* Clock

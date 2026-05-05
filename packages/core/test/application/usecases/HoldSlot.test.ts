@@ -1,13 +1,11 @@
 import { Temporal } from "@js-temporal/polyfill"
 import { Effect, Either, Layer } from "effect"
 import { describe, expect, it } from "vitest"
-import { BookingCodeIndex } from "../../../src/application/ports/BookingCodeIndex.js"
 import { BookingEventSourcedRepository } from "../../../src/application/ports/EventSourcedRepository.js"
 import { HoldSlot } from "../../../src/application/usecases/HoldSlot.js"
 import { parseTraceId } from "../../../src/domain/errors/TraceId.js"
 import type { AvailableSlot } from "../../../src/domain/slot/computeAvailableSlots.js"
 import { newProviderId, newResourceId, newServiceId } from "../../../src/domain/types/EntityId.js"
-import { BloomBookingCodeIndexLive } from "../../../src/infrastructure/bloom/BloomBookingCodeIndexLive.js"
 import { SystemClockLive } from "../../../src/infrastructure/clock/SystemClockLive.js"
 import { InMemoryEventSourcedBookingRepositoryLive } from "../../../src/infrastructure/eventsourced/InMemoryEventSourcedRepositoryLive.js"
 import { DeterministicIdGeneratorLive } from "../../../src/infrastructure/id/DeterministicIdGeneratorLive.js"
@@ -21,7 +19,6 @@ const TEST_LAYER = Layer.mergeAll(
   SystemClockLive,
   DeterministicIdGeneratorLive,
   InMemoryEventSourcedBookingRepositoryLive,
-  BloomBookingCodeIndexLive,
   SilentLoggerLive,
 )
 
@@ -89,7 +86,7 @@ describe("HoldSlot", () => {
     expect(found.state).toBe("Held")
   })
 
-  it("registers the new code in the bloom-filter index", async () => {
+  it("makes the new code resolvable via repo.findByKey (the persistence layer maintains the secondary index in lockstep with save)", async () => {
     const program = Effect.gen(function* () {
       const held = yield* HoldSlot({
         slot: sampleSlot(),
@@ -98,12 +95,12 @@ describe("HoldSlot", () => {
         freeText: null,
         source: "online",
       })
-      const idx = yield* BookingCodeIndex
-      const present = yield* idx.mayContain(held.booking.code)
-      return { held, present }
+      const repo = yield* BookingEventSourcedRepository
+      const id = yield* repo.findByKey(held.booking.code)
+      return { held, foundId: id }
     })
     const out = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER)))
-    expect(out.present).toBe(true)
+    expect(out.foundId).toBe(out.held.booking.id)
   })
 
   it("emits a Held event whose bookingCode matches the booking", async () => {
@@ -140,7 +137,6 @@ describe("HoldSlot", () => {
         SystemClockLive,
         DeterministicIdGeneratorLive,
         InMemoryEventSourcedBookingRepositoryLive,
-        BloomBookingCodeIndexLive,
       )
       yield* HoldSlot({
         slot: sampleSlot(),

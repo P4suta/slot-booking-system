@@ -3,8 +3,6 @@
 // EventSourced, Logger, Bloom). Cloudflare-bound adapters (D1,
 // DurableObject) live in `apps/<name>/src/server/adapters/` and are
 // not re-exported here — see ADR-0008 for the layout rule.
-export * from "./bloom/BloomBookingCodeIndexLive.js"
-export * from "./bloom/PessimisticBookingCodeIndexLive.js"
 export * from "./clock/SystemClockLive.js"
 export * from "./eventsourced/InMemoryEventSourcedRepositoryLive.js"
 export * from "./id/DeterministicIdGeneratorLive.js"

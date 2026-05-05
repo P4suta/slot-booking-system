@@ -7,7 +7,6 @@ import { HoldSlot } from "../../../src/application/usecases/HoldSlot.js"
 import { RescheduleBooking } from "../../../src/application/usecases/RescheduleBooking.js"
 import type { AvailableSlot } from "../../../src/domain/slot/computeAvailableSlots.js"
 import { newProviderId, newResourceId, newServiceId } from "../../../src/domain/types/EntityId.js"
-import { BloomBookingCodeIndexLive } from "../../../src/infrastructure/bloom/BloomBookingCodeIndexLive.js"
 import { SystemClockLive } from "../../../src/infrastructure/clock/SystemClockLive.js"
 import { InMemoryEventSourcedBookingRepositoryLive } from "../../../src/infrastructure/eventsourced/InMemoryEventSourcedRepositoryLive.js"
 import { DeterministicIdGeneratorLive } from "../../../src/infrastructure/id/DeterministicIdGeneratorLive.js"
@@ -18,7 +17,6 @@ const TEST_LAYER = Layer.mergeAll(
   SystemClockLive,
   DeterministicIdGeneratorLive,
   InMemoryEventSourcedBookingRepositoryLive,
-  BloomBookingCodeIndexLive,
   SilentLoggerLive,
 )
 
