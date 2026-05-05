@@ -1,4 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
+import type { Brand } from "effect"
 import type { Booking } from "../booking/Booking.js"
 import type { BusinessHours } from "../entities/BusinessHours.js"
 import type { Closure } from "../entities/Closure.js"
@@ -36,14 +37,40 @@ export type SlotCalcQuery = {
   readonly now: Temporal.Instant
 }
 
-/** A single bookable slot derived from `computeAvailableSlots`. */
-export type AvailableSlot = {
+/**
+ * Structural shape of a bookable slot. Public for adapters that need
+ * to work with the field set without committing to the brand (e.g.
+ * GraphQL type definitions). Production callers should use
+ * {@link AvailableSlot} so the value carries the world-consistency
+ * proof from {@link computeAvailableSlots}.
+ */
+export type AvailableSlotShape = {
   readonly serviceId: ServiceId
   readonly start: Temporal.ZonedDateTime
   readonly end: Temporal.ZonedDateTime
   readonly providerId: ProviderId
   readonly resourceIds: readonly ResourceId[]
 }
+
+/**
+ * A bookable slot returned by {@link computeAvailableSlots}. The
+ * brand prevents callers from synthesising a slot value and feeding
+ * it into write-side use cases (`HoldSlot` / `RescheduleBooking`)
+ * without going through {@link mintAvailableSlot} — Phase 0.7-α5
+ * groundwork for the HMAC-signed token round-trip in Phase 0.10.
+ */
+export type AvailableSlot = AvailableSlotShape & Brand.Brand<"AvailableSlot">
+
+/**
+ * Mint a branded {@link AvailableSlot} from a structural shape. The
+ * production call site is {@link computeAvailableSlots} itself; this
+ * helper is exposed for fixtures and the GraphQL adapter that
+ * reconstructs a slot from a previously-emitted query result. The
+ * world-consistency check that justifies the brand happens in those
+ * code paths, not here.
+ */
+export const mintAvailableSlot = (shape: AvailableSlotShape): AvailableSlot =>
+  shape as AvailableSlot
 
 const MINUTES_PER_DAY = 1_440
 
@@ -329,13 +356,15 @@ export const computeAvailableSlots = (
     )
     if (!resourceIds) continue
 
-    out.push({
-      serviceId: query.service.id,
-      start: dayStart.add({ minutes: startMin }),
-      end: dayStart.add({ minutes: startMin + D }),
-      providerId: provider,
-      resourceIds,
-    })
+    out.push(
+      mintAvailableSlot({
+        serviceId: query.service.id,
+        start: dayStart.add({ minutes: startMin }),
+        end: dayStart.add({ minutes: startMin + D }),
+        providerId: provider,
+        resourceIds,
+      }),
+    )
   }
   return out
 }

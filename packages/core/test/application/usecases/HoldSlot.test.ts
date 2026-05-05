@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest"
 import { BookingEventSourcedRepository } from "../../../src/application/ports/EventSourcedRepository.js"
 import { HoldSlot } from "../../../src/application/usecases/HoldSlot.js"
 import { parseTraceId } from "../../../src/domain/errors/TraceId.js"
-import type { AvailableSlot } from "../../../src/domain/slot/computeAvailableSlots.js"
+import {
+  type AvailableSlot,
+  mintAvailableSlot,
+} from "../../../src/domain/slot/computeAvailableSlots.js"
 import { newProviderId, newResourceId, newServiceId } from "../../../src/domain/types/EntityId.js"
 import { SystemClockLive } from "../../../src/infrastructure/clock/SystemClockLive.js"
 import { InMemoryEventSourcedBookingRepositoryLive } from "../../../src/infrastructure/eventsourced/InMemoryEventSourcedRepositoryLive.js"
@@ -26,13 +29,13 @@ const sampleSlot = (): AvailableSlot => {
   const tz = "UTC"
   const start = Temporal.Instant.from("2026-05-09T01:00:00Z").toZonedDateTimeISO(tz)
   const end = Temporal.Instant.from("2026-05-09T02:00:00Z").toZonedDateTimeISO(tz)
-  return {
+  return mintAvailableSlot({
     serviceId: newServiceId(),
     start,
     end,
     providerId: newProviderId(),
     resourceIds: [newResourceId()],
-  }
+  })
 }
 
 describe("HoldSlot", () => {

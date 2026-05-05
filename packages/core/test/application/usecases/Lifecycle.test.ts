@@ -5,7 +5,10 @@ import { CancelBooking } from "../../../src/application/usecases/CancelBooking.j
 import { ConfirmBooking } from "../../../src/application/usecases/ConfirmBooking.js"
 import { HoldSlot } from "../../../src/application/usecases/HoldSlot.js"
 import { RescheduleBooking } from "../../../src/application/usecases/RescheduleBooking.js"
-import type { AvailableSlot } from "../../../src/domain/slot/computeAvailableSlots.js"
+import {
+  type AvailableSlot,
+  mintAvailableSlot,
+} from "../../../src/domain/slot/computeAvailableSlots.js"
 import { newProviderId, newResourceId, newServiceId } from "../../../src/domain/types/EntityId.js"
 import { SystemClockLive } from "../../../src/infrastructure/clock/SystemClockLive.js"
 import { InMemoryEventSourcedBookingRepositoryLive } from "../../../src/infrastructure/eventsourced/InMemoryEventSourcedRepositoryLive.js"
@@ -23,13 +26,14 @@ const TEST_LAYER = Layer.mergeAll(
 const sampleSlot = (
   startIso = "2026-05-09T01:00:00Z",
   endIso = "2026-05-09T02:00:00Z",
-): AvailableSlot => ({
-  serviceId: newServiceId(),
-  start: Temporal.Instant.from(startIso).toZonedDateTimeISO("UTC"),
-  end: Temporal.Instant.from(endIso).toZonedDateTimeISO("UTC"),
-  providerId: newProviderId(),
-  resourceIds: [newResourceId()],
-})
+): AvailableSlot =>
+  mintAvailableSlot({
+    serviceId: newServiceId(),
+    start: Temporal.Instant.from(startIso).toZonedDateTimeISO("UTC"),
+    end: Temporal.Instant.from(endIso).toZonedDateTimeISO("UTC"),
+    providerId: newProviderId(),
+    resourceIds: [newResourceId()],
+  })
 
 const heldFixture = (phoneLast4: string) =>
   HoldSlot({
