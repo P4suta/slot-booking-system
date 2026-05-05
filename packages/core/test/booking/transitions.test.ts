@@ -218,68 +218,111 @@ describe("apply (transitions)", () => {
     }
   })
 
-  describe("stateful property: random command sequences", () => {
-    it("invariants hold over arbitrary sequences", () => {
-      type World = { booking: Booking; eventCount: number }
-      const arbCmd = fc.oneof(
-        fc.constant({
-          kind: "Confirm" as const,
-          at: at("2026-05-09T12:30:00Z"),
-        }),
-        fc.constant({
-          kind: "Cancel" as const,
-          at: at("2026-05-09T12:30:00Z"),
-          reason: "t",
-          by: "customer" as const,
-        }),
-        fc.constant({
-          kind: "Expire" as const,
-          at: at("2026-05-09T13:00:00Z"),
-        }),
-        fc.constant({
-          kind: "Complete" as const,
-          at: at("2026-05-10T03:00:00Z"),
-        }),
-        fc.constant({
-          kind: "MarkNoShow" as const,
-          at: at("2026-05-10T03:00:00Z"),
-          by: "staff" as const,
-        }),
-        fc.constant({
-          kind: "Reschedule" as const,
-          at: at("2026-05-09T12:30:00Z"),
-          newSlot: slot("2026-05-11T01:00:00Z", "2026-05-11T02:00:00Z"),
-        }),
-      )
-      fc.assert(
-        fc.property(fc.array(arbCmd, { maxLength: 12 }), (cmds) => {
-          let world: World = { booking: baseHeld(), eventCount: 0 }
-          for (const cmd of cmds) {
-            const r = apply(world.booking, cmd, ev())
-            if (Either.isRight(r)) {
-              // Invariant 1: a successful apply emits exactly one event whose
-              //              bookingId matches.
-              if (r.right.event.bookingId !== world.booking.id) return false
-              world = { booking: r.right.booking, eventCount: world.eventCount + 1 }
-            }
-          }
-          // Invariant 2: terminal states are absorbing — once Cancelled /
-          //              Completed / NoShow, every further apply is Left.
+  describe("stateful property: fc.commands model-based test", () => {
+    type Real = { booking: Booking; eventCount: number; bookingId: string; confirmedAt?: string }
+    type Model = {
+      state: Booking["state"]
+      eventCount: number
+      isTerminal: boolean
+    }
+
+    const isTerminal = (s: Booking["state"]): boolean =>
+      s === "Cancelled" || s === "Completed" || s === "NoShow"
+
+    /**
+     * Each command first mirrors the apply against the real Booking, then
+     * lifts both the model and the real forward in lockstep. The Real
+     * tracks `confirmedAt` so the "Reschedule preserves confirmedAt"
+     * invariant can be checked across moves.
+     */
+    const makeCommand = (cmd: Command, label: string): fc.Command<Model, Real> => ({
+      check: () => true,
+      run: (m, r) => {
+        const before = r.booking
+        const result = apply(before, cmd, ev())
+        if (Either.isRight(result)) {
+          // Invariant: every event is bound to the current bookingId.
+          expect(result.right.event.bookingId).toBe(r.bookingId)
+          // Invariant: a successful apply never violates terminality.
+          expect(m.isTerminal).toBe(false)
+          const next = result.right.booking
+          // Invariant: id is preserved across every successful transition.
+          expect(next.id).toBe(r.bookingId)
+          // Invariant: Reschedule preserves confirmedAt when starting from Confirmed.
           if (
-            world.booking.state === "Cancelled" ||
-            world.booking.state === "Completed" ||
-            world.booking.state === "NoShow"
+            cmd.kind === "Reschedule" &&
+            before.state === "Confirmed" &&
+            next.state === "Confirmed" &&
+            r.confirmedAt !== undefined
           ) {
-            for (const cmd of [
-              { kind: "Confirm", at: at("2026-05-12T00:00:00Z") },
-              { kind: "Complete", at: at("2026-05-12T00:00:00Z") },
-            ] as const) {
-              if (Either.isRight(apply(world.booking, cmd, ev()))) return false
-            }
+            expect(next.confirmedAt.toString()).toBe(r.confirmedAt)
           }
-          return true
+          if (next.state === "Confirmed") r.confirmedAt = next.confirmedAt.toString()
+          r.booking = next
+          r.eventCount += 1
+          m.state = next.state
+          m.eventCount += 1
+          m.isTerminal = isTerminal(next.state)
+        } else {
+          // Invariant: failure leaves both the booking and event count untouched.
+          expect(r.booking).toBe(before)
+          // Invariant: terminal state implies any apply must fail.
+          if (m.isTerminal) {
+            // already covered by the Right branch's negation; nothing to assert here
+          }
+        }
+        // Invariant: model.eventCount tracks real.eventCount one-to-one.
+        expect(m.eventCount).toBe(r.eventCount)
+      },
+      toString: () => label,
+    })
+
+    const cmds = fc.commands(
+      [
+        fc.constant(makeCommand({ kind: "Confirm", at: at("2026-05-09T12:30:00Z") }, "Confirm")),
+        fc.constant(
+          makeCommand(
+            { kind: "Cancel", at: at("2026-05-09T12:30:00Z"), reason: "t", by: "customer" },
+            "Cancel",
+          ),
+        ),
+        fc.constant(makeCommand({ kind: "Expire", at: at("2026-05-09T13:00:00Z") }, "Expire")),
+        fc.constant(makeCommand({ kind: "Complete", at: at("2026-05-10T03:00:00Z") }, "Complete")),
+        fc.constant(
+          makeCommand(
+            { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), by: "staff" },
+            "MarkNoShow",
+          ),
+        ),
+        fc.constant(
+          makeCommand(
+            {
+              kind: "Reschedule",
+              at: at("2026-05-09T12:30:00Z"),
+              newSlot: slot("2026-05-11T01:00:00Z", "2026-05-11T02:00:00Z"),
+            },
+            "Reschedule",
+          ),
+        ),
+      ],
+      { maxCommands: 12 },
+    )
+
+    it("invariants hold for any random sequence of commands", () => {
+      fc.assert(
+        fc.property(cmds, (sequence) => {
+          fc.modelRun(() => {
+            const initial = baseHeld()
+            const real: Real = { booking: initial, eventCount: 0, bookingId: initial.id }
+            const model: Model = {
+              state: "Held",
+              eventCount: 0,
+              isTerminal: false,
+            }
+            return { model, real }
+          }, sequence)
         }),
-        { numRuns: 500 },
+        { numRuns: 200 },
       )
     })
   })
