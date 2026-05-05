@@ -17,7 +17,7 @@
  * every cold start, so the DO can self-heal after eviction without
  * any orchestration.
  */
-export const DURABLE_OBJECT_DDL = [
+const DURABLE_OBJECT_DDL = [
   /* bookings — read-side projection (snapshot per aggregate). */
   `CREATE TABLE IF NOT EXISTS bookings (
      id text PRIMARY KEY NOT NULL,

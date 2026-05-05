@@ -29,6 +29,7 @@ const apply: (booking: Booking, command: BookingCommand) => Result<Booking, Doma
 ```
 
 Properties:
+
 - `BookingCommand` is itself a discriminated union — exhaustiveness is checked by the compiler.
 - The function never throws; invalid `(state, command)` pairs return `Err(DomainError)` (see ADR-0010).
 - For each successful transition, exactly one `BookingEvent` is appended, paired with the new state in the function's return.

@@ -72,9 +72,9 @@ lint-eslint-fix:
 markdownlint:
     markdownlint-cli2 \
         "**/*.md" \
-        "#node_modules" \
-        "#dist" \
-        "#coverage" \
+        "#**/node_modules/**" \
+        "#**/dist/**" \
+        "#**/coverage/**" \
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**"
 
@@ -119,8 +119,13 @@ domain-purity:
     {{DEV}} bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
 
 # Forbidden constructs grep: Date, throw, @ts-ignore (ADR-0010).
+# Scope is `packages/core/src` only — the DO actor-model code in
+# `apps/default/src/server/durableObjects/` runs outside the Effect
+# runtime (Cloudflare DO `setAlarm` and outbox `recordedAt` need
+# raw `Date.now()` / `new Date().toISOString()`), so the rule applies
+# to the functional core, not the imperative shell.
 strict-code:
-    {{DEV}} bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src apps/default/src 2>/dev/null'
+    {{DEV}} bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
 
 # ---------------------------------------------------------------------------
 # Test
@@ -173,8 +178,10 @@ migrate-local:
 # Aggregate gates
 # ---------------------------------------------------------------------------
 
-# Pre-push mirror: every check the CI workflow runs, but skip mutation
-# testing (heavy) and bench (informational).
+# Pre-push mirror: every check the lefthook pre-push hook runs,
+# plus markdownlint (host-side, not in lefthook because the host
+# binary is mise-managed and faster to invoke directly). Skip
+# mutation testing (heavy) and bench (informational).
 check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage
 
 # Full CI gate: check + build (and the apps/default dev smoke happens

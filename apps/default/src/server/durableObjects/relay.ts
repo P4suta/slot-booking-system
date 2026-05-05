@@ -1,4 +1,4 @@
-import { and, asc, eq, lte } from "drizzle-orm"
+import { asc, eq, lte } from "drizzle-orm"
 import { drizzle as drizzleD1 } from "drizzle-orm/d1"
 import { drizzle } from "drizzle-orm/durable-sqlite"
 import type { DurableObjectStorageLike } from "../adapters/DurableObjectEventSourcedRepositoryLive.js"
@@ -52,7 +52,7 @@ const computeNextAttempt = (attempts: number, nowMs: number): string => {
   return new Date(nowMs + delay).toISOString()
 }
 
-export type DrainResult = {
+type DrainResult = {
   readonly drained: number
   readonly retried: number
   readonly dead: number
@@ -175,8 +175,3 @@ export const nextOutboxAttemptAt = (doStorage: DurableObjectStorageLike): string
     .get()
   return row?.at ?? null
 }
-
-/* Re-exported for tests / observability. */
-export { BACKOFF_MS, BATCH_SIZE, MAX_ATTEMPTS }
-/* Currently unused, kept for future filter (e.g. drainable rows by type). */
-export const _ = and

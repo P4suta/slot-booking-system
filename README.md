@@ -9,7 +9,7 @@ The codebase follows a **Functional Core / Imperative Shell** layering
 (ADR-0018). Each layer has a strict purity rule and an enforced
 import direction:
 
-```
+```text
 +----------------+      +----------------------+      +-------------------+      +---------------+
 |   domain       | <--- |   application        | <--- |   infrastructure  | <--- |  apps/<name>  |
 |   (pure)       |      |   (Effect, ports)    |      |   (Layers)        |      |  (CF Workers, |

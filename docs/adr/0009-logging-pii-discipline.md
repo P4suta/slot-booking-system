@@ -12,6 +12,7 @@ The system collects only the minimum PII it needs (full kana name, last 4 digits
 ## Decision
 
 - Logs are **structured JSON only**. No free-form `console.log`. The logger (`packages/core/application/ports/Logger.ts`) accepts a fixed schema:
+
   ```ts
   type LogEvent = {
     level: "debug" | "info" | "warn" | "error"
@@ -21,6 +22,7 @@ The system collects only the minimum PII it needs (full kana name, last 4 digits
     // permitted contextual fields keyed by LogEventName
   }
   ```
+
 - The following field names are **forbidden** anywhere in the log payload tree: `nameKana`, `phoneLast4`, `freeText`, `email`, `mailto`, `phone`, `address`, `birthday`, `gender`, `ip`, `userAgent`, raw IPs, raw UA strings.
 - TypeIDs (`book_…`, `prov_…`, …) are permitted — they identify the entity without revealing its PII.
 - A CI job (`just pii-guard`) greps for the forbidden tokens across `packages/`, `apps/`, and structured log call sites. New entries to the deny-list go in this ADR.

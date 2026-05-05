@@ -42,6 +42,7 @@ run `./node_modules/.bin/tsc -b --pretty`. Per-package `tsc --noEmit`
 
 `packages/core/tsconfig.build.json` (used by
 `pnpm -F @booking/core run build`) is unchanged — it produces JS
+
 + d.ts in `dist` for distribution and now declares a reference to
 `tsconfig.src.json` so downstream incremental builds get the cache.
 

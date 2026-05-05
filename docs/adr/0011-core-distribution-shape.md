@@ -12,6 +12,7 @@ The repository contains the industry-agnostic core (`packages/core`) and a gener
 ## Decision
 
 `packages/core` is published as a **standard ESM package**:
+
 - `package.json#type` = `"module"`.
 - `package.json#exports` declares `.`, `./domain`, `./application` with both `import` and `types` conditions.
 - `tsc -p tsconfig.build.json` emits `dist/**.js` + `dist/**.d.ts` (declaration maps included).

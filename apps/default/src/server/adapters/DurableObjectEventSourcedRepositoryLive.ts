@@ -52,7 +52,6 @@ export type DurableObjectStorageLike = {
 const encodeBooking = Schema.encodeSync(BookingSchema)
 const decodeBookingEither = Schema.decodeUnknownEither(BookingSchema)
 const encodeEvent = Schema.encodeSync(BookingEventSchema)
-const decodeEventEither = Schema.decodeUnknownEither(BookingEventSchema)
 
 /** Variant-aware row builder. Mirrors `D1BookingMirror.toRow`. */
 const bookingToRow = (b: Booking): typeof bookings.$inferInsert => {
@@ -199,33 +198,6 @@ export const loadAllBookings = (storage: DurableObjectStorageLike): readonly Boo
   for (const r of rows) {
     const decoded = rowToBooking(r)
     if (decoded !== null) out.push(decoded)
-  }
-  return out
-}
-
-/** Read every event in the log, in (booking_id, seq) ascending order. */
-export const loadAllEvents = (storage: DurableObjectStorageLike): readonly BookingEvent[] => {
-  const db = drizzle(storage as unknown as DurableObjectStorage, { schema: doTables })
-  const rows = db
-    .select()
-    .from(bookingEvents)
-    .orderBy(bookingEvents.bookingId, bookingEvents.seq)
-    .all()
-  const out: BookingEvent[] = []
-  for (const r of rows) {
-    const payload = (r.payload ?? {}) as Record<string, unknown>
-    const candidate = {
-      id: r.id,
-      bookingId: r.bookingId,
-      seq: r.seq,
-      version: r.version,
-      type: r.type,
-      occurredAt: r.occurredAt,
-      recordedAt: r.recordedAt,
-      ...payload,
-    }
-    const decoded = decodeEventEither(candidate)
-    if (decoded._tag === "Right") out.push(decoded.right)
   }
   return out
 }

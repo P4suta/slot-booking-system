@@ -46,7 +46,7 @@ Each rule is enforced by `dependency-cruiser` (see
 
 ### Trace through an example call
 
-```
+```text
 HTTP POST /book
   └─ apps/default/src/server/route.ts                  ← presentation
       └─ Effect.runPromise(holdSlot(req).pipe(

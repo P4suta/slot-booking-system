@@ -97,11 +97,12 @@ The defence layers stack:
 | Why does feature X look like this?        | `docs/adr/`                               |
 | What term should I use?                   | `docs/glossary.md`                        |
 | How do I run the thing?                   | This file + `Justfile`                    |
-| What are we building next?                | The plan file in `~/.claude/plans/` and the active TaskList. |
+| What are we building next?                | The plan file in `~/.claude/plans/`. |
 
 ## Phase-0 finish line
 
 You are at Phase 0 done when:
+
 - `just check` is green from a clean clone in under 5 minutes.
 - `packages/core` ships pure-domain code with C1 100 % branch coverage.
 - ADR-0002 through ADR-0015 are present and indexed.
@@ -114,6 +115,7 @@ the DurableObject `DaySchedule`, and the SvelteKit pages.
 ## Phase-1 finish line
 
 Phase 1 is done when:
+
 - Use cases (`HoldSlot`, `ConfirmBooking`, `CancelBooking`,
   `RescheduleBooking`, `PurgeStalePii`) are implemented with full
   Layer composition and C1 100 % branch coverage.

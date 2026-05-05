@@ -42,7 +42,7 @@ tick.
 
 ### Per-fetch flow
 
-```
+```text
 DurableObject.fetch(req)
   ensureWarmed()                        // load bookings → bloom index
   parse request body via Schema.Union
@@ -59,7 +59,7 @@ DurableObject.fetch(req)
 
 ### Alarm flow
 
-```
+```text
 DurableObject.alarm()
   ensureWarmed()
   expireStaleHolds()    // load all bookings, Cancel each Held past expiry

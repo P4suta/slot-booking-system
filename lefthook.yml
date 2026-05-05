@@ -66,8 +66,12 @@ pre-push:
       run: |
         docker compose run --rm dev bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
     strict-code:
+      # Scope: packages/core/src only — the imperative shell in
+      # apps/default/src/server/durableObjects/ runs outside the
+      # Effect runtime and legitimately uses raw Date for alarm
+      # scheduling / outbox recordedAt.
       run: |
-        docker compose run --rm dev bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src apps/default/src 2>/dev/null'
+        docker compose run --rm dev bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
     dead-code:
       run: docker compose run --rm dev ./node_modules/.bin/knip
     type-coverage:

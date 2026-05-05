@@ -34,7 +34,7 @@ import { IdGenerator } from "../ports/IdGenerator.js"
  * both to the GraphQL response, plus the resulting revision for any
  * caller that wants to chain another `save` without re-reading.
  */
-export type TransitionResult = {
+type TransitionResult = {
   readonly booking: Booking
   readonly event: BookingEvent
   readonly revision: number

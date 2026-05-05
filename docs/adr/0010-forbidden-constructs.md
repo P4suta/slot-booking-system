@@ -25,6 +25,7 @@ The following are **forbidden** in `packages/core/src/**` and `apps/*/src/**` (s
 | `new Date(…)` / `Date.now()` | Forbidden globally — see ADR-0004.            |
 
 Permitted boundaries:
+
 - `Effect.runPromise` lives **only** in presentation entry points (one file per app).
 - `Schema.decode` accepts `unknown` and produces a domain type. Decoding is the only legal place `unknown` appears.
 - Type-level negative tests in `test/type/*.test-d.ts` may use `@ts-expect-error`.

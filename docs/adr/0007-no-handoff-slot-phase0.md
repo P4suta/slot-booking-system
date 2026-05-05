@@ -14,6 +14,7 @@ Services with `holdingDays > 0` (multi-day services where a Resource is occupied
 In Phase 0, the handoff is **not modelled as a Provider time slot**. The booking entity continues to carry exactly one `TimeSlot` for the work itself. The Resource is held from the work day through the holding period; on the final day, staff hand the item back at whatever time the customer arrives.
 
 A `Booking` therefore has:
+
 - A single `TimeSlot` consuming Provider availability on the work day.
 - A `holdingPeriod: { startDate, endDate }` consuming the Resource bitmap across the date range.
 - No reserved Provider minutes on the handoff date.

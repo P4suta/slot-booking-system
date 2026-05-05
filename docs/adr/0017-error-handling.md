@@ -33,6 +33,7 @@ class InvalidPhoneLast4Error extends Data.TaggedError("InvalidPhoneLast4")<{
 ```
 
 This gives us, automatically:
+
 - `_tag` (the discriminator),
 - `name` / `message` / `stack` (Error-shaped, useful in dev tools),
 - `instanceof` narrowing,
@@ -41,6 +42,7 @@ This gives us, automatically:
 ### Stable error codes
 
 Each tag maps to a stable code via `errors/codes.ts`:
+
 - `E_VAL_*` for boundary validation failures.
 - `E_DOM_*` for business-rule violations.
 - `E_INFRA_*` reserved for Phase 1 (Cloudflare bindings).
@@ -60,6 +62,7 @@ const errored = withMeta(new BookingNotFoundError({}), {
 ```
 
 `ErrorMeta` carries:
+
 - `traceId: TraceId` — request correlation. ULID-shaped brand.
 - `context: Record<string, unknown>` — operator-facing key/value bag,
   used for entity ids, parameters, deployment metadata. **Never PII.**
