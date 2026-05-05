@@ -14,11 +14,12 @@ import {
 import { Effect, Either, Layer, Schema } from "effect"
 import { upsertBookingsToD1 } from "../adapters/D1BookingMirror.js"
 import {
-  type DurableStorage,
+  type DurableObjectStorageLike,
   loadAllBookings,
   loadAllEvents,
   makeDurableObjectEventSourcedRepository,
 } from "../adapters/DurableObjectEventSourcedRepositoryLive.js"
+import { ensureDurableObjectSchema } from "./schema.js"
 
 /**
  * Per-day actor (ADR-0005). One DO instance per `(deployment, date)`
@@ -26,20 +27,24 @@ import {
  * processed serially by the runtime, so no two `HoldSlot` calls for
  * the same day can interleave at the application layer.
  *
- * **Persistence layout** — the DO's storage holds:
- *   - `b:<bookingId>` → encoded `Booking` (read-side projection)
- *   - `c:<bookingCode>` → `bookingId` (reverse index)
- *   - `e:<bookingId>:<seq>` → encoded `BookingEvent` (truth)
- *   - `s:<bookingId>` → current sequence number
+ * **Persistence layout** — DO local SQLite (ADR-0028) holds:
+ *   - `bookings` — read-side projection, one row per aggregate
+ *   - `booking_events` — append-only truth log, bitemporal + versioned
+ *   - `outbox` — pending DO → D1 relay rows
+ *   - `outbox_dead` — rows past retry budget
  *
- * **Cold start** — none required. `(c:<bookingCode> → bookingId)` is
- * a persistent secondary index in DO storage itself; lookup is exact
- * on every cold or warm path (Phase 0.6 dropped the bloom filter).
+ * Schema is applied idempotently from the constructor via
+ * `ensureDurableObjectSchema(ctx.storage.sql)` under
+ * `ctx.blockConcurrencyWhile`, so every subsequent fetch sees a
+ * fully-migrated schema.
+ *
+ * **Cold start** — none required. The `(code → id)` lookup is a SQL
+ * query against `bookings.code` (unique index), exact on every cold
+ * or warm path. Phase 0.6 dropped the bloom filter pre-screen.
  *
  * **Hold expiry** — `alarm()` finds every `Held` booking past its TTL
- * and emits a `Cancel` command (with `cancelledBy = "system"` per the
- * `Expire` command path inside `apply`). Outbox sync to D1 will
- * piggyback on the same alarm tick once the relay is wired in.
+ * and emits a `Cancel` command. Outbox relay piggybacks on the same
+ * alarm tick.
  */
 
 const Op = Schema.Union(
@@ -55,6 +60,14 @@ type Env = {
 }
 
 export class DaySchedule extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env)
+    void ctx.blockConcurrencyWhile(() => {
+      ensureDurableObjectSchema(ctx.storage.sql)
+      return Promise.resolve()
+    })
+  }
+
   override async fetch(request: Request): Promise<Response> {
     let body: unknown
     try {
@@ -70,13 +83,13 @@ export class DaySchedule extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
-    const storage = this.ctx.storage as unknown as DurableStorage
+    const storage = this.ctx.storage as unknown as DurableObjectStorageLike
     await this.expireStaleHolds(storage)
     await this.drainOutboxToD1(storage)
   }
 
-  private async expireStaleHolds(storage: DurableStorage): Promise<void> {
-    const all = await loadAllBookings(storage)
+  private async expireStaleHolds(storage: DurableObjectStorageLike): Promise<void> {
+    const all = loadAllBookings(storage)
     const now = Date.now()
     const toExpire = all.filter((b) => b.state === "Held" && b.expiresAt.epochMilliseconds <= now)
     if (toExpire.length === 0) return
@@ -101,29 +114,24 @@ export class DaySchedule extends DurableObject<Env> {
    * Outbox draining (ADR-0006). The DO's local SQLite is the truth for
    * in-flight days; D1 is the long-retention read projection.
    *
-   * On each alarm tick we:
-   *   1. snapshot every booking from the DO's local store
-   *   2. upsert each into D1 via {@link upsertBookingsToD1}
+   * On each alarm tick we snapshot every booking from the DO's local
+   * store and upsert each into D1 via {@link upsertBookingsToD1}.
+   * `INSERT … ON CONFLICT DO UPDATE` gives idempotency: re-applying
+   * the same snapshot is a no-op, so the relay is at-least-once safe.
    *
-   * `INSERT … ON CONFLICT DO UPDATE` gives us idempotency: re-applying
-   * the same snapshot is a no-op, so the relay is at-least-once safe
-   * even if the alarm fires twice or wrangler restarts the worker
-   * mid-flush.
-   *
-   * Phase 0.6 ships the snapshot-based projector; the per-event log
-   * (`loadAllEvents`) is loaded only for the future event-sourcing
-   * relay (T1-D), where each event will additionally be appended to
-   * D1's `booking_events` table for the audit trail.
+   * Per-event D1 relay (`booking_events` audit table) is added in
+   * 0.6-D1; for now this snapshot-only flush keeps the read mirror
+   * consistent.
    */
-  private async drainOutboxToD1(storage: DurableStorage): Promise<void> {
-    const events = await loadAllEvents(storage)
+  private async drainOutboxToD1(storage: DurableObjectStorageLike): Promise<void> {
+    const events = loadAllEvents(storage)
     if (events.length === 0) return
-    const bookings = await loadAllBookings(storage)
-    await Effect.runPromise(upsertBookingsToD1(this.env.DB, bookings))
+    const all = loadAllBookings(storage)
+    await Effect.runPromise(upsertBookingsToD1(this.env.DB, all))
   }
 
   private async runOp(op: Op): Promise<Response> {
-    const storage = this.ctx.storage as unknown as DurableStorage
+    const storage = this.ctx.storage as unknown as DurableObjectStorageLike
     const layer = this.layer(storage)
 
     const program: Effect.Effect<unknown, DomainError> = ((): Effect.Effect<
@@ -159,7 +167,7 @@ export class DaySchedule extends DurableObject<Env> {
     return jsonError(domainErrorToStatus(e), codeOf(e), e._tag, severityOf(e))
   }
 
-  private layer(storage: DurableStorage) {
+  private layer(storage: DurableObjectStorageLike) {
     return Layer.mergeAll(
       makeDurableObjectEventSourcedRepository(storage),
       SystemClockLive,
@@ -184,7 +192,7 @@ const jsonError = (
  * HTTP status mapping for domain errors. Validation failures → 400,
  * not-found / phone-mismatch → 404 (deliberately conflated to avoid
  * leaking which half of the credential pair was wrong), terminal
- * state / availability → 409.
+ * state / availability → 409, infra storage → 500.
  */
 const domainErrorToStatus = (e: DomainError): number => {
   switch (e._tag) {
