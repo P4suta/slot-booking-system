@@ -12,13 +12,12 @@ import {
   UlidIdGeneratorLive,
 } from "@booking/core"
 import { Effect, Either, Layer, Schema } from "effect"
-import { upsertBookingsToD1 } from "../adapters/D1BookingMirror.js"
 import {
   type DurableObjectStorageLike,
   loadAllBookings,
-  loadAllEvents,
   makeDurableObjectEventSourcedRepository,
 } from "../adapters/DurableObjectEventSourcedRepositoryLive.js"
+import { drainOutbox, nextOutboxAttemptAt } from "./relay.js"
 import { ensureDurableObjectSchema } from "./schema.js"
 
 /**
@@ -85,7 +84,19 @@ export class DaySchedule extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     const storage = this.ctx.storage as unknown as DurableObjectStorageLike
     await this.expireStaleHolds(storage)
-    await this.drainOutboxToD1(storage)
+    await drainOutbox(storage, this.env.DB)
+    /* Reschedule the next alarm: min(earliest outbox retry, earliest hold expiry, +60s). */
+    const nextOutbox = nextOutboxAttemptAt(storage)
+    const all = loadAllBookings(storage)
+    const earliestHoldExpiry = all
+      .filter((b) => b.state === "Held")
+      .map((b) => b.expiresAt.epochMilliseconds)
+      .reduce<number | null>((min, t) => (min === null || t < min ? t : min), null)
+    const candidates: number[] = [Date.now() + 60_000]
+    if (nextOutbox !== null) candidates.push(Date.parse(nextOutbox))
+    if (earliestHoldExpiry !== null) candidates.push(earliestHoldExpiry)
+    const nextAlarm = Math.min(...candidates)
+    await this.ctx.storage.setAlarm(nextAlarm)
   }
 
   private async expireStaleHolds(storage: DurableObjectStorageLike): Promise<void> {
@@ -108,26 +119,6 @@ export class DaySchedule extends DurableObject<Env> {
         ),
       ),
     )
-  }
-
-  /**
-   * Outbox draining (ADR-0006). The DO's local SQLite is the truth for
-   * in-flight days; D1 is the long-retention read projection.
-   *
-   * On each alarm tick we snapshot every booking from the DO's local
-   * store and upsert each into D1 via {@link upsertBookingsToD1}.
-   * `INSERT … ON CONFLICT DO UPDATE` gives idempotency: re-applying
-   * the same snapshot is a no-op, so the relay is at-least-once safe.
-   *
-   * Per-event D1 relay (`booking_events` audit table) is added in
-   * 0.6-D1; for now this snapshot-only flush keeps the read mirror
-   * consistent.
-   */
-  private async drainOutboxToD1(storage: DurableObjectStorageLike): Promise<void> {
-    const events = loadAllEvents(storage)
-    if (events.length === 0) return
-    const all = loadAllBookings(storage)
-    await Effect.runPromise(upsertBookingsToD1(this.env.DB, all))
   }
 
   private async runOp(op: Op): Promise<Response> {
