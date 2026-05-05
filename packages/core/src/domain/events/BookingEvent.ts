@@ -14,11 +14,30 @@ import { TimeSlotSchema } from "../value-objects/TimeSlot.js"
 /**
  * Fields shared by every event emitted on a Booking. The discriminator
  * `type` plus event-specific fields are added per variant.
+ *
+ * **Bitemporal model (Phase 0.6 / ADR-0032)**:
+ *   - `occurredAt` — when the event happened in the domain timeline.
+ *     Equals `recordedAt` for online flows; diverges for staff back-
+ *     entry, reschedule with a back-dated effective time, etc.
+ *   - `recordedAt` — when the event was persisted (clock at write time).
+ *     Always `Clock.nowInstant` at append time.
+ *
+ * Read models pick one or the other depending on the question. Default
+ * timeline rendering uses `occurredAt`; audit / reconciliation uses
+ * `recordedAt`.
+ *
+ * **Versioning (Phase 0.6 / ADR-0032)**: every event carries a
+ * literal `version: 1`. Future schema evolutions add a new variant
+ * with `version: 2`, and an upcaster pipeline (`upcastV1ToV2`) lifts
+ * old events into the latest shape on read. The `replay` fold then
+ * always sees the latest variant, regardless of the wire version.
  */
 const BaseFields = {
   id: BookingEventIdSchema,
   bookingId: BookingIdSchema,
-  at: InstantSchema,
+  version: Schema.Literal(1),
+  occurredAt: InstantSchema,
+  recordedAt: InstantSchema,
 } as const
 
 export const HeldEventSchema = Schema.Struct({

@@ -104,10 +104,13 @@ describe("BookingSchema", () => {
 describe("BookingEventSchema", () => {
   it("accepts a Held event built from a Held booking", () => {
     const held = baseHeld()
+    const at = Temporal.Instant.from("2026-05-05T09:00:00Z")
     const event = {
       id: newBookingEventId(),
       bookingId: newBookingId(),
-      at: Temporal.Instant.from("2026-05-05T09:00:00Z"),
+      version: 1 as const,
+      occurredAt: at,
+      recordedAt: at,
       type: "Held" as const,
       bookingCode: bookingCode(0n),
       serviceId: held.serviceId,

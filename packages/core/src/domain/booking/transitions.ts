@@ -1,3 +1,4 @@
+import type { Temporal } from "@js-temporal/polyfill"
 import { Either, Match } from "effect"
 import {
   AlreadyCancelledError,
@@ -7,7 +8,7 @@ import {
   InvalidStateTransitionError,
 } from "../errors/Errors.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
-import type { BookingEventId } from "../types/EntityId.js"
+import type { BookingEventId, BookingId } from "../types/EntityId.js"
 import type {
   Booking,
   BookingCommon,
@@ -45,13 +46,27 @@ const common = (b: BookingCommon): BookingCommon => ({
 const ok = (booking: Booking, event: BookingEvent): Either.Either<ApplyResult, DomainError> =>
   Either.right({ booking, event })
 
+/**
+ * Bitemporal base for a freshly-emitted event. `occurredAt = recordedAt`
+ * for online flows (`apply` is called with `Clock.nowInstant`); the
+ * fields diverge only when a higher-level use case decides to back-date
+ * a transition (Phase 1.x). Legacy `at` mirror keeps old readers
+ * working until they migrate to the explicit pair.
+ */
+const baseEvent = (id: BookingEventId, bookingId: BookingId, at: Temporal.Instant) =>
+  ({
+    id,
+    bookingId,
+    version: 1 as const,
+    occurredAt: at,
+    recordedAt: at,
+  }) as const
+
 const okConfirm = (held: Held, at: Command["at"], eventId: BookingEventId) => {
   const next: Confirmed = { ...common(held), state: "Confirmed", confirmedAt: at }
   const event: BookingEvent = {
-    id: eventId,
+    ...baseEvent(eventId, held.id, at),
     type: "Confirmed",
-    bookingId: held.id,
-    at,
   }
   return ok(next, event)
 }
@@ -71,10 +86,8 @@ const okCancel = (
     cancelledBy: by,
   }
   const event: BookingEvent = {
-    id: eventId,
+    ...baseEvent(eventId, source.id, at),
     type: "Cancelled",
-    bookingId: source.id,
-    at,
     reason,
     by,
   }
@@ -94,12 +107,10 @@ const okReschedule = (
     confirmedAt: confirmed.confirmedAt,
   }
   const event: BookingEvent = {
-    id: eventId,
+    ...baseEvent(eventId, confirmed.id, at),
     type: "Rescheduled",
-    bookingId: confirmed.id,
     from: confirmed.slot,
     to: newSlot,
-    at,
   }
   return ok(next, event)
 }
@@ -107,10 +118,8 @@ const okReschedule = (
 const okComplete = (confirmed: Confirmed, at: Command["at"], eventId: BookingEventId) => {
   const next: Completed = { ...common(confirmed), state: "Completed", completedAt: at }
   const event: BookingEvent = {
-    id: eventId,
+    ...baseEvent(eventId, confirmed.id, at),
     type: "Completed",
-    bookingId: confirmed.id,
-    at,
   }
   return ok(next, event)
 }
@@ -123,10 +132,8 @@ const okNoShow = (
 ) => {
   const next: NoShow = { ...common(confirmed), state: "NoShow", markedAt: at, markedBy: by }
   const event: BookingEvent = {
-    id: eventId,
+    ...baseEvent(eventId, confirmed.id, at),
     type: "NoShow",
-    bookingId: confirmed.id,
-    at,
     by,
   }
   return ok(next, event)

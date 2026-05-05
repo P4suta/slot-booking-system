@@ -103,11 +103,14 @@ describe("applyEvent no-op safety", () => {
     const held = baseHeld()
     const r = expectRight(apply(held, { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev()))
     // Synthesize a Held event and replay onto Confirmed
+    const heldAt = at("2026-05-09T11:00:00Z")
     const heldEvent = {
       id: newBookingEventId(),
       type: "Held" as const,
       bookingId: held.id,
-      at: at("2026-05-09T11:00:00Z"),
+      version: 1 as const,
+      occurredAt: heldAt,
+      recordedAt: heldAt,
       bookingCode: held.code,
       serviceId: held.serviceId,
       providerId: held.providerId,
@@ -128,11 +131,14 @@ describe("applyEvent no-op safety", () => {
       ),
     ).booking
     const newSlot = slot("2026-05-11T01:00:00Z", "2026-05-11T02:00:00Z")
+    const rescheduleAt = at("2026-05-09T13:00:00Z")
     const fakeReschedule = {
       id: newBookingEventId(),
       type: "Rescheduled" as const,
       bookingId: cancelled.id,
-      at: at("2026-05-09T13:00:00Z"),
+      version: 1 as const,
+      occurredAt: rescheduleAt,
+      recordedAt: rescheduleAt,
       from: cancelled.slot,
       to: newSlot,
     }
@@ -148,26 +154,26 @@ describe("applyEvent no-op safety", () => {
         ev(),
       ),
     ).booking
-    const completedEvent = {
-      id: newBookingEventId(),
-      type: "Completed" as const,
-      bookingId: cancelled.id,
-      at: at("2026-05-10T03:00:00Z"),
-    }
+    const tEv = at("2026-05-10T03:00:00Z")
+    const baseE = (id: ReturnType<typeof newBookingEventId>) =>
+      ({
+        id,
+        bookingId: cancelled.id,
+        version: 1 as const,
+        occurredAt: tEv,
+        recordedAt: tEv,
+      }) as const
+    const completedEvent = { ...baseE(newBookingEventId()), type: "Completed" as const }
     expect(applyEvent(cancelled, completedEvent)).toEqual(cancelled)
     const noShowEvent = {
-      id: newBookingEventId(),
+      ...baseE(newBookingEventId()),
       type: "NoShow" as const,
-      bookingId: cancelled.id,
-      at: at("2026-05-10T03:00:00Z"),
       by: "staff" as const,
     }
     expect(applyEvent(cancelled, noShowEvent)).toEqual(cancelled)
     const cancelledEvent = {
-      id: newBookingEventId(),
+      ...baseE(newBookingEventId()),
       type: "Cancelled" as const,
-      bookingId: cancelled.id,
-      at: at("2026-05-10T03:00:00Z"),
       reason: "again",
       by: "system" as const,
     }

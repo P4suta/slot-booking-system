@@ -54,7 +54,7 @@ export const applyEvent = (snapshot: Booking, event: BookingEvent): Booking =>
       const next: Confirmed = {
         ...common(snapshot),
         state: "Confirmed",
-        confirmedAt: ev.at,
+        confirmedAt: ev.occurredAt,
       }
       return next
     }),
@@ -63,7 +63,7 @@ export const applyEvent = (snapshot: Booking, event: BookingEvent): Booking =>
       const next: Cancelled = {
         ...common(snapshot),
         state: "Cancelled",
-        cancelledAt: ev.at,
+        cancelledAt: ev.occurredAt,
         reason: ev.reason,
         cancelledBy: ev.by,
       }
@@ -84,7 +84,7 @@ export const applyEvent = (snapshot: Booking, event: BookingEvent): Booking =>
       const next: Completed = {
         ...common(snapshot),
         state: "Completed",
-        completedAt: ev.at,
+        completedAt: ev.occurredAt,
       }
       return next
     }),
@@ -93,7 +93,7 @@ export const applyEvent = (snapshot: Booking, event: BookingEvent): Booking =>
       const next: NoShow = {
         ...common(snapshot),
         state: "NoShow",
-        markedAt: ev.at,
+        markedAt: ev.occurredAt,
         markedBy: ev.by,
       }
       return next
