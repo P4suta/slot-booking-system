@@ -1,5 +1,6 @@
-import type { ResourceId } from "../types/EntityId.js"
-import type { ResourceType } from "../value-objects/ResourceType.js"
+import { Schema } from "effect"
+import { ResourceIdSchema } from "../types/EntityId.js"
+import { ResourceTypeSchema } from "../value-objects/ResourceType.js"
 
 /**
  * Physical resource (workspace, storage rack, …). Capacity is expressed
@@ -7,9 +8,10 @@ import type { ResourceType } from "../value-objects/ResourceType.js"
  * ADR-0012). There is no `capacity: number` field — every Resource is
  * one indivisible unit.
  */
-export type Resource = {
-  readonly id: ResourceId
-  readonly name: string
-  readonly type: ResourceType
-  readonly enabled: boolean
-}
+export const ResourceSchema = Schema.Struct({
+  id: ResourceIdSchema,
+  name: Schema.String,
+  type: ResourceTypeSchema,
+  enabled: Schema.Boolean,
+})
+export type Resource = Schema.Schema.Type<typeof ResourceSchema>

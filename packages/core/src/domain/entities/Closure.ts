@@ -1,8 +1,10 @@
-import type { Temporal } from "@js-temporal/polyfill"
-import type { ClosureId } from "../types/EntityId.js"
+import { Schema } from "effect"
+import { ClosureIdSchema } from "../types/EntityId.js"
+import { PlainDateSchema } from "../types/Temporal.js"
 
-export type Closure = {
-  readonly id: ClosureId
-  readonly date: Temporal.PlainDate
-  readonly reason: string
-}
+export const ClosureSchema = Schema.Struct({
+  id: ClosureIdSchema,
+  date: PlainDateSchema,
+  reason: Schema.String,
+})
+export type Closure = Schema.Schema.Type<typeof ClosureSchema>

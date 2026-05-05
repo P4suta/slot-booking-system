@@ -1,19 +1,21 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidAbsenceError } from "../errors/Errors.js"
-import type { ProviderAbsenceId, ProviderId } from "../types/EntityId.js"
+import { ProviderAbsenceIdSchema, ProviderIdSchema } from "../types/EntityId.js"
+import { InstantSchema } from "../types/Temporal.js"
 
-export type ProviderAbsence = {
-  readonly id: ProviderAbsenceId
-  readonly providerId: ProviderId
-  readonly start: Temporal.Instant
-  readonly end: Temporal.Instant
-  readonly reason: string
-}
+export const ProviderAbsenceSchema = Schema.Struct({
+  id: ProviderAbsenceIdSchema,
+  providerId: ProviderIdSchema,
+  start: InstantSchema,
+  end: InstantSchema,
+  reason: Schema.String,
+})
+export type ProviderAbsence = Schema.Schema.Type<typeof ProviderAbsenceSchema>
 
 export const makeProviderAbsence = (params: {
-  readonly id: ProviderAbsenceId
-  readonly providerId: ProviderId
+  readonly id: ProviderAbsence["id"]
+  readonly providerId: ProviderAbsence["providerId"]
   readonly start: Temporal.Instant
   readonly end: Temporal.Instant
   readonly reason: string

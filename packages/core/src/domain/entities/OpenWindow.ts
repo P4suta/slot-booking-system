@@ -1,6 +1,7 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidOpenWindowError } from "../errors/Errors.js"
+import { PlainTimeSchema } from "../types/Temporal.js"
 
 /**
  * `[start, end)` half-open interval within a single civil day. Both
@@ -8,10 +9,11 @@ import { type DomainError, InvalidOpenWindowError } from "../errors/Errors.js"
  * window cannot wrap across midnight; deployments that need an
  * overnight shift must split it into two windows on adjacent weekdays.
  */
-export type OpenWindow = {
-  readonly start: Temporal.PlainTime
-  readonly end: Temporal.PlainTime
-}
+export const OpenWindowSchema = Schema.Struct({
+  start: PlainTimeSchema,
+  end: PlainTimeSchema,
+})
+export type OpenWindow = Schema.Schema.Type<typeof OpenWindowSchema>
 
 const cmp = (a: Temporal.PlainTime, b: Temporal.PlainTime): number =>
   Temporal.PlainTime.compare(a, b)

@@ -1,16 +1,18 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either } from "effect"
+import { Either, Schema } from "effect"
 import { type DomainError, InvalidTimeSlotError } from "../errors/Errors.js"
+import { InstantSchema } from "../types/Temporal.js"
 
 /**
  * `[start, end)` half-open interval over UTC instants. The minimum
  * duration is 1 minute; the maximum is the configured per-day cap
  * enforced by `Minutes` (ADR-0004).
  */
-export type TimeSlot = {
-  readonly start: Temporal.Instant
-  readonly end: Temporal.Instant
-}
+export const TimeSlotSchema = Schema.Struct({
+  start: InstantSchema,
+  end: InstantSchema,
+})
+export type TimeSlot = Schema.Schema.Type<typeof TimeSlotSchema>
 
 const cmp = (a: Temporal.Instant, b: Temporal.Instant): number => Temporal.Instant.compare(a, b)
 
