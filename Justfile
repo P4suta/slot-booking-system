@@ -75,7 +75,7 @@ lint: lint-biome markdownlint
 # ---------------------------------------------------------------------------
 
 typecheck:
-    {{DEV}} {{PNPM}} -r exec tsc --noEmit
+    {{DEV}} ./node_modules/.bin/tsc -b --pretty
 
 # Architecture: dependency-cruiser enforces layer direction + forbidden
 # constructs (cloudflare:, … inside packages/core).

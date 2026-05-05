@@ -50,7 +50,7 @@ pre-push:
     - rebase
   commands:
     typecheck:
-      run: docker compose run --rm dev corepack pnpm -r exec tsc --noEmit
+      run: docker compose run --rm dev ./node_modules/.bin/tsc -b --pretty
     biome-full:
       run: docker compose run --rm dev ./node_modules/.bin/biome check .
     arch:

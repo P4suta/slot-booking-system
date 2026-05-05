@@ -1,13 +1,5 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "lib": ["ES2023"],
-    "rootDir": ".",
-    "noEmit": true,
-    "incremental": true,
-    "tsBuildInfoFile": ".tsbuildinfo",
-    "types": ["vitest/globals"]
-  },
-  "include": ["src/**/*", "test/**/*", "vitest.config.ts"],
-  "exclude": ["dist", "node_modules", "coverage"]
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "files": [],
+  "references": [{ "path": "./tsconfig.src.json" }, { "path": "./tsconfig.test.json" }]
 }
