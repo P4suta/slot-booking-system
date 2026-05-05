@@ -38,7 +38,8 @@
     "@js-temporal/polyfill": "^0.5.1",
     "effect": "^3.21.0",
     "typeid-js": "^1.2.0",
-    "ulidx": "^2.4.1"
+    "ulidx": "^2.4.1",
+    "xstate": "^5.31.0"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^9.6.0",

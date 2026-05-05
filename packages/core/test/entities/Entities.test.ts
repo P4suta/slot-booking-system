@@ -33,7 +33,7 @@ describe("Skill", () => {
     "1starts_with_digit",
     "Has-Hyphen",
     "Has Space",
-    "TooLong" + "x".repeat(40),
+    `TooLong${"x".repeat(40)}`,
   ])("rejects %s", (s) => expect(Either.isLeft(parseSkill(s))).toBe(true))
 })
 
