@@ -1,7 +1,8 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either, Schema } from "effect"
+import { type Either, Schema } from "effect"
 import { type DomainError, InvalidOpenWindowError } from "../errors/Errors.js"
 import { PlainTimeSchema } from "../types/Temporal.js"
+import { type Comparator, type Interval, intervalSmartCtor } from "../value-objects/Interval.js"
 
 /**
  * `[start, end)` half-open interval within a single civil day. Both
@@ -13,22 +14,19 @@ export const OpenWindowSchema = Schema.Struct({
   start: PlainTimeSchema,
   end: PlainTimeSchema,
 })
-export type OpenWindow = Schema.Schema.Type<typeof OpenWindowSchema>
+export type OpenWindow = Interval<Temporal.PlainTime>
 
-const cmp = (a: Temporal.PlainTime, b: Temporal.PlainTime): number =>
-  Temporal.PlainTime.compare(a, b)
+// Narrowing wrapper around `Temporal.PlainTime.compare` (which accepts
+// `string | PlainTime | PlainTimeLike`) to pin the inferred `T`.
+const cmpPlainTime: Comparator<Temporal.PlainTime> = (a, b) => Temporal.PlainTime.compare(a, b)
 
-export const makeOpenWindow = (
+export const makeOpenWindow: (
   start: Temporal.PlainTime,
   end: Temporal.PlainTime,
-): Either.Either<OpenWindow, DomainError> => {
-  if (cmp(start, end) >= 0) {
-    return Either.left(
-      new InvalidOpenWindowError({ reason: "start must precede end (same-day, no wrap)" }),
-    )
-  }
-  return Either.right({ start, end })
-}
+) => Either.Either<OpenWindow, DomainError> = intervalSmartCtor<Temporal.PlainTime, DomainError>(
+  cmpPlainTime,
+  () => new InvalidOpenWindowError({ reason: "start must precede end (same-day, no wrap)" }),
+)
 
 /** Number of whole minutes covered by the window. */
 export const windowMinutes = (w: OpenWindow): number => {
@@ -40,15 +38,15 @@ export const windowMinutes = (w: OpenWindow): number => {
 /** Sort + merge overlapping windows; return canonical disjoint sorted list. */
 export const canonicalize = (windows: readonly OpenWindow[]): readonly OpenWindow[] => {
   if (windows.length === 0) return []
-  const sorted = [...windows].sort((a, b) => cmp(a.start, b.start))
+  const sorted = [...windows].sort((a, b) => cmpPlainTime(a.start, b.start))
   const out: OpenWindow[] = []
   for (const w of sorted) {
     const last = out[out.length - 1]
-    if (last && cmp(w.start, last.end) <= 0) {
+    if (last && cmpPlainTime(w.start, last.end) <= 0) {
       // overlap or touch — merge
       out[out.length - 1] = {
         start: last.start,
-        end: cmp(w.end, last.end) > 0 ? w.end : last.end,
+        end: cmpPlainTime(w.end, last.end) > 0 ? w.end : last.end,
       }
     } else {
       out.push(w)

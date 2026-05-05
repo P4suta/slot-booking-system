@@ -1,7 +1,14 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either, Schema } from "effect"
+import { type Either, Schema } from "effect"
 import { type DomainError, InvalidTimeSlotError } from "../errors/Errors.js"
 import { InstantSchema } from "../types/Temporal.js"
+import {
+  type Comparator,
+  containedInBy,
+  type Interval,
+  intervalSmartCtor,
+  overlapsBy,
+} from "./Interval.js"
 
 /**
  * `[start, end)` half-open interval over UTC instants. The minimum
@@ -12,19 +19,21 @@ export const TimeSlotSchema = Schema.Struct({
   start: InstantSchema,
   end: InstantSchema,
 })
-export type TimeSlot = Schema.Schema.Type<typeof TimeSlotSchema>
+export type TimeSlot = Interval<Temporal.Instant>
 
-const cmp = (a: Temporal.Instant, b: Temporal.Instant): number => Temporal.Instant.compare(a, b)
+// Narrowing wrapper: `Temporal.Instant.compare` accepts `string |
+// Temporal.Instant` via overloads, which would widen the inferred
+// `T` of `intervalSmartCtor`. The annotated binding pins the
+// comparator to the strict-Instant signature.
+const cmpInstant: Comparator<Temporal.Instant> = (a, b) => Temporal.Instant.compare(a, b)
 
-export const makeTimeSlot = (
+export const makeTimeSlot: (
   start: Temporal.Instant,
   end: Temporal.Instant,
-): Either.Either<TimeSlot, DomainError> => {
-  if (cmp(start, end) >= 0) {
-    return Either.left(new InvalidTimeSlotError({ reason: "start must precede end" }))
-  }
-  return Either.right({ start, end })
-}
+) => Either.Either<TimeSlot, DomainError> = intervalSmartCtor<Temporal.Instant, DomainError>(
+  cmpInstant,
+  () => new InvalidTimeSlotError({ reason: "start must precede end" }),
+)
 
 /** Duration of the slot in whole minutes (rounds down). */
 export const durationMinutes = (slot: TimeSlot): number => {
@@ -33,9 +42,7 @@ export const durationMinutes = (slot: TimeSlot): number => {
 }
 
 /** True iff `a` and `b` overlap. Touching boundaries (a.end === b.start) do not overlap. */
-export const overlaps = (a: TimeSlot, b: TimeSlot): boolean =>
-  cmp(a.start, b.end) < 0 && cmp(b.start, a.end) < 0
+export const overlaps = overlapsBy(cmpInstant)
 
 /** True iff `slot` is fully contained within `[start, end)`. */
-export const containedIn = (slot: TimeSlot, bounds: TimeSlot): boolean =>
-  cmp(slot.start, bounds.start) >= 0 && cmp(slot.end, bounds.end) <= 0
+export const containedIn = containedInBy(cmpInstant)
