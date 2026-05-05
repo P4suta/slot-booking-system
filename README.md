@@ -47,7 +47,7 @@ workflow (`just mutation`).
 
 The pure-domain layer carries:
 
-- **219+ tests, C1 100 % branch coverage** (vitest V8 + threshold).
+- **370+ tests, C1 100 % branch coverage** (vitest V8 + threshold).
 - **Property-based tests** (`fast-check`) including `fc.commands`-
   driven model-based tests for the booking state machine.
 - **Type-level brand assertions** (`test/type/Brands.test.ts`)
