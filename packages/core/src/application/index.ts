@@ -2,3 +2,4 @@
 // All side effects are routed through ports defined here.
 export * from "./ports/index.js"
 export * from "./schemas/index.js"
+export * from "./usecases/index.js"

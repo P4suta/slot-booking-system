@@ -66,6 +66,7 @@ export const splitInput = (input: SlotCalcInput): readonly [SlotCalcEnv, SlotCal
 
 /** A single bookable slot derived from `computeAvailableSlots`. */
 export type AvailableSlot = {
+  readonly serviceId: ServiceId
   readonly start: Temporal.ZonedDateTime
   readonly end: Temporal.ZonedDateTime
   readonly providerId: ProviderId
@@ -378,6 +379,7 @@ const computeImpl = (env: SlotCalcEnv, query: SlotCalcQuery): readonly Available
     if (!resourceIds) continue
 
     out.push({
+      serviceId: query.service.id,
       start: dayStart.add({ minutes: startMin }),
       end: dayStart.add({ minutes: startMin + D }),
       providerId: provider,

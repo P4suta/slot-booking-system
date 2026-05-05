@@ -1,0 +1,69 @@
+import { Effect } from "effect"
+import type { Booking, BookingCommon } from "../../domain/booking/Booking.js"
+import type { DomainError } from "../../domain/errors/Errors.js"
+import type { TraceId } from "../../domain/errors/TraceId.js"
+import type { BookingEvent } from "../../domain/events/BookingEvent.js"
+import type { BookingCode } from "../../domain/value-objects/BookingCode.js"
+import type { PhoneLast4 } from "../../domain/value-objects/PhoneLast4.js"
+import type { BookingCodeIndex } from "../ports/BookingCodeIndex.js"
+import type { BookingRepository } from "../ports/BookingRepository.js"
+import { Clock } from "../ports/Clock.js"
+import type { EventStore } from "../ports/EventStore.js"
+import type { IdGenerator } from "../ports/IdGenerator.js"
+import { Logger } from "../ports/Logger.js"
+import { applyAndPersist } from "./_applyAndPersist.js"
+import { authenticateCustomer } from "./_authenticate.js"
+import { infoPayload } from "./_log.js"
+
+/**
+ * Cancel a booking. Per ADR-0007 customers can cancel both `Held` and
+ * `Confirmed` bookings. Reason is opaque to the domain (operator-facing
+ * audit field); a deployment may surface a fixed dropdown at the UI
+ * boundary, but the core never enumerates reasons.
+ *
+ * The `cancelledBy: Actor` field is `"customer"` when the request goes
+ * through this self-service use case; staff cancellations route through
+ * a separate `StaffCancelBooking` use case (Phase 1.x) that bypasses
+ * the phone check.
+ */
+export type CancelBookingInput = {
+  readonly code: BookingCode
+  readonly phoneLast4: PhoneLast4
+  readonly reason: string
+  readonly traceId?: TraceId
+}
+
+export type CancelBookingResult = {
+  readonly booking: Booking
+  readonly event: BookingEvent
+}
+
+export const CancelBooking = (
+  input: CancelBookingInput,
+): Effect.Effect<
+  CancelBookingResult,
+  DomainError,
+  Clock | IdGenerator | BookingRepository | EventStore | BookingCodeIndex | Logger
+> =>
+  Effect.gen(function* () {
+    const clock = yield* Clock
+    const logger = yield* Logger
+
+    const booking: Booking & BookingCommon = yield* authenticateCustomer(
+      input.code,
+      input.phoneLast4,
+    )
+    const at = yield* clock.nowInstant
+    const result = yield* applyAndPersist(booking, {
+      kind: "Cancel",
+      at,
+      reason: input.reason,
+      by: "customer",
+    })
+
+    yield* logger.info(
+      infoPayload("BookingCancelled", "I_USECASE_CANCEL", { bookingId: booking.id }, input.traceId),
+    )
+
+    return result
+  })
