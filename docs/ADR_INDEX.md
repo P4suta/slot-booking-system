@@ -28,6 +28,7 @@ back.
 | [0019](./adr/0019-schema-boundary.md)               | Effect.Schema is the boundary-parsing standard               | accepted |
 | [0020](./adr/0020-port-tags.md)                     | Application ports as Effect.Context.Tag classes              | accepted |
 | [0021](./adr/0021-tsc-references.md)                | tsc Project References for src ↔ test isolation              | accepted |
+| [0026](./adr/0026-logger-clock-port.md)             | Logger and Clock port wiring on Cloudflare Workers           | accepted |
 
 ## Authoring a new ADR
 
