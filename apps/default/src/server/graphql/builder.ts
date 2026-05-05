@@ -2,27 +2,37 @@ import SchemaBuilder from "@pothos/core"
 import { GraphQLError } from "graphql"
 
 /**
- * Pothos GraphQL schema builder. The Phase 0.5 surface only exposes a
- * read-side `availableSlots` query as proof of the toolchain wiring;
- * Phase 1 will layer Mutations (`holdSlot`, `confirmBooking`,
- * `cancelBooking`, `rescheduleBooking`) on top.
+ * Pothos GraphQL schema builder.
  *
- * Custom scalars / object types whose runtime decoder is an Effect
- * Schema use the `serialize / parseValue / parseLiteral` triplet to
- * delegate validation through the same `Schema.decodeUnknownEither`
- * path as the rest of the boundary, keeping ADR-0019 honest.
+ * **Context shape** — every resolver gets `{ env, request }` so it can:
+ *   - reach the per-day DurableObject (`env.DAY_SCHEDULE.idFromName(date)`)
+ *     for write paths; the DO is the actor that serialises mutations
+ *     within a single day (ADR-0005)
+ *   - reach D1 directly (`env.DB`) for the long-retention read
+ *     projections (ADR-0006)
  *
- * `parseValue` receives `unknown` from Yoga (clients can send any
- * JSON), so each scalar's parser must narrow before passing the
- * string downstream. We refuse non-string inputs at the GraphQL
- * boundary rather than waiting for the use case to fail.
+ * **Custom scalars** validate at the GraphQL boundary so the types
+ * threaded into use cases are already narrowed (`PlainDate`, `Instant`
+ * arrive as ISO-8601 strings; `PhoneLast4` arrives as four digits).
+ * The same Effect Schema parsers run downstream inside the use cases,
+ * but failing fast at the GraphQL parser keeps the error responses
+ * uniform.
  */
+export type GraphQLContext = {
+  readonly env: {
+    readonly DB: D1Database
+    readonly DAY_SCHEDULE: DurableObjectNamespace
+  }
+  readonly request: Request
+}
+
 export const builder = new SchemaBuilder<{
   Scalars: {
     PlainDate: { Input: string; Output: string }
     Instant: { Input: string; Output: string }
     PhoneLast4: { Input: string; Output: string }
   }
+  Context: GraphQLContext
 }>({})
 
 const expectString =

@@ -3,6 +3,7 @@ import type { DomainError } from "@booking/core"
 import {
   BloomBookingCodeIndexLive,
   BookingCodeIndex,
+  BookingRepository,
   CancelBooking,
   ConfirmBooking,
   codeOf,
@@ -14,6 +15,7 @@ import {
   UlidIdGeneratorLive,
 } from "@booking/core"
 import { Effect, Either, Layer, Schema } from "effect"
+import { makeD1BookingRepository } from "../adapters/D1BookingRepositoryLive.js"
 import {
   loadAllEvents,
   makeDurableObjectEventStore,
@@ -106,16 +108,34 @@ export class DaySchedule extends DurableObject<Env> {
   }
 
   /**
-   * Outbox draining (ADR-0006). Reads every event from the per-aggregate
-   * log, then forwards to the D1 backing store via the parent Worker.
-   * Phase 1.5 wires the D1 push through {@link Env.DB}; Phase 1
-   * intentionally only loads the events so the alarm path is exercised.
+   * Outbox draining (ADR-0006). The DO's local SQLite is the truth for
+   * in-flight days; D1 is the long-retention read projection.
+   *
+   * On each alarm tick we:
+   *   1. snapshot every booking from the DO's local store
+   *   2. upsert each into D1 via {@link makeD1BookingRepository}
+   *
+   * The use of `BookingRepository.upsert` (not raw `INSERT`) gives us
+   * idempotency: re-applying the same snapshot is a no-op, so the relay
+   * is at-least-once safe even if the alarm fires twice or wrangler
+   * restarts the worker mid-flush.
+   *
+   * Phase 1 ships the snapshot-based projector; the per-event log
+   * (`loadAllEvents`) is loaded only for the future event-sourcing
+   * relay (Phase 1.x), where each event will additionally be appended
+   * to D1's `booking_events` table for the audit trail.
    */
   private async drainOutboxToD1(storage: DurableStorage): Promise<void> {
     const events = await loadAllEvents(storage)
     if (events.length === 0) return
-    // TODO(P1.5): batched INSERT into env.DB.bookings_events (Drizzle)
-    // followed by a watermark write so re-runs are idempotent.
+    const bookings = await loadAllBookings(storage)
+    const d1Layer = makeD1BookingRepository(this.env.DB)
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const repo = yield* BookingRepository
+        for (const booking of bookings) yield* repo.upsert(booking)
+      }).pipe(Effect.provide(d1Layer)),
+    )
   }
 
   private async runOp(op: Op): Promise<Response> {

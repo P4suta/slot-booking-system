@@ -3,5 +3,6 @@ import { builder } from "./builder.js"
 // to the shared `builder` before `toSchema()` materialises the GraphQL
 // schema document.
 import "./resolvers/availableSlots.js"
+import "./resolvers/mutations.js"
 
 export const schema = builder.toSchema()
