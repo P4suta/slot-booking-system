@@ -1,15 +1,16 @@
 /**
  * Default test world: industry-agnostic Service / Providers / Resources
  * / BusinessHours used across slot-calc tests and benches. Tests can
- * destructure or override individual pieces; `baseInput()` produces a
- * ready-to-call `SlotCalcInput` with sensible defaults that fail any
- * tester whose change of behaviour would surprise the caller.
+ * destructure or override individual pieces; `baseEnv()` and
+ * `baseQuery()` produce ready-to-call `(env, query)` pairs with
+ * sensible defaults that fail any tester whose change of behaviour
+ * would surprise the caller.
  */
 import { makeBusinessHours } from "../../src/domain/entities/BusinessHours.js"
 import type { Provider } from "../../src/domain/entities/Provider.js"
 import type { Resource } from "../../src/domain/entities/Resource.js"
 import type { Service } from "../../src/domain/entities/Service.js"
-import type { SlotCalcInput } from "../../src/domain/slot/computeAvailableSlots.js"
+import type { SlotCalcEnv, SlotCalcQuery } from "../../src/domain/slot/computeAvailableSlots.js"
 import type {
   BusinessHoursId,
   ProviderId,
@@ -88,9 +89,7 @@ export const bhAllWeekdays = new Map(
   }),
 )
 
-export const baseInput = (overrides: Partial<SlotCalcInput> = {}): SlotCalcInput => ({
-  service: baseService,
-  date: date("2026-05-11"), // Monday
+export const baseEnv = (overrides: Partial<SlotCalcEnv> = {}): SlotCalcEnv => ({
   timeZone: TZ,
   businessHoursByWeekday: bhAllWeekdays,
   closures: [],
@@ -99,7 +98,13 @@ export const baseInput = (overrides: Partial<SlotCalcInput> = {}): SlotCalcInput
   providerAbsences: [],
   servicesById: new Map([[SERVICE_ID, baseService]]),
   existingBookings: [],
-  now: at("2026-05-10T00:00:00Z"),
   slotGranularityMinutes: 30,
+  ...overrides,
+})
+
+export const baseQuery = (overrides: Partial<SlotCalcQuery> = {}): SlotCalcQuery => ({
+  service: baseService,
+  date: date("2026-05-11"), // Monday
+  now: at("2026-05-10T00:00:00Z"),
   ...overrides,
 })

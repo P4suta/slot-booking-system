@@ -36,34 +36,6 @@ export type SlotCalcQuery = {
   readonly now: Temporal.Instant
 }
 
-/**
- * Backwards-compatible flat shape (env ∪ query). Existing callers /
- * fixtures that build a single object can pass it through
- * {@link splitInput} or use the legacy convenience overload of
- * {@link computeAvailableSlots}.
- */
-export type SlotCalcInput = SlotCalcEnv & SlotCalcQuery
-
-/** Project a flat {@link SlotCalcInput} into the env / query pair. */
-export const splitInput = (input: SlotCalcInput): readonly [SlotCalcEnv, SlotCalcQuery] => [
-  {
-    timeZone: input.timeZone,
-    businessHoursByWeekday: input.businessHoursByWeekday,
-    closures: input.closures,
-    providers: input.providers,
-    resources: input.resources,
-    providerAbsences: input.providerAbsences,
-    servicesById: input.servicesById,
-    existingBookings: input.existingBookings,
-    slotGranularityMinutes: input.slotGranularityMinutes,
-  },
-  {
-    service: input.service,
-    date: input.date,
-    now: input.now,
-  },
-]
-
 /** A single bookable slot derived from `computeAvailableSlots`. */
 export type AvailableSlot = {
   readonly serviceId: ServiceId
@@ -86,35 +58,25 @@ const minuteOfTargetDay = (instant: Temporal.Instant, dayStart: Temporal.ZonedDa
 }
 
 /**
- * True iff every bit in `[start, end)` of `mask` is set.
- *
- * Precondition: `0 <= start < end <= mask.length`. The candidate-walk
- * loop in `computeAvailableSlots` enforces this before invocation, so
- * no defensive guard is needed here.
+ * A provider paired with the set of `start` offsets at which a window
+ * of `[start, start + providerSpan)` is entirely free in that provider's
+ * mask. `providerSpan = D + bufBefore + bufAfter`.
  */
-const rangeAllSet = (mask: B.Bitmap, start: number, end: number): boolean => {
-  for (let i = start; i < end; i++) if (!B.isSet(mask, i)) return false
-  return true
-}
-
-/** A provider paired with its precomputed daily availability mask. */
 type ProviderAvailability = {
   readonly id: ProviderId
-  readonly mask: B.Bitmap
-}
-
-/** A resource paired with its precomputed daily availability mask. */
-type ResourceAvailability = {
-  readonly id: ResourceId
-  readonly type: ResourceType
-  readonly mask: B.Bitmap
+  readonly runStarts: ReadonlySet<number>
 }
 
 /**
- * A booking already resolved against the service map. Bookings whose
- * `serviceId` is unknown to the input are dropped at the boundary so
- * downstream code can rely on `service` being present.
+ * A resource paired with the set of `start` offsets at which a window
+ * of `[start, start + D)` is entirely free in that resource's mask.
  */
+type ResourceAvailability = {
+  readonly id: ResourceId
+  readonly type: ResourceType
+  readonly runStarts: ReadonlySet<number>
+}
+
 type ResolvedBooking = {
   readonly booking: Booking
   readonly service: Service
@@ -158,6 +120,7 @@ const computeProviderAvailabilities = (
   absences: readonly ProviderAbsence[],
   bookings: readonly ResolvedBooking[],
   dayStart: Temporal.ZonedDateTime,
+  providerSpan: number,
 ): readonly ProviderAvailability[] =>
   providers
     .filter((p) => p.enabled && providerSatisfies(p, service.requiredSkills))
@@ -183,7 +146,7 @@ const computeProviderAvailabilities = (
           )
           return B.clearRange(mask, lo, hi)
         }, fromAbsences)
-      return { id: p.id, mask: finalMask } as const
+      return { id: p.id, runStarts: new Set(B.findRunsOfLength(finalMask, providerSpan)) } as const
     })
 
 /** Effect a booking has on a resource's availability for a given date. */
@@ -224,6 +187,7 @@ const computeResourceAvailabilities = (
   date: Temporal.PlainDate,
   dayStart: Temporal.ZonedDateTime,
   timeZone: BusinessTimeZone,
+  duration: number,
 ): readonly ResourceAvailability[] =>
   resources
     .filter((r) => r.enabled && service.requiredResourceTypes.has(r.type))
@@ -231,23 +195,22 @@ const computeResourceAvailabilities = (
     .map((r) => {
       const relevant = bookings.filter(({ booking }) => booking.resourceIds.includes(r.id))
       const impacts = relevant.map((rb) => resourceImpact(rb, date, dayStart, timeZone))
-      if (impacts.some((i) => i.kind === "blackout")) {
-        return { id: r.id, type: r.type, mask: B.empty(MINUTES_PER_DAY) } as const
-      }
-      const mask = impacts.reduce(
-        (m, i) => (i.kind === "clear" ? B.clearRange(m, i.lo, i.hi) : m),
-        baseMask,
-      )
-      return { id: r.id, type: r.type, mask } as const
+      const mask = impacts.some((i) => i.kind === "blackout")
+        ? B.empty(MINUTES_PER_DAY)
+        : impacts.reduce((m, i) => (i.kind === "clear" ? B.clearRange(m, i.lo, i.hi) : m), baseMask)
+      return {
+        id: r.id,
+        type: r.type,
+        runStarts: new Set(B.findRunsOfLength(mask, duration)),
+      } as const
     })
 
 const pickProvider = (
   providers: readonly ProviderAvailability[],
   needStart: number,
-  needEnd: number,
 ): ProviderId | undefined => {
-  for (const { id, mask } of providers) {
-    if (rangeAllSet(mask, needStart, needEnd)) return id
+  for (const { id, runStarts } of providers) {
+    if (runStarts.has(needStart)) return id
   }
   return undefined
 }
@@ -256,14 +219,11 @@ const pickResources = (
   resourcesByType: ReadonlyMap<ResourceType, readonly ResourceAvailability[]>,
   requiredTypes: ReadonlySet<ResourceType>,
   startMin: number,
-  endMin: number,
 ): readonly ResourceId[] | undefined => {
   const chosen: ResourceId[] = []
   for (const requiredType of requiredTypes) {
     const candidates = resourcesByType.get(requiredType) ?? []
-    const pick = candidates.find(
-      (r) => !chosen.includes(r.id) && rangeAllSet(r.mask, startMin, endMin),
-    )
+    const pick = candidates.find((r) => !chosen.includes(r.id) && r.runStarts.has(startMin))
     if (!pick) return undefined
     chosen.push(pick.id)
   }
@@ -286,40 +246,32 @@ const groupByType = (
  * Pure, deterministic computation of bookable slots on a single day,
  * driven by ADR-0012 bitmap arithmetic. Same input → same output.
  *
- * Two call shapes:
- *   - `(env, query)` — explicit, the canonical form.
- *   - `(input)` — flat object that combines env + query, retained for
- *     compatibility with fixtures that build the merged shape.
- *
  * Algorithm:
  *   1. Drop the date if it falls in a Closure or has no business hours.
  *   2. Build a 1440-bit per-day mask: open windows ∧ ¬past.
  *   3. Per eligible Provider (skill match, enabled), AND the day mask
- *      with ¬absences ∧ ¬booking-occupancy(±buffer).
+ *      with ¬absences ∧ ¬booking-occupancy(±buffer); precompute the
+ *      set of `start` offsets where `[start, start + D + bufBefore +
+ *      bufAfter)` is entirely free, via `Bitmap.findRunsOfLength`
+ *      (O(span) bigint AND-shifts).
  *   4. Per eligible Resource (type match, enabled), AND the day mask
  *      with ¬booking-occupancy. Multi-day services that hold a Resource
- *      across the date clear the entire day's resource mask.
- *   5. Walk candidate starts at granularity. The first ID-ordered
- *      Provider with a free `[start - bufBefore, start + D + bufAfter)`
- *      pairs with the first Resource of each required type that has
- *      a free `[start, start + D)`. ID order makes the result
- *      deterministic.
+ *      across the date clear the entire day's resource mask. Precompute
+ *      the set of `start` offsets where `[start, start + D)` is free.
+ *   5. Walk candidate starts at granularity. Membership lookup in the
+ *      precomputed sets is O(1); the first ID-ordered Provider whose
+ *      run set contains `start - bufBefore` pairs with the first
+ *      Resource of each required type whose run set contains `start`.
+ *      ID order makes the result deterministic; greedy first-match
+ *      keeps the same world snapshot returning the same slot list,
+ *      which is what the customer-facing self-service flow needs
+ *      (ADR-0034 covers the rationale for greedy over bipartite
+ *      matching).
  */
-export function computeAvailableSlots(
+export const computeAvailableSlots = (
   env: SlotCalcEnv,
   query: SlotCalcQuery,
-): readonly AvailableSlot[]
-export function computeAvailableSlots(input: SlotCalcInput): readonly AvailableSlot[]
-export function computeAvailableSlots(
-  envOrInput: SlotCalcEnv | SlotCalcInput,
-  maybeQuery?: SlotCalcQuery,
-): readonly AvailableSlot[] {
-  const [env, query] =
-    maybeQuery === undefined ? splitInput(envOrInput as SlotCalcInput) : [envOrInput, maybeQuery]
-  return computeImpl(env, query)
-}
-
-const computeImpl = (env: SlotCalcEnv, query: SlotCalcQuery): readonly AvailableSlot[] => {
+): readonly AvailableSlot[] => {
   if (!query.service.enabled) return []
   if (env.slotGranularityMinutes <= 0) return []
 
@@ -334,6 +286,12 @@ const computeImpl = (env: SlotCalcEnv, query: SlotCalcQuery): readonly Available
 
   const resolved = resolveBookings(env.existingBookings, env.servicesById)
 
+  const D = query.service.durationMinutes
+  const bufBefore = query.service.bufferBeforeMinutes
+  const bufAfter = query.service.bufferAfterMinutes
+  const G = env.slotGranularityMinutes
+  const providerSpan = D + bufBefore + bufAfter
+
   const providerAvailabilities = computeProviderAvailabilities(
     baseMask,
     query.service,
@@ -341,6 +299,7 @@ const computeImpl = (env: SlotCalcEnv, query: SlotCalcQuery): readonly Available
     env.providerAbsences,
     resolved,
     dayStart,
+    providerSpan,
   )
 
   const resourceAvailabilities = computeResourceAvailabilities(
@@ -351,28 +310,22 @@ const computeImpl = (env: SlotCalcEnv, query: SlotCalcQuery): readonly Available
     query.date,
     dayStart,
     env.timeZone,
+    D,
   )
   const resourcesByType = groupByType(resourceAvailabilities)
-
-  const D = query.service.durationMinutes
-  const bufBefore = query.service.bufferBeforeMinutes
-  const bufAfter = query.service.bufferAfterMinutes
-  const G = env.slotGranularityMinutes
 
   const out: AvailableSlot[] = []
   for (let startMin = 0; startMin + D <= MINUTES_PER_DAY; startMin += G) {
     const needStart = startMin - bufBefore
-    const needEnd = startMin + D + bufAfter
-    if (needStart < 0 || needEnd > MINUTES_PER_DAY) continue
+    if (needStart < 0) continue
 
-    const provider = pickProvider(providerAvailabilities, needStart, needEnd)
+    const provider = pickProvider(providerAvailabilities, needStart)
     if (!provider) continue
 
     const resourceIds = pickResources(
       resourcesByType,
       query.service.requiredResourceTypes,
       startMin,
-      startMin + D,
     )
     if (!resourceIds) continue
 

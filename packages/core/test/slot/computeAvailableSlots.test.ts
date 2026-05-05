@@ -7,7 +7,6 @@ import type { Service } from "../../src/domain/entities/Service.js"
 import {
   type AvailableSlot,
   computeAvailableSlots,
-  splitInput,
 } from "../../src/domain/slot/computeAvailableSlots.js"
 import {
   type ClosureId,
@@ -18,7 +17,8 @@ import {
 } from "../../src/domain/types/EntityId.js"
 import { minutesUnchecked } from "../../src/domain/value-objects/Duration.js"
 import {
-  baseInput,
+  baseEnv,
+  baseQuery,
   baseService,
   bhAllWeekdays,
   confirmedBooking,
@@ -38,10 +38,7 @@ import {
 
 describe("computeAvailableSlots", () => {
   it("returns slots only within business hours", () => {
-    const out = computeAvailableSlots(baseInput())
-    // 10:00..18:00 = 480 minutes; service = 60+15 buffer = 75; granularity 30
-    // So starts at 10:00, 10:30, ..., 16:45 — actually since 17:00 + 15 = 17:15 ≤ 18:00,
-    // last start where startMin + 60 + 15 ≤ 480+(start of day) … target is local 10:00..18:00.
+    const out = computeAvailableSlots(baseEnv(), baseQuery())
     expect(out.length).toBeGreaterThan(0)
     for (const s of out) {
       expect(s.start.hour).toBeGreaterThanOrEqual(10)
@@ -55,7 +52,7 @@ describe("computeAvailableSlots", () => {
       date: date("2026-05-11"),
       reason: "test",
     }
-    expect(computeAvailableSlots(baseInput({ closures: [closure] }))).toEqual([])
+    expect(computeAvailableSlots(baseEnv({ closures: [closure] }), baseQuery())).toEqual([])
   })
 
   it("returns empty when business hours are missing for the weekday", () => {
@@ -64,23 +61,24 @@ describe("computeAvailableSlots", () => {
     const onlyMon = new Map([[weekday(1), monBh]])
     const sunday = date("2026-05-10") // Sunday
     expect(
-      computeAvailableSlots(baseInput({ businessHoursByWeekday: onlyMon, date: sunday })),
+      computeAvailableSlots(
+        baseEnv({ businessHoursByWeekday: onlyMon }),
+        baseQuery({ date: sunday }),
+      ),
     ).toEqual([])
   })
 
   it("returns empty when slot granularity is non-positive", () => {
-    expect(computeAvailableSlots(baseInput({ slotGranularityMinutes: 0 }))).toEqual([])
-    expect(computeAvailableSlots(baseInput({ slotGranularityMinutes: -5 }))).toEqual([])
+    expect(computeAvailableSlots(baseEnv({ slotGranularityMinutes: 0 }), baseQuery())).toEqual([])
+    expect(computeAvailableSlots(baseEnv({ slotGranularityMinutes: -5 }), baseQuery())).toEqual([])
   })
 
   it("returns empty when service is disabled", () => {
     const disabled: Service = { ...baseService, enabled: false }
     expect(
       computeAvailableSlots(
-        baseInput({
-          service: disabled,
-          servicesById: new Map([[SERVICE_ID, disabled]]),
-        }),
+        baseEnv({ servicesById: new Map([[SERVICE_ID, disabled]]) }),
+        baseQuery({ service: disabled }),
       ),
     ).toEqual([])
   })
@@ -88,7 +86,7 @@ describe("computeAvailableSlots", () => {
   it("clears past minutes when the target date is today", () => {
     // Now = 2026-05-11 13:00 JST = 04:00 UTC, target date = 2026-05-11 JST.
     const now = Temporal.Instant.from("2026-05-11T04:00:00Z")
-    const out = computeAvailableSlots(baseInput({ now }))
+    const out = computeAvailableSlots(baseEnv(), baseQuery({ now }))
     for (const s of out) {
       expect(s.start.hour).toBeGreaterThanOrEqual(13)
     }
@@ -97,8 +95,7 @@ describe("computeAvailableSlots", () => {
   it("returns empty for a date entirely in the past", () => {
     const yesterday = date("2026-05-10")
     const now = Temporal.Instant.from("2026-05-11T04:00:00Z")
-    // Sunday has BH in our default; clear it for past-date check
-    expect(computeAvailableSlots(baseInput({ date: yesterday, now }))).toEqual([])
+    expect(computeAvailableSlots(baseEnv(), baseQuery({ date: yesterday, now }))).toEqual([])
   })
 
   it("subtracts an existing booking from provider availability with buffer", () => {
@@ -110,8 +107,7 @@ describe("computeAvailableSlots", () => {
       resourceIds: [RESOURCE_ID_1],
       slot: slot("2026-05-11T04:00:00Z", "2026-05-11T05:00:00Z"), // 13:00..14:00 JST
     })
-    const out = computeAvailableSlots(baseInput({ existingBookings: [occupied] }))
-    // The 13:00 slot should still appear (provider B picks it up) but with provider B.
+    const out = computeAvailableSlots(baseEnv({ existingBookings: [occupied] }), baseQuery())
     const at13 = out.find((s) => s.start.hour === 13 && s.start.minute === 0)
     expect(at13?.providerId).toBe(PROVIDER_ID_B)
   })
@@ -120,7 +116,7 @@ describe("computeAvailableSlots", () => {
     const t1 = slot("2026-05-11T04:00:00Z", "2026-05-11T05:00:00Z")
     const t2 = slot("2026-05-11T04:00:00Z", "2026-05-11T05:00:00Z")
     const out = computeAvailableSlots(
-      baseInput({
+      baseEnv({
         existingBookings: [
           confirmedBooking({
             providerId: PROVIDER_ID_A,
@@ -134,6 +130,7 @@ describe("computeAvailableSlots", () => {
           }),
         ],
       }),
+      baseQuery(),
     )
     const at13 = out.find((s) => s.start.hour === 13 && s.start.minute === 0)
     expect(at13).toBeUndefined()
@@ -141,13 +138,10 @@ describe("computeAvailableSlots", () => {
 
   it("respects required-resource-type — empty if no matching type", () => {
     const otherType = resourceType("storage")
+    const svc: Service = { ...baseService, requiredResourceTypes: new Set([otherType]) }
     const out = computeAvailableSlots(
-      baseInput({
-        service: { ...baseService, requiredResourceTypes: new Set([otherType]) },
-        servicesById: new Map([
-          [SERVICE_ID, { ...baseService, requiredResourceTypes: new Set([otherType]) }],
-        ]),
-      }),
+      baseEnv({ servicesById: new Map([[SERVICE_ID, svc]]) }),
+      baseQuery({ service: svc }),
     )
     expect(out).toEqual([])
   })
@@ -159,17 +153,18 @@ describe("computeAvailableSlots", () => {
       requiredSkills: new Set([electric]),
     }
     const out = computeAvailableSlots(
-      baseInput({
-        service: electricService,
-        servicesById: new Map([[SERVICE_ID, electricService]]),
-      }),
+      baseEnv({ servicesById: new Map([[SERVICE_ID, electricService]]) }),
+      baseQuery({ service: electricService }),
     )
     expect(out).toEqual([]) // no provider has the skill
   })
 
   it("is deterministic — same input twice yields the same output", () => {
-    const i = baseInput()
-    expect(JSON.stringify(computeAvailableSlots(i))).toBe(JSON.stringify(computeAvailableSlots(i)))
+    const env = baseEnv()
+    const q = baseQuery()
+    expect(JSON.stringify(computeAvailableSlots(env, q))).toBe(
+      JSON.stringify(computeAvailableSlots(env, q)),
+    )
   })
 
   describe("invariants — property tests", () => {
@@ -185,11 +180,11 @@ describe("computeAvailableSlots", () => {
               bufferAfterMinutes: minutesUnchecked(0),
             }
             const out = computeAvailableSlots(
-              baseInput({
-                service: svc,
+              baseEnv({
                 servicesById: new Map([[SERVICE_ID, svc]]),
                 slotGranularityMinutes: G,
               }),
+              baseQuery({ service: svc }),
             )
             for (const s of out) {
               if (s.start.hour < 10) return false
@@ -205,13 +200,12 @@ describe("computeAvailableSlots", () => {
     it("invariant 2: provider not double-booked across output slots", () => {
       const svc: Service = { ...baseService, bufferAfterMinutes: minutesUnchecked(0) }
       const out = computeAvailableSlots(
-        baseInput({
-          service: svc,
+        baseEnv({
           servicesById: new Map([[SERVICE_ID, svc]]),
           slotGranularityMinutes: 60,
         }),
+        baseQuery({ service: svc }),
       )
-      // Group by provider; assert no overlapping pairs.
       const byProvider = new Map<ProviderId, AvailableSlot[]>()
       for (const s of out) {
         const list = byProvider.get(s.providerId) ?? []
@@ -245,8 +239,11 @@ describe("computeAvailableSlots", () => {
               resourceIds: [RESOURCE_ID_1],
               slot: slot(startInstant, endInstant),
             })
-            const before = computeAvailableSlots(baseInput()).length
-            const after = computeAvailableSlots(baseInput({ existingBookings: [occupied] })).length
+            const before = computeAvailableSlots(baseEnv(), baseQuery()).length
+            const after = computeAvailableSlots(
+              baseEnv({ existingBookings: [occupied] }),
+              baseQuery(),
+            ).length
             return after <= before
           },
         ),
@@ -256,13 +253,13 @@ describe("computeAvailableSlots", () => {
 
     it("invariant 4: works at multiple granularities (count is non-zero for each)", () => {
       for (const G of [15, 30, 60]) {
-        const out = computeAvailableSlots(baseInput({ slotGranularityMinutes: G }))
+        const out = computeAvailableSlots(baseEnv({ slotGranularityMinutes: G }), baseQuery())
         expect(out.length).toBeGreaterThan(0)
       }
     })
 
     it("invariant 5: deterministic ordering — output sorted by start", () => {
-      const out = computeAvailableSlots(baseInput())
+      const out = computeAvailableSlots(baseEnv(), baseQuery())
       for (let i = 1; i < out.length; i++) {
         const prev = out[i - 1]
         const cur = out[i]
@@ -290,15 +287,14 @@ describe("computeAvailableSlots", () => {
         serviceId: overhaulId,
       }
       const out = computeAvailableSlots(
-        baseInput({
-          service: { ...overhaulSvc, id: overhaulId },
+        baseEnv({
           servicesById: new Map([
             [SERVICE_ID, overhaulSvc],
             [overhaulId, { ...overhaulSvc, id: overhaulId }],
           ]),
           existingBookings: [existing],
-          // Asking for slots on 2026-05-11 (Mon) — within the holding window.
         }),
+        baseQuery({ service: { ...overhaulSvc, id: overhaulId } }),
       )
       // Some slots may still be served by RESOURCE_ID_2; never by RESOURCE_ID_1.
       for (const s of out) {
@@ -321,11 +317,11 @@ describe("computeAvailableSlots", () => {
         serviceId: overhaulId,
       }
       const out = computeAvailableSlots(
-        baseInput({
-          service: { ...oneDaySvc, id: overhaulId },
+        baseEnv({
           servicesById: new Map([[overhaulId, { ...oneDaySvc, id: overhaulId }]]),
           existingBookings: [existing],
         }),
+        baseQuery({ service: { ...oneDaySvc, id: overhaulId } }),
       )
       // RESOURCE_ID_1 should be free again on 2026-05-11.
       expect(out.some((s) => s.resourceIds.includes(RESOURCE_ID_1))).toBe(true)
@@ -344,7 +340,7 @@ describe("computeAvailableSlots", () => {
         serviceId: orphanService,
       }
       // servicesById does NOT contain orphanService.
-      const out = computeAvailableSlots(baseInput({ existingBookings: [orphanBooking] }))
+      const out = computeAvailableSlots(baseEnv({ existingBookings: [orphanBooking] }), baseQuery())
       // The orphan booking is effectively a no-op: provider A and
       // resource 1 stay free at 13:00 JST.
       const at13 = out.find((s) => s.start.hour === 13 && s.start.minute === 0)
@@ -369,20 +365,43 @@ describe("computeAvailableSlots", () => {
         bufferAfterMinutes: minutesUnchecked(0),
       }
       const out = computeAvailableSlots(
-        baseInput({
-          service: noBufferSvc,
+        baseEnv({
           servicesById: new Map([[SERVICE_ID, noBufferSvc]]),
           // Single provider so we observe the absence directly.
           providers: [providerA],
           providerAbsences: [absence],
           slotGranularityMinutes: 60,
         }),
+        baseQuery({ service: noBufferSvc }),
       )
       const has = (h: number) => out.some((s) => s.start.hour === h)
       expect(has(10)).toBe(true) //  10:00..11:00 — fits before absence
       expect(has(11)).toBe(false) // 11:00..12:00 — entirely inside absence
       expect(has(12)).toBe(false) // 12:00..13:00 — ends right at absence end, but the start..end interval is inside
       expect(has(13)).toBe(true) //  13:00..14:00 — after absence
+    })
+  })
+
+  describe("buffer-before", () => {
+    it("skips early starts that would push needStart < 0", () => {
+      // bufferBefore=30 means a 10:00 start needs the provider mask
+      // free from 09:30. 09:30 is outside the bitmap range, so the
+      // first usable start moves to ≥ 10:30 (granularity 30).
+      const svc: Service = {
+        ...baseService,
+        bufferBeforeMinutes: minutesUnchecked(30),
+      }
+      const out = computeAvailableSlots(
+        baseEnv({ servicesById: new Map([[SERVICE_ID, svc]]) }),
+        baseQuery({ service: svc }),
+      )
+      // 10:00 start would need needStart = 10:00 - 30min = 09:30 → < 0 in
+      // minute-of-day terms after the business-hours mask is built; the
+      // candidate walk skips it. First valid start is 10:30.
+      const first = out[0]
+      if (!first) throw new Error("expected at least one slot")
+      expect(first.start.hour).toBe(10)
+      expect(first.start.minute).toBe(30)
     })
   })
 
@@ -399,18 +418,11 @@ describe("computeAvailableSlots", () => {
         reason: "test",
         cancelledBy: "customer",
       }
-      const out = computeAvailableSlots(baseInput({ existingBookings: [cancelledOnA] }))
+      const out = computeAvailableSlots(baseEnv({ existingBookings: [cancelledOnA] }), baseQuery())
       const at13 = out.find((s) => s.start.hour === 13 && s.start.minute === 0)
       // Provider A should be available since the booking is cancelled — the
       // ID-asc tiebreak picks A.
       expect(at13?.providerId).toBe(PROVIDER_ID_A)
-    })
-
-    it("(env, query) explicit form returns the same result as the flat form", () => {
-      const flat = baseInput()
-      const direct = computeAvailableSlots(flat)
-      const split = computeAvailableSlots(...splitInput(flat))
-      expect(split).toEqual(direct)
     })
   })
 })
