@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Either, Match } from "effect"
 import {
   AlreadyCancelledError,
   AlreadyCompletedError,
@@ -8,7 +8,15 @@ import {
 } from "../errors/Errors.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
 import type { BookingEventId } from "../types/EntityId.js"
-import type { Booking, BookingCommon, Cancelled, Completed, Confirmed, NoShow } from "./Booking.js"
+import type {
+  Booking,
+  BookingCommon,
+  Cancelled,
+  Completed,
+  Confirmed,
+  Held,
+  NoShow,
+} from "./Booking.js"
 import type { Command } from "./Command.js"
 
 export type ApplyResult = {
@@ -29,14 +37,155 @@ const common = (b: BookingCommon): BookingCommon => ({
   freeText: b.freeText,
 })
 
+/* -------------------------------------------------------------------------- */
+/* Right-side smart constructors — the "data declaration" half of each       */
+/* (state, command) row. Each returns the next booking + its event in lockstep.*/
+/* -------------------------------------------------------------------------- */
+
+const ok = (booking: Booking, event: BookingEvent): Either.Either<ApplyResult, DomainError> =>
+  Either.right({ booking, event })
+
+const okConfirm = (held: Held, at: Command["at"], eventId: BookingEventId) => {
+  const next: Confirmed = { ...common(held), state: "Confirmed", confirmedAt: at }
+  const event: BookingEvent = {
+    id: eventId,
+    type: "Confirmed",
+    bookingId: held.id,
+    at,
+  }
+  return ok(next, event)
+}
+
+const okCancel = (
+  source: Held | Confirmed,
+  at: Command["at"],
+  reason: string,
+  by: Cancelled["cancelledBy"],
+  eventId: BookingEventId,
+) => {
+  const next: Cancelled = {
+    ...common(source),
+    state: "Cancelled",
+    cancelledAt: at,
+    reason,
+    cancelledBy: by,
+  }
+  const event: BookingEvent = {
+    id: eventId,
+    type: "Cancelled",
+    bookingId: source.id,
+    at,
+    reason,
+    by,
+  }
+  return ok(next, event)
+}
+
+const okReschedule = (
+  confirmed: Confirmed,
+  at: Command["at"],
+  newSlot: Confirmed["slot"],
+  eventId: BookingEventId,
+) => {
+  const next: Confirmed = {
+    ...common(confirmed),
+    slot: newSlot,
+    state: "Confirmed",
+    confirmedAt: confirmed.confirmedAt,
+  }
+  const event: BookingEvent = {
+    id: eventId,
+    type: "Rescheduled",
+    bookingId: confirmed.id,
+    from: confirmed.slot,
+    to: newSlot,
+    at,
+  }
+  return ok(next, event)
+}
+
+const okComplete = (confirmed: Confirmed, at: Command["at"], eventId: BookingEventId) => {
+  const next: Completed = { ...common(confirmed), state: "Completed", completedAt: at }
+  const event: BookingEvent = {
+    id: eventId,
+    type: "Completed",
+    bookingId: confirmed.id,
+    at,
+  }
+  return ok(next, event)
+}
+
+const okNoShow = (
+  confirmed: Confirmed,
+  at: Command["at"],
+  by: NoShow["markedBy"],
+  eventId: BookingEventId,
+) => {
+  const next: NoShow = { ...common(confirmed), state: "NoShow", markedAt: at, markedBy: by }
+  const event: BookingEvent = {
+    id: eventId,
+    type: "NoShow",
+    bookingId: confirmed.id,
+    at,
+    by,
+  }
+  return ok(next, event)
+}
+
+const invalid = (
+  from: Booking["state"],
+  kind: Command["kind"],
+): Either.Either<ApplyResult, DomainError> =>
+  Either.left(new InvalidStateTransitionError({ from, command: kind }))
+
+/* -------------------------------------------------------------------------- */
+/* Per-state dispatch via Match.type / Match.discriminator                     */
+/* -------------------------------------------------------------------------- */
+
+const dispatchHeld = (held: Held, eventId: BookingEventId) =>
+  Match.type<Command>().pipe(
+    Match.discriminator("kind")("Confirm", (cmd) => okConfirm(held, cmd.at, eventId)),
+    Match.discriminator("kind")("Cancel", (cmd) =>
+      okCancel(held, cmd.at, cmd.reason, cmd.by, eventId),
+    ),
+    Match.discriminator("kind")("Expire", (cmd) =>
+      okCancel(held, cmd.at, "hold expired", "system", eventId),
+    ),
+    Match.discriminator("kind")("Reschedule", () => invalid("Held", "Reschedule")),
+    Match.discriminator("kind")("Complete", () => invalid("Held", "Complete")),
+    Match.discriminator("kind")("MarkNoShow", () => invalid("Held", "MarkNoShow")),
+    Match.exhaustive,
+  )
+
+const dispatchConfirmed = (confirmed: Confirmed, eventId: BookingEventId) =>
+  Match.type<Command>().pipe(
+    Match.discriminator("kind")("Cancel", (cmd) =>
+      okCancel(confirmed, cmd.at, cmd.reason, cmd.by, eventId),
+    ),
+    Match.discriminator("kind")("Reschedule", (cmd) =>
+      okReschedule(confirmed, cmd.at, cmd.newSlot, eventId),
+    ),
+    Match.discriminator("kind")("Complete", (cmd) => okComplete(confirmed, cmd.at, eventId)),
+    Match.discriminator("kind")("MarkNoShow", (cmd) =>
+      okNoShow(confirmed, cmd.at, cmd.by, eventId),
+    ),
+    Match.discriminator("kind")("Confirm", () => invalid("Confirmed", "Confirm")),
+    Match.discriminator("kind")("Expire", () => invalid("Confirmed", "Expire")),
+    Match.exhaustive,
+  )
+
+/* -------------------------------------------------------------------------- */
+/* Public API                                                                  */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Total state-transition function. Pattern-matches on the booking's
- * current state and the incoming command together; every reachable
- * (state, command) pair is handled, and unreachable pairs return
+ * Total state-transition function. `Match.value` over the booking's state
+ * dispatches into a per-state `Match` over the command discriminator; every
+ * reachable `(state, command)` pair is handled, and unreachable pairs return
  * `InvalidStateTransition` rather than throwing (ADR-0010, ADR-0013).
  *
- * Exhaustiveness over `Booking["state"]` is enforced at compile time
- * by the `_exhaustive: never` assignment in the outer default branch.
+ * Exhaustiveness is enforced at compile time by `Match.exhaustive` on both
+ * the outer (state) and inner (command kind) dispatchers.
  *
  * `newEventId` is injected so callers can run with a deterministic
  * `IdGenerator` port in tests.
@@ -45,163 +194,12 @@ export const apply = (
   booking: Booking,
   command: Command,
   newEventId: BookingEventId,
-): Either.Either<ApplyResult, DomainError> => {
-  switch (booking.state) {
-    case "Held":
-      return applyToHeld(booking, command, newEventId)
-    case "Confirmed":
-      return applyToConfirmed(booking, command, newEventId)
-    case "Cancelled":
-      return Either.left(new AlreadyCancelledError({}))
-    case "Completed":
-      return Either.left(new AlreadyCompletedError({}))
-    case "NoShow":
-      return Either.left(new AlreadyNoShowError({}))
-  }
-  // Exhaustiveness over `Booking["state"]` is enforced at the type level —
-  // every variant returns above, so reaching here is unrepresentable. No
-  // `default` branch and no `_exhaustive: never` is needed.
-}
-
-const applyToHeld = (
-  booking: Booking & { state: "Held" },
-  command: Command,
-  newEventId: BookingEventId,
-): Either.Either<ApplyResult, DomainError> => {
-  switch (command.kind) {
-    case "Confirm": {
-      const next: Confirmed = {
-        ...common(booking),
-        state: "Confirmed",
-        confirmedAt: command.at,
-      }
-      const event: BookingEvent = {
-        id: newEventId,
-        type: "Confirmed",
-        bookingId: booking.id,
-        at: command.at,
-      }
-      return Either.right({ booking: next, event })
-    }
-    case "Cancel": {
-      const next: Cancelled = {
-        ...common(booking),
-        state: "Cancelled",
-        cancelledAt: command.at,
-        reason: command.reason,
-        cancelledBy: command.by,
-      }
-      const event: BookingEvent = {
-        id: newEventId,
-        type: "Cancelled",
-        bookingId: booking.id,
-        at: command.at,
-        reason: command.reason,
-        by: command.by,
-      }
-      return Either.right({ booking: next, event })
-    }
-    case "Expire": {
-      const next: Cancelled = {
-        ...common(booking),
-        state: "Cancelled",
-        cancelledAt: command.at,
-        reason: "hold expired",
-        cancelledBy: "system",
-      }
-      const event: BookingEvent = {
-        id: newEventId,
-        type: "Cancelled",
-        bookingId: booking.id,
-        at: command.at,
-        reason: "hold expired",
-        by: "system",
-      }
-      return Either.right({ booking: next, event })
-    }
-    case "Reschedule":
-    case "Complete":
-    case "MarkNoShow":
-      return Either.left(new InvalidStateTransitionError({ from: "Held", command: command.kind }))
-  }
-}
-
-const applyToConfirmed = (
-  booking: Booking & { state: "Confirmed" },
-  command: Command,
-  newEventId: BookingEventId,
-): Either.Either<ApplyResult, DomainError> => {
-  switch (command.kind) {
-    case "Cancel": {
-      const next: Cancelled = {
-        ...common(booking),
-        state: "Cancelled",
-        cancelledAt: command.at,
-        reason: command.reason,
-        cancelledBy: command.by,
-      }
-      const event: BookingEvent = {
-        id: newEventId,
-        type: "Cancelled",
-        bookingId: booking.id,
-        at: command.at,
-        reason: command.reason,
-        by: command.by,
-      }
-      return Either.right({ booking: next, event })
-    }
-    case "Reschedule": {
-      const oldSlot = booking.slot
-      const next: Confirmed = {
-        ...common(booking),
-        slot: command.newSlot,
-        state: "Confirmed",
-        confirmedAt: booking.confirmedAt,
-      }
-      const event: BookingEvent = {
-        id: newEventId,
-        type: "Rescheduled",
-        bookingId: booking.id,
-        from: oldSlot,
-        to: command.newSlot,
-        at: command.at,
-      }
-      return Either.right({ booking: next, event })
-    }
-    case "Complete": {
-      const next: Completed = {
-        ...common(booking),
-        state: "Completed",
-        completedAt: command.at,
-      }
-      const event: BookingEvent = {
-        id: newEventId,
-        type: "Completed",
-        bookingId: booking.id,
-        at: command.at,
-      }
-      return Either.right({ booking: next, event })
-    }
-    case "MarkNoShow": {
-      const next: NoShow = {
-        ...common(booking),
-        state: "NoShow",
-        markedAt: command.at,
-        markedBy: command.by,
-      }
-      const event: BookingEvent = {
-        id: newEventId,
-        type: "NoShow",
-        bookingId: booking.id,
-        at: command.at,
-        by: command.by,
-      }
-      return Either.right({ booking: next, event })
-    }
-    case "Confirm":
-    case "Expire":
-      return Either.left(
-        new InvalidStateTransitionError({ from: "Confirmed", command: command.kind }),
-      )
-  }
-}
+): Either.Either<ApplyResult, DomainError> =>
+  Match.value(booking).pipe(
+    Match.discriminator("state")("Held", (b) => dispatchHeld(b, newEventId)(command)),
+    Match.discriminator("state")("Confirmed", (b) => dispatchConfirmed(b, newEventId)(command)),
+    Match.discriminator("state")("Cancelled", () => Either.left(new AlreadyCancelledError({}))),
+    Match.discriminator("state")("Completed", () => Either.left(new AlreadyCompletedError({}))),
+    Match.discriminator("state")("NoShow", () => Either.left(new AlreadyNoShowError({}))),
+    Match.exhaustive,
+  )
