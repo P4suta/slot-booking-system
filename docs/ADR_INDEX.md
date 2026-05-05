@@ -25,6 +25,9 @@ back.
 | [0016](./adr/0016-always-latest-releases.md)        | Dependencies and tools track the latest release              | accepted |
 | [0017](./adr/0017-error-handling.md)                | Errors as Data.TaggedError with codes, causes, and meta      | accepted |
 | [0018](./adr/0018-functional-core-imperative-shell.md) | Functional Core / Imperative Shell — layer purity contract | accepted |
+| [0019](./adr/0019-schema-boundary.md)               | Effect.Schema is the boundary-parsing standard               | accepted |
+| [0020](./adr/0020-port-tags.md)                     | Application ports as Effect.Context.Tag classes              | accepted |
+| [0021](./adr/0021-tsc-references.md)                | tsc Project References for src ↔ test isolation              | accepted |
 
 ## Authoring a new ADR
 
