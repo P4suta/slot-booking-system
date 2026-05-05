@@ -1,3 +1,4 @@
+export * from "./BookingCodeIndex.js"
 export * from "./BookingRepository.js"
 export * from "./Clock.js"
 export * from "./EventStore.js"
