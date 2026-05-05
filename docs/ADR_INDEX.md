@@ -29,6 +29,7 @@ back.
 | [0020](./adr/0020-port-tags.md)                     | Application ports as Effect.Context.Tag classes              | accepted |
 | [0021](./adr/0021-tsc-references.md)                | tsc Project References for src ↔ test isolation              | accepted |
 | [0026](./adr/0026-logger-clock-port.md)             | Logger and Clock port wiring on Cloudflare Workers           | accepted |
+| [0027](./adr/0027-day-schedule-durable-object.md)   | Per-day DurableObject + outbox-to-D1 — write-side architecture | accepted |
 
 ## Authoring a new ADR
 

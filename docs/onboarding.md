@@ -29,17 +29,50 @@ just sh                # interactive shell inside the dev container
 ## Daily commands (all run inside the dev container)
 
 ```sh
-just typecheck         # pnpm -r exec tsc --noEmit
-just lint              # biome check + markdownlint
+just typecheck         # tsc -b --pretty (Project References, incremental)
+just lint              # biome check + eslint (type-aware) + markdownlint
+just lint-eslint       # typescript-eslint strict-type-checked alone
 just test              # vitest run, all packages
-just test-coverage     # plus C1 branch coverage gate
+just test-coverage     # plus C1 branch coverage gate (100 % threshold)
 just test-property     # fast-check property tests
 just arch              # dependency-cruiser layer enforcement
 just pii-guard         # ripgrep guard against PII keywords
 just domain-purity     # ripgrep guard against industry-specific terms
+just dead-code         # knip (unused exports / files / deps)
+just type-coverage     # type-coverage --at-least 99.5 (no implicit any)
+just attw              # arethetypeswrong (publish-shape sanity)
 just check             # all of the above, the local CI mirror
 just dev-default       # wrangler dev for apps/default (port 8787)
+just bench             # vitest bench (computeAvailableSlots baseline)
+just mutation          # Stryker (workflow_dispatch only; heavy)
 ```
+
+The defence layers stack:
+
+1. `tsc` strictest flags — `noUncheckedIndexedAccess`,
+   `exactOptionalPropertyTypes`, `noImplicitOverride`,
+   `noFallthroughCasesInSwitch`, `useUnknownInCatchVariables`.
+2. **biome** — fast formatter + structural lints.
+3. **typescript-eslint strict-type-checked** — type-aware lints
+   (`no-floating-promises`, `switch-exhaustiveness-check`,
+   `no-misused-promises`, `no-unsafe-*`, `no-deprecated`).
+4. **ts-reset** — tightens stdlib types (`JSON.parse: unknown`,
+   `array.filter(Boolean)` narrows, `Set.has(x)` narrows).
+5. **branded types** via `Schema.brand(...)` — Rust-Newtype-style
+   discrimination of every value-object and entity id.
+6. **Effect.Schema** — runtime parse-don't-validate at every system
+   boundary; the parser produces the type.
+7. **type-coverage** — flags any drift toward `any` (≥ 99.5 % gate).
+8. **arethetypeswrong** — publish-shape audit per package.
+9. **knip** — unused exports / files / deps.
+10. **dependency-cruiser** — layered import direction.
+11. **vitest --coverage** — C1 100 % branch coverage on the pure
+    domain.
+12. **fast-check** — property tests on totals, idempotence, and
+    state-machine commands (`fc.commands`).
+13. **xstate** — declarative spec of the booking state graph,
+    cross-validated against `apply` in tests.
+14. **Stryker** — mutation testing (manual trigger; quarterly).
 
 ## Repository conventions
 
@@ -77,3 +110,29 @@ You are at Phase 0 done when:
 Phase 1 begins after that mark and adds the customer-facing reservation
 flow (HoldSlot / ConfirmBooking / CancelBooking / RescheduleBooking),
 the DurableObject `DaySchedule`, and the SvelteKit pages.
+
+## Phase-1 finish line
+
+Phase 1 is done when:
+- Use cases (`HoldSlot`, `ConfirmBooking`, `CancelBooking`,
+  `RescheduleBooking`, `PurgeStalePii`) are implemented with full
+  Layer composition and C1 100 % branch coverage.
+- The `DaySchedule` Durable Object actor serializes per-day writes;
+  `alarm()` expires stale holds and drains the outbox to D1
+  (ADR-0027).
+- Drizzle migration `0000_…sql` covers `bookings`,
+  `booking_events`, `outbox`, `audit_log`.
+- GraphQL endpoint at `/graphql` exposes:
+  - **Query**: `availableSlots` (Phase 1 stub, Phase 2 wires the real
+    catalog read).
+  - **Mutation**: `holdSlot`, `confirmBooking`, `cancelBooking`,
+    `rescheduleBooking` — all routed through the per-day DO.
+- Cloudflare Workers `scheduled` cron at `0 4 * * *` runs the daily
+  PII purge (NULLs `name_kana` / `phone_last4` / `free_text` on
+  bookings whose terminal timestamp is more than 2 years old).
+- Operational doc `docs/runbook.md` covers the seven on-call
+  diagnostics paths.
+
+Phase 2 picks up SvelteKit form actions (no-JS fallback), the
+service-catalog read schema, and Cloudflare Access wiring for
+admin-only mutations.
