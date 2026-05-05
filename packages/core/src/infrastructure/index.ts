@@ -6,6 +6,7 @@
 export * from "./bloom/BloomBookingCodeIndexLive.js"
 export * from "./bloom/PessimisticBookingCodeIndexLive.js"
 export * from "./clock/SystemClockLive.js"
+export * from "./eventsourced/InMemoryEventSourcedRepositoryLive.js"
 export * from "./eventstore/InMemoryEventStoreLive.js"
 export * from "./id/DeterministicIdGeneratorLive.js"
 export * from "./id/UlidIdGeneratorLive.js"
