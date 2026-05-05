@@ -21,10 +21,12 @@ export const bookings = sqliteTable("bookings", {
   slotStart: text("slot_start").notNull(),
   slotEnd: text("slot_end").notNull(),
   source: text("source", { enum: ["online", "walkin", "phone", "staff"] }).notNull(),
-  // PII columns retained per ADR-0009; eligible for purge after the
-  // configured retention window (2y).
-  nameKana: text("name_kana").notNull(),
-  phoneLast4: text("phone_last4").notNull(),
+  // PII columns retained per ADR-0009. Nullable because the scheduled
+  // purge job NULLs them after the configured retention window (2y);
+  // domain readers (`BookingFromRow.decode`) reject rows with NULL
+  // PII so purged bookings disappear from `findById/load` paths.
+  nameKana: text("name_kana"),
+  phoneLast4: text("phone_last4"),
   freeText: text("free_text"),
   // Variant-specific timestamps; nullable based on the booking state.
   heldAt: text("held_at"),

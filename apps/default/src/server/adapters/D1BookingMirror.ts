@@ -1,4 +1,4 @@
-import { type Booking, BookingSchema } from "@booking/core"
+import { type Booking, BookingFromRow } from "@booking/core"
 import { drizzle } from "drizzle-orm/d1"
 import { Effect, Schema } from "effect"
 import { bookings } from "../schema/bookings.js"
@@ -16,65 +16,60 @@ import { bookings } from "../schema/bookings.js"
  * function — keeping the Effect-Tag namespace clean of "fake repository"
  * stubs that would tempt callers into reading from the wrong source.
  *
- * Idempotency: every write goes through `INSERT … ON CONFLICT DO
- * UPDATE`, so re-applying the same snapshot is a no-op (at-least-once
- * semantics for the outbox relay, ADR-0006).
+ * Routing from the discriminated `Booking` to the flat row is delegated
+ * to `BookingFromRow` (Schema.Union of five per-variant transforms,
+ * ADR-0032) followed by `Schema.encode(BookingRowSchema)` to convert
+ * `Temporal.Instant` columns to ISO-8601 strings for SQLite. There is
+ * no hand-written per-state switch in this file — the codec is
+ * exhaustive at compile time.
  *
- * Phase 0.6 leaves the per-event audit insert (`booking_events`) for
- * the outbox-completion step (T1-D); for now the snapshot row is the
- * only persisted artefact in D1.
+ * Idempotency: every write is `INSERT … ON CONFLICT DO UPDATE`, so
+ * re-applying the same snapshot is a no-op (at-least-once semantics
+ * for the outbox relay, ADR-0006).
  */
 
 type BookingRow = typeof bookings.$inferInsert
 
-const encodeBooking = Schema.encodeSync(BookingSchema)
+// Booking → BookingRow.Type (DU → flat row, both at the Type level —
+// Instant stays Instant, brands stay branded).
+const encodeRowType = Schema.encodeSync(BookingFromRow)
 
 const toRow = (b: Booking): BookingRow => {
-  const encoded = encodeBooking(b)
-  const base: BookingRow = {
-    id: b.id,
-    code: encoded.code,
-    state: b.state,
-    serviceId: b.serviceId,
-    providerId: b.providerId,
-    resourceIds: encoded.resourceIds,
-    slotStart: encoded.slot.start,
-    slotEnd: encoded.slot.end,
-    source: b.source,
-    nameKana: encoded.nameKana,
-    phoneLast4: encoded.phoneLast4,
-    freeText: encoded.freeText ?? null,
+  const r = encodeRowType(b)
+  // Project to the wire shape Drizzle's `text` columns expect: Instants
+  // become ISO-8601 strings, the rest is structurally identical. Each
+  // arm of the union owns exactly its variant's timestamps; the rest of
+  // the columns stay null on the wire (per the nullable schema).
+  const base = {
+    id: r.id,
+    code: r.code,
+    state: r.state,
+    serviceId: r.serviceId,
+    providerId: r.providerId,
+    resourceIds: [...r.resourceIds],
+    slotStart: r.slotStart.toString(),
+    slotEnd: r.slotEnd.toString(),
+    source: r.source,
+    nameKana: r.nameKana,
+    phoneLast4: r.phoneLast4,
+    freeText: r.freeText ?? null,
   }
-  switch (b.state) {
+  switch (r.state) {
     case "Held":
-      return {
-        ...base,
-        heldAt: b.heldAt.toString(),
-        expiresAt: b.expiresAt.toString(),
-      }
+      return { ...base, heldAt: r.heldAt.toString(), expiresAt: r.expiresAt.toString() }
     case "Confirmed":
-      return {
-        ...base,
-        confirmedAt: b.confirmedAt.toString(),
-      }
+      return { ...base, confirmedAt: r.confirmedAt.toString() }
     case "Cancelled":
       return {
         ...base,
-        cancelledAt: b.cancelledAt.toString(),
-        cancelledBy: b.cancelledBy,
-        cancelReason: b.reason,
+        cancelledAt: r.cancelledAt.toString(),
+        cancelledBy: r.cancelledBy,
+        cancelReason: r.cancelReason,
       }
     case "Completed":
-      return {
-        ...base,
-        completedAt: b.completedAt.toString(),
-      }
+      return { ...base, completedAt: r.completedAt.toString() }
     case "NoShow":
-      return {
-        ...base,
-        markedAt: b.markedAt.toString(),
-        markedBy: b.markedBy,
-      }
+      return { ...base, markedAt: r.markedAt.toString(), markedBy: r.markedBy }
   }
 }
 
