@@ -1,3 +1,4 @@
+import type { BookingSource } from "@booking/core"
 import SchemaBuilder from "@pothos/core"
 import ErrorsPlugin from "@pothos/plugin-errors"
 import { GraphQLError } from "graphql"
@@ -82,6 +83,23 @@ builder.scalarType("PhoneLast4", {
   description: "Last four digits of a phone number — exactly four ASCII digits.",
   serialize: (v) => v,
   parseValue: expectString("PhoneLast4"),
+})
+
+/**
+ * GraphQL enum that mirrors the domain `BookingSource` literal union
+ * (`@booking/core`). Declaring it here lets resolver `args.source` carry
+ * the narrowed type at the call site without a runtime cast — the
+ * GraphQL parser refuses any value that is not one of the four
+ * literals.
+ */
+export const BookingSourceEnum = builder.enumType("BookingSource", {
+  description: "Origin of a booking — distinguishes self-service from operator-entered.",
+  values: {
+    online: { value: "online" satisfies BookingSource },
+    walkin: { value: "walkin" satisfies BookingSource },
+    phone: { value: "phone" satisfies BookingSource },
+    staff: { value: "staff" satisfies BookingSource },
+  } as const,
 })
 
 builder.objectType(BookingError, {

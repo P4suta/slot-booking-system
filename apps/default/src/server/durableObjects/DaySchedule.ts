@@ -1,27 +1,26 @@
 import { DurableObject } from "cloudflare:workers"
 import {
   type BookingEventSourcedRepository,
+  type BusinessTimeZone,
   CancelBooking,
-  type CancelBookingInput,
   type CancelBookingResult,
   type Clock,
   ConfirmBooking,
-  type ConfirmBookingInput,
   type ConfirmBookingResult,
   codeOf,
   type DomainError,
   type ErrorSeverity,
   ExpireBooking,
   HoldSlot,
-  type HoldSlotInput,
   type HoldSlotResult,
   type IdGenerator,
   isHeld,
   type Logger,
   mintTraceId,
+  parseBusinessTimeZone,
   RescheduleBooking,
-  type RescheduleBookingInput,
   type RescheduleBookingResult,
+  StorageError,
   SystemClockLive,
   severityOf,
   UlidIdGeneratorLive,
@@ -34,6 +33,16 @@ import {
   makeDurableObjectEventSourcedRepository,
 } from "../adapters/DurableObjectEventSourcedRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
+import {
+  type CancelBookingInputWire,
+  type ConfirmBookingInputWire,
+  decodeCancelBookingInput,
+  decodeConfirmBookingInput,
+  decodeHoldSlotInput,
+  decodeRescheduleBookingInput,
+  type HoldSlotInputWire,
+  type RescheduleBookingInputWire,
+} from "./inputCodec.js"
 import { drainOutbox, nextOutboxAttemptAt } from "./relay.js"
 import { ensureDurableObjectSchema } from "./schema.js"
 
@@ -75,6 +84,7 @@ import { ensureDurableObjectSchema } from "./schema.js"
 
 type Env = {
   DB: D1Database
+  DEPLOYMENT_TIMEZONE: string
 }
 
 /* ----- Encoded result shapes returned across the RPC boundary ----- */
@@ -129,29 +139,75 @@ export class DaySchedule extends DurableObject<Env> {
   /* RPC methods — caller invokes via `stub.<name>(input)`                */
   /* -------------------------------------------------------------------- */
 
+  /* The four mutation entries take wire-shaped (`Schema.Schema.Encoded`)
+   * inputs because Cloudflare passes them through `structuredClone`,
+   * which strips brands and serialises `Temporal` instances. The DO body
+   * decodes via Schema codecs in `inputCodec.ts` (Phase 2.1 / BI-3) so
+   * the resolver no longer needs `as unknown as Parameters<...>` casts. */
+
   async holdSlot(
-    input: HoldSlotInput,
+    input: HoldSlotInputWire,
   ): Promise<Either.Either<EncodedHoldResult, EncodedDomainError>> {
-    return this.runUseCase(HoldSlot(input))
+    return this.runUseCase(
+      Effect.gen(this, function* () {
+        const tz = yield* this.deploymentTimeZone
+        const decoded = yield* decodeHoldSlotInput(tz, input)
+        return yield* HoldSlot(decoded)
+      }),
+    )
   }
 
   async confirmBooking(
-    input: ConfirmBookingInput,
+    input: ConfirmBookingInputWire,
   ): Promise<Either.Either<EncodedConfirmResult, EncodedDomainError>> {
-    return this.runUseCase(ConfirmBooking(input))
+    return this.runUseCase(
+      Effect.gen(function* () {
+        const decoded = yield* decodeConfirmBookingInput(input)
+        return yield* ConfirmBooking(decoded)
+      }),
+    )
   }
 
   async cancelBooking(
-    input: CancelBookingInput,
+    input: CancelBookingInputWire,
   ): Promise<Either.Either<EncodedCancelResult, EncodedDomainError>> {
-    return this.runUseCase(CancelBooking(input))
+    return this.runUseCase(
+      Effect.gen(function* () {
+        const decoded = yield* decodeCancelBookingInput(input)
+        return yield* CancelBooking(decoded)
+      }),
+    )
   }
 
   async rescheduleBooking(
-    input: RescheduleBookingInput,
+    input: RescheduleBookingInputWire,
   ): Promise<Either.Either<EncodedRescheduleResult, EncodedDomainError>> {
-    return this.runUseCase(RescheduleBooking(input))
+    return this.runUseCase(
+      Effect.gen(this, function* () {
+        const tz = yield* this.deploymentTimeZone
+        const decoded = yield* decodeRescheduleBookingInput(tz, input)
+        return yield* RescheduleBooking(decoded)
+      }),
+    )
   }
+
+  /**
+   * Effect view of the deployment timezone. Surfaces an invalid
+   * `DEPLOYMENT_TIMEZONE` env var as a `StorageError` so the resolver
+   * sees the same shape it does for any other config-time failure.
+   */
+  private readonly deploymentTimeZone: Effect.Effect<BusinessTimeZone, StorageError> =
+    Effect.suspend(() =>
+      Either.match(parseBusinessTimeZone(this.env.DEPLOYMENT_TIMEZONE), {
+        onLeft: () =>
+          Effect.fail(
+            new StorageError({
+              reason: `invalid DEPLOYMENT_TIMEZONE: ${this.env.DEPLOYMENT_TIMEZONE}`,
+            }),
+          ),
+        onRight: (tz) => Effect.succeed(tz),
+      }),
+    )
 
   /* -------------------------------------------------------------------- */
   /* System handlers                                                      */

@@ -1,7 +1,7 @@
 import { Either } from "effect"
 import { type DecodedSlot, verifySlotToken } from "../../auth/slotToken.js"
 import type { DaySchedule } from "../../durableObjects/DaySchedule.js"
-import { builder, type GraphQLContext } from "../builder.js"
+import { BookingSourceEnum, builder, type GraphQLContext } from "../builder.js"
 import { BookingError, type EncodedDomainError } from "../errors.js"
 
 /**
@@ -88,22 +88,25 @@ builder.mutationType({
         nameKana: t.arg.string({ required: true }),
         phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
         freeText: t.arg.string({ required: false }),
-        source: t.arg.string({ required: true }),
+        source: t.arg({ type: BookingSourceEnum, required: true }),
       },
       resolve: async (_root, args, ctx) => {
         const slot = await verifyOrRefuse(ctx.env, args.slotToken)
         const stub = dayDoFor(ctx.env, args.date)
-        // The DO RPC method declares its argument with branded
-        // domain types (`AvailableSlot` carrying `Temporal.ZonedDateTime`),
-        // but the Cloudflare runtime passes values through
-        // `structuredClone` which strips brands and turns Temporal
-        // values back into ISO-8601 strings. The DO body re-decodes
-        // through Effect Schema before reaching the use case, so the
-        // cast here marks the wire boundary explicitly. The HMAC
-        // signature verification above guarantees the slot field
-        // values were minted by a previous `availableSlots` call —
-        // an attacker cannot forge a slot the world snapshot didn't
-        // emit, even though the wire shape is plain JSON.
+        // Wire shape (`HoldSlotInputWire`) is the
+        // `Schema.Schema.Encoded` form of the DO's input codec — pure
+        // JSON the structured-clone envelope can carry untouched. The
+        // HMAC signature verification above guarantees the slot field
+        // values were minted by a previous `availableSlots` call.
+        // The DO body decodes wire → branded domain types via
+        // `decodeHoldSlotInput(tz, wire)` (Phase 2.1 / BI-3).
+        //
+        // RPC stub calls return Cloudflare's custom Thenable, not a
+        // real Promise (Workers RPC docs). `await` is mandatory; the
+        // `Promise.resolve(...)` wrapper coerces the Thenable into a
+        // value `@typescript-eslint/await-thenable` recognises (the
+        // generated `DurableObjectStub<T>` types do not surface the
+        // Thenable shape).
         const result = await Promise.resolve(
           stub.holdSlot({
             slot: {
@@ -117,7 +120,7 @@ builder.mutationType({
             phoneLast4: args.phoneLast4,
             freeText: args.freeText ?? null,
             source: args.source,
-          } as unknown as Parameters<DaySchedule["holdSlot"]>[0]),
+          }),
         )
         return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
@@ -140,7 +143,7 @@ builder.mutationType({
           stub.confirmBooking({
             code: args.code,
             phoneLast4: args.phoneLast4,
-          } as unknown as Parameters<DaySchedule["confirmBooking"]>[0]),
+          }),
         )
         return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
@@ -165,7 +168,7 @@ builder.mutationType({
             code: args.code,
             phoneLast4: args.phoneLast4,
             reason: args.reason,
-          } as unknown as Parameters<DaySchedule["cancelBooking"]>[0]),
+          }),
         )
         return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
@@ -198,7 +201,7 @@ builder.mutationType({
               start: slot.start,
               end: slot.end,
             },
-          } as unknown as Parameters<DaySchedule["rescheduleBooking"]>[0]),
+          }),
         )
         return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
