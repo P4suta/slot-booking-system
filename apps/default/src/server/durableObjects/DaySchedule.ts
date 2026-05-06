@@ -20,7 +20,6 @@ import {
   RescheduleBooking,
   type RescheduleBookingInput,
   type RescheduleBookingResult,
-  SilentLoggerLive,
   SystemClockLive,
   severityOf,
   UlidIdGeneratorLive,
@@ -31,6 +30,7 @@ import {
   loadAllBookings,
   makeDurableObjectEventSourcedRepository,
 } from "../adapters/DurableObjectEventSourcedRepositoryLive.js"
+import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { drainOutbox, nextOutboxAttemptAt } from "./relay.js"
 import { ensureDurableObjectSchema } from "./schema.js"
 
@@ -217,7 +217,7 @@ export class DaySchedule extends DurableObject<Env> {
       makeDurableObjectEventSourcedRepository(storage),
       SystemClockLive,
       UlidIdGeneratorLive,
-      SilentLoggerLive,
+      WorkersLoggerLive,
     )
   }
 }

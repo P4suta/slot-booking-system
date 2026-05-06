@@ -1,6 +1,8 @@
-import { PurgeStalePii, SilentLoggerLive, SystemClockLive } from "@booking/core"
+import { PurgeStalePii, SystemClockLive } from "@booking/core"
 import { Effect, Layer } from "effect"
+import { makeD1AuditLogger } from "./server/adapters/D1AuditLoggerLive.js"
 import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
+import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
 import type { DaySchedule } from "./server/durableObjects/DaySchedule.js"
 import { yoga } from "./server/graphql/yoga.js"
 
@@ -63,7 +65,12 @@ export default {
     env: Env,
     _ctx: ExecutionContext,
   ): Promise<void> {
-    const layer = Layer.mergeAll(makeD1PiiPurger(env.DB), SystemClockLive, SilentLoggerLive)
+    const layer = Layer.mergeAll(
+      makeD1PiiPurger(env.DB),
+      makeD1AuditLogger(env.DB),
+      SystemClockLive,
+      WorkersLoggerLive,
+    )
     await Effect.runPromise(PurgeStalePii().pipe(Effect.provide(layer)))
   },
 } satisfies ExportedHandler<Env>
