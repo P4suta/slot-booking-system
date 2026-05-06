@@ -13,7 +13,6 @@
       "**/*.cts",
       "**/*.js",
       "**/*.mjs",
-      "**/*.svelte",
       "**/*.json",
       "**/*.jsonc",
       "!**/node_modules",
@@ -22,7 +21,8 @@
       "!**/.svelte-kit",
       "!**/.wrangler",
       "!**/coverage",
-      "!**/migrations/*.sql"
+      "!**/migrations/*.sql",
+      "!**/*.svelte"
     ]
   },
   "formatter": {
@@ -56,6 +56,18 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["**/app.d.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNamespace": "off"
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double",

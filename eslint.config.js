@@ -30,6 +30,8 @@ export default tseslint.config(
       "eslint.config.js",
       "**/*.cjs",
       "**/*.config.cjs",
+      "apps/web/svelte.config.js",
+      "apps/web/vite.config.ts",
     ],
   },
   ...tseslint.configs.strictTypeChecked,

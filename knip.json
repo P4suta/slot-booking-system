@@ -10,6 +10,17 @@
       "wrangler": {
         "config": ["wrangler.toml"]
       }
+    },
+    "apps/web": {
+      "entry": ["src/routes/**/*.{svelte,ts}", "src/app.html"],
+      "project": ["src/**/*.{ts,svelte}"],
+      "ignore": ["src/lib/graphql/**"],
+      "ignoreDependencies": [
+        "@booking/core",
+        "@cloudflare/workers-types",
+        "@inlang/paraglide-js",
+        "graphql"
+      ]
     }
   }
 }
