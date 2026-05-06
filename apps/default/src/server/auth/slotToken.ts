@@ -1,4 +1,5 @@
 import type { AvailableSlotShape } from "@booking/core"
+import { Either, Schema } from "effect"
 
 /**
  * HMAC-signed token over an `AvailableSlot` payload. Phase 0.7-α5
@@ -22,6 +23,13 @@ import type { AvailableSlotShape } from "@booking/core"
  * derives a `CryptoKey` from it once per request and re-uses it for
  * verification; HMAC-SHA-256 with a 32-byte key is the WebCrypto
  * default and stays inside the Workers runtime.
+ *
+ * Phase 2.1 / BI-11 — the payload's structural validation is now
+ * driven by an Effect `Schema.Struct` (`SlotPayloadSchema`) rather
+ * than the hand-rolled `if (typeof field !== "string" || ...)` chain
+ * the original implementation carried. The Schema is the single
+ * source of truth for both the encoded wire shape and the decoded
+ * runtime contract; adding a new field is one entry, not three.
  */
 
 const TOKEN_VERSION = "v1"
@@ -58,14 +66,24 @@ const importHmacKey = async (secretHex: string): Promise<CryptoKey> => {
   ])
 }
 
-type SlotPayload = {
-  readonly v: typeof TOKEN_VERSION
-  readonly serviceId: string
-  readonly start: string
-  readonly end: string
-  readonly providerId: string
-  readonly resourceIds: readonly string[]
-}
+/**
+ * Single source of truth for the JSON payload signed inside the
+ * token. The `v` literal is the wire-format discriminator so a
+ * future field rename (or HMAC algorithm bump) lands as a new
+ * literal value rather than a silent shape drift.
+ */
+const SlotPayloadSchema = Schema.Struct({
+  v: Schema.Literal(TOKEN_VERSION),
+  serviceId: Schema.String,
+  start: Schema.String,
+  end: Schema.String,
+  providerId: Schema.String,
+  resourceIds: Schema.Array(Schema.String),
+})
+
+type SlotPayload = Schema.Schema.Type<typeof SlotPayloadSchema>
+
+const decodeSlotPayload = Schema.decodeUnknownEither(SlotPayloadSchema)
 
 const payloadOf = (shape: AvailableSlotShape): SlotPayload => ({
   v: TOKEN_VERSION,
@@ -87,6 +105,12 @@ export const signSlot = async (secretHex: string, shape: AvailableSlotShape): Pr
   return `${base64UrlEncode(payloadBytes)}.${base64UrlEncode(sigBytes)}`
 }
 
+/**
+ * Decoded slot fields recovered from a verified token. The shape
+ * mirrors `SlotPayloadSchema.Type` minus the version discriminator,
+ * which the schema has already pinned to the current token version
+ * by the time the caller sees the value.
+ */
 export type DecodedSlot = {
   readonly serviceId: string
   readonly start: string
@@ -99,6 +123,11 @@ export type DecodedSlot = {
  * Verify a token under the secret. On a valid token, returns the
  * decoded slot fields. On any mismatch (shape / version / signature),
  * returns null so the caller raises a typed refusal.
+ *
+ * The structural validation is delegated to `SlotPayloadSchema`
+ * (Phase 2.1 / BI-11) — every shape failure (missing field, wrong
+ * type, version mismatch) collapses into the same `null` outcome
+ * without the original `typeof field !== "string"` ladder.
  */
 export const verifySlotToken = async (
   secretHex: string,
@@ -125,30 +154,15 @@ export const verifySlotToken = async (
   } catch {
     return null
   }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("v" in parsed) ||
-    (parsed as { readonly v: unknown }).v !== TOKEN_VERSION
-  ) {
-    return null
-  }
-  const candidate = parsed as Partial<DecodedSlot> & { readonly v: string }
-  if (
-    typeof candidate.serviceId !== "string" ||
-    typeof candidate.start !== "string" ||
-    typeof candidate.end !== "string" ||
-    typeof candidate.providerId !== "string" ||
-    !Array.isArray(candidate.resourceIds) ||
-    !candidate.resourceIds.every((r) => typeof r === "string")
-  ) {
-    return null
-  }
+  const decoded = decodeSlotPayload(parsed)
+  if (Either.isLeft(decoded)) return null
+  const { v: _v, ...rest } = decoded.right
+  void _v
   return {
-    serviceId: candidate.serviceId,
-    start: candidate.start,
-    end: candidate.end,
-    providerId: candidate.providerId,
-    resourceIds: candidate.resourceIds,
+    serviceId: rest.serviceId,
+    start: rest.start,
+    end: rest.end,
+    providerId: rest.providerId,
+    resourceIds: rest.resourceIds,
   }
 }
