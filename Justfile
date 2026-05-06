@@ -53,8 +53,10 @@ fmt:
 fmt-check:
     {{DEV}} ./node_modules/.bin/biome format .
 
+# `--error-on-warnings` keeps the gate strict: Biome rules tagged as
+# `warn` fail the run alongside `error`-level diagnostics.
 lint-biome:
-    {{DEV}} ./node_modules/.bin/biome check .
+    {{DEV}} ./node_modules/.bin/biome check --error-on-warnings .
 
 lint-biome-fix:
     {{DEV}} ./node_modules/.bin/biome check --write .
@@ -62,9 +64,10 @@ lint-biome-fix:
 # Type-aware lints — typescript-eslint strict-type-checked +
 # stylistic-type-checked presets. Catches bugs Biome's structural
 # linter cannot (no-floating-promises, switch-exhaustiveness-check,
-# no-misused-promises, no-unsafe-*).
+# no-misused-promises, no-unsafe-*). `--max-warnings=0` makes the
+# gate strict — any rule emitting a warning fails the run.
 lint-eslint:
-    {{DEV}} ./node_modules/.bin/eslint .
+    {{DEV}} ./node_modules/.bin/eslint . --max-warnings 0
 
 lint-eslint-fix:
     {{DEV}} ./node_modules/.bin/eslint . --fix
@@ -92,9 +95,11 @@ typecheck:
 arch:
     {{DEV}} ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
 
-# Dead-code / unused-export detection.
+# Dead-code / unused-export detection. `--treat-config-hints-as-errors`
+# turns knip's "you could narrow this config" hints into hard failures
+# — quiet drift in `knip.json` is what they exist to prevent.
 dead-code:
-    {{DEV}} ./node_modules/.bin/knip
+    {{DEV}} ./node_modules/.bin/knip --treat-config-hints-as-errors
 
 # Type-coverage: percentage of expressions whose types are precisely
 # known (not `any`). Threshold lives in `packages/core/package.json`'s

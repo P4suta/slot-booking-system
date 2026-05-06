@@ -49,12 +49,18 @@ module.exports = {
     },
     {
       name: "no-orphans",
-      severity: "warn",
-      comment: "an orphan module is unused; verify or remove",
+      severity: "error",
+      comment:
+        "an orphan module is unused; verify or remove. Public sub-export " +
+        "entries (`@booking/core/<subpath>` declared in package.json) live " +
+        "in their own `index.ts` and are excluded — they are roots of the " +
+        "consumer-facing graph, not internal nodes.",
       from: {
         orphan: true,
         pathNot:
-          "(\\.config\\.|\\.test\\.|^test/|apps/.*/src/worker\\.ts|apps/.*/src/server/schema\\.ts)",
+          "(\\.config\\.|\\.test\\.|^test/" +
+          "|apps/.*/src/worker\\.ts|apps/.*/src/server/schema\\.ts" +
+          "|^packages/core/src/derive/index\\.ts)",
       },
       to: {},
     },

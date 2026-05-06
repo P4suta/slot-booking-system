@@ -22,6 +22,10 @@
     "./infrastructure": {
       "types": "./dist/infrastructure/index.d.ts",
       "import": "./dist/infrastructure/index.js"
+    },
+    "./derive": {
+      "types": "./dist/derive/index.d.ts",
+      "import": "./dist/derive/index.js"
     }
   },
   "files": [

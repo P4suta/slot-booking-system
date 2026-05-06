@@ -1,21 +1,11 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
-    ".": {
-      "ignore": [".github/**", "docs/**", ".template/**"]
-    },
     "packages/core": {
-      "entry": [
-        "src/index.ts",
-        "vitest.config.ts",
-        "test/**/*.test.ts",
-        "test/**/*.bench.ts",
-        "test/_fixtures/index.ts"
-      ],
+      "entry": ["test/**/*.test.ts", "test/**/*.bench.ts", "test/_fixtures/index.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/default": {
-      "entry": ["src/worker.ts", "drizzle.config.ts"],
       "project": ["src/**/*.ts"],
       "wrangler": {
         "config": ["wrangler.toml"]
