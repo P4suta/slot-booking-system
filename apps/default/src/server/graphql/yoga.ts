@@ -6,6 +6,7 @@ import { schema } from "./schema.js"
 type Env = {
   readonly DB: D1Database
   readonly DAY_SCHEDULE: DurableObjectNamespace<DaySchedule>
+  readonly DEPLOYMENT_TIMEZONE: string
 }
 
 /**
@@ -25,7 +26,11 @@ export const yoga = createYoga<Env, GraphQLContext>({
   landingPage: false,
   graphiql: { defaultQuery: "{ __schema { types { name } } }" },
   context: (initial): GraphQLContext => ({
-    env: { DB: initial.DB, DAY_SCHEDULE: initial.DAY_SCHEDULE },
+    env: {
+      DB: initial.DB,
+      DAY_SCHEDULE: initial.DAY_SCHEDULE,
+      DEPLOYMENT_TIMEZONE: initial.DEPLOYMENT_TIMEZONE,
+    },
     request: initial.request,
   }),
 })

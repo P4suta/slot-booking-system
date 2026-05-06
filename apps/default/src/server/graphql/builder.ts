@@ -37,6 +37,7 @@ export type GraphQLContext = {
   readonly env: {
     readonly DB: D1Database
     readonly DAY_SCHEDULE: DurableObjectNamespace<DaySchedule>
+    readonly DEPLOYMENT_TIMEZONE: string
   }
   readonly request: Request
 }
