@@ -186,6 +186,14 @@ dev-default:
 migrate-local:
     {{DEV}} {{PNPM}} -F default exec wrangler d1 migrations apply DB --local
 
+# Smoke-check `availableSlots` against a running `just dev-default`.
+# Preconditions (documented in the script): migrations applied + seed
+# loaded + wrangler dev up on :8787. Override host with
+# `SMOKE_GRAPHQL_ENDPOINT=http://...`. The recipe runs on the host
+# (not in the dev container) so it can reach the dev process.
+smoke-available-slots:
+    bash apps/default/scripts/smoke-available-slots.sh
+
 # Apply the catalog seed to the local D1. Idempotent — re-running
 # refreshes the rows. Generates the SQL document on the fly via
 # `apps/default/seed/seed.ts`, so the seed is always in lockstep
