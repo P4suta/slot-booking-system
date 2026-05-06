@@ -1,33 +1,15 @@
 import { DurableObject } from "cloudflare:workers"
 import {
-  type BookingEventSourcedRepository,
   type BusinessTimeZone,
-  CancelBooking,
-  type CancelBookingResult,
-  type Clock,
-  ConfirmBooking,
-  type ConfirmBookingResult,
-  codeOf,
-  type DomainError,
-  type ErrorSeverity,
   ExpireBooking,
-  HoldSlot,
-  type HoldSlotResult,
-  type IdGenerator,
   isHeld,
-  type Logger,
-  mintTraceId,
   parseBusinessTimeZone,
-  RescheduleBooking,
-  type RescheduleBookingResult,
   StorageError,
   SystemClockLive,
-  severityOf,
   UlidIdGeneratorLive,
-  withTraceId,
 } from "@booking/core"
 import { RpcServer } from "@effect/rpc"
-import { Effect, Either, Layer, Schema } from "effect"
+import { Effect, Either, Layer } from "effect"
 import {
   type DurableObjectStorageLike,
   loadAllBookings,
@@ -36,23 +18,13 @@ import {
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { DayScheduleHandlersLayer } from "./effectRpc/handlers.js"
 import { DayScheduleRouter } from "./effectRpc/router.js"
-import {
-  type CancelBookingInputWire,
-  type ConfirmBookingInputWire,
-  decodeCancelBookingInput,
-  decodeConfirmBookingInput,
-  decodeHoldSlotInput,
-  decodeRescheduleBookingInput,
-  type HoldSlotInputWire,
-  type RescheduleBookingInputWire,
-} from "./inputCodec.js"
 import { drainOutbox, nextOutboxAttemptAt } from "./relay.js"
 import { ensureDurableObjectSchema } from "./schema.js"
 
 /**
  * Per-day actor (ADR-0005). One DO instance per `(deployment, date)`
- * tuple. Concurrency through the actor model — every RPC method call
- * is processed serially by the runtime, so no two `holdSlot` calls for
+ * tuple. Concurrency through the actor model — every RPC dispatch is
+ * processed serially by the runtime, so no two `HoldSlot` requests for
  * the same day can interleave at the application layer.
  *
  * **Persistence layout** — DO local SQLite (ADR-0028) holds:
@@ -66,14 +38,17 @@ import { ensureDurableObjectSchema } from "./schema.js"
  * `ctx.blockConcurrencyWhile`, so every subsequent fetch sees a
  * fully-migrated schema.
  *
- * **RPC surface** (ADR-0030 / 2026 mainstream): each booking mutation
- * is an `async` method that returns `Either<EncodedDomainError,
- * EncodedResult>`. The Either values cross the structured-clone
- * boundary as plain JSON; the caller (GraphQL resolver) narrows on
- * `_tag` and either re-encodes the success or maps the failure to a
- * GraphQL error. Throwing across the RPC boundary is **avoided** —
- * Cloudflare strips custom Error subclass fields, which would erase
- * the discriminated union (ADR-0030).
+ * **RPC surface** (Phase 2.8 / BI-4) — a single `dispatch(envelope)`
+ * method consumes a `FromClientEncoded` request envelope tagged with
+ * the RPC name (`HoldSlot` / `ConfirmBooking` / `CancelBooking` /
+ * `RescheduleBooking`) and returns the matching `FromServerEncoded`
+ * response (`Exit` for normal flow, `Defect` for crashes). Both
+ * shapes are pure JSON, so they survive Cloudflare's structured-clone
+ * envelope unchanged. The typed `@effect/rpc` client on the resolver
+ * side (`makeDayScheduleClient`) hides the envelope plumbing —
+ * resolvers see strongly-typed `client.HoldSlot(payload)` returning
+ * `Effect<Result, DomainError>` instead of the legacy
+ * `Either<EncodedResult, EncodedDomainError>` cast pattern.
  *
  * **Cold start** — none required. The `(code → id)` lookup is a SQL
  * query against `bookings.code` (unique index), exact on every cold
@@ -90,45 +65,6 @@ type Env = {
   DEPLOYMENT_TIMEZONE: string
 }
 
-/* ----- Encoded result shapes returned across the RPC boundary ----- */
-
-type EncodedDomainError = {
-  readonly _tag: string
-  readonly code: string
-  readonly severity: ErrorSeverity
-}
-
-type EncodedHoldResult = Schema.Schema.Encoded<typeof BookingResultSchema>
-type EncodedConfirmResult = Schema.Schema.Encoded<typeof BookingResultSchema>
-type EncodedCancelResult = Schema.Schema.Encoded<typeof BookingResultSchema>
-type EncodedRescheduleResult = Schema.Schema.Encoded<typeof BookingResultSchema>
-
-/* Lightweight caller-facing result schema — the DO returns the
- * minimum fields the GraphQL surface needs. The full Booking + Event
- * remain inside the DO's storage; callers query separately via D1. */
-const BookingResultSchema = Schema.Struct({
-  bookingId: Schema.String,
-  state: Schema.Literal("Held", "Confirmed", "Cancelled", "Completed", "NoShow"),
-  eventType: Schema.Literal("Held", "Confirmed", "Cancelled", "Rescheduled", "Completed", "NoShow"),
-})
-type BookingResult = Schema.Schema.Type<typeof BookingResultSchema>
-
-const encodeResult = Schema.encodeSync(BookingResultSchema)
-
-const encodeDomainError = (e: DomainError): EncodedDomainError => ({
-  _tag: e._tag,
-  code: codeOf(e),
-  severity: severityOf(e),
-})
-
-const projectResult = (
-  r: HoldSlotResult | ConfirmBookingResult | CancelBookingResult | RescheduleBookingResult,
-): BookingResult => ({
-  bookingId: r.booking.id,
-  state: r.booking.state,
-  eventType: r.event.type,
-})
-
 export class DaySchedule extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -136,62 +72,6 @@ export class DaySchedule extends DurableObject<Env> {
       ensureDurableObjectSchema(ctx.storage.sql)
       return Promise.resolve()
     })
-  }
-
-  /* -------------------------------------------------------------------- */
-  /* RPC methods — caller invokes via `stub.<name>(input)`                */
-  /* -------------------------------------------------------------------- */
-
-  /* The four mutation entries take wire-shaped (`Schema.Schema.Encoded`)
-   * inputs because Cloudflare passes them through `structuredClone`,
-   * which strips brands and serialises `Temporal` instances. The DO body
-   * decodes via Schema codecs in `inputCodec.ts` (Phase 2.1 / BI-3) so
-   * the resolver no longer needs `as unknown as Parameters<...>` casts. */
-
-  async holdSlot(
-    input: HoldSlotInputWire,
-  ): Promise<Either.Either<EncodedHoldResult, EncodedDomainError>> {
-    return this.runUseCase(
-      Effect.gen(this, function* () {
-        const tz = yield* this.deploymentTimeZone
-        const decoded = yield* decodeHoldSlotInput(tz, input)
-        return yield* HoldSlot(decoded)
-      }),
-    )
-  }
-
-  async confirmBooking(
-    input: ConfirmBookingInputWire,
-  ): Promise<Either.Either<EncodedConfirmResult, EncodedDomainError>> {
-    return this.runUseCase(
-      Effect.gen(function* () {
-        const decoded = yield* decodeConfirmBookingInput(input)
-        return yield* ConfirmBooking(decoded)
-      }),
-    )
-  }
-
-  async cancelBooking(
-    input: CancelBookingInputWire,
-  ): Promise<Either.Either<EncodedCancelResult, EncodedDomainError>> {
-    return this.runUseCase(
-      Effect.gen(function* () {
-        const decoded = yield* decodeCancelBookingInput(input)
-        return yield* CancelBooking(decoded)
-      }),
-    )
-  }
-
-  async rescheduleBooking(
-    input: RescheduleBookingInputWire,
-  ): Promise<Either.Either<EncodedRescheduleResult, EncodedDomainError>> {
-    return this.runUseCase(
-      Effect.gen(this, function* () {
-        const tz = yield* this.deploymentTimeZone
-        const decoded = yield* decodeRescheduleBookingInput(tz, input)
-        return yield* RescheduleBooking(decoded)
-      }),
-    )
   }
 
   /**
@@ -208,10 +88,6 @@ export class DaySchedule extends DurableObject<Env> {
    * collect the matching response in `onFromServer`. The single-shot
    * lifecycle matches DO RPC's request/response shape — no daemon /
    * mailbox coordination required.
-   *
-   * Eliminates the four legacy methods' `Either`-shaped return + the
-   * resolver-side `as Either.Either<...>` casts (Phase 2.8 BI-4 step
-   * 4-6 carries the migration).
    */
   async dispatch(envelope: unknown): Promise<unknown> {
     const tz = await Effect.runPromise(this.deploymentTimeZone)
@@ -281,29 +157,6 @@ export class DaySchedule extends DurableObject<Env> {
   /* -------------------------------------------------------------------- */
   /* Private helpers                                                      */
   /* -------------------------------------------------------------------- */
-
-  private async runUseCase<
-    R extends HoldSlotResult | ConfirmBookingResult | CancelBookingResult | RescheduleBookingResult,
-  >(
-    program: Effect.Effect<
-      R,
-      DomainError,
-      BookingEventSourcedRepository | Clock | IdGenerator | Logger
-    >,
-  ): Promise<Either.Either<EncodedHoldResult, EncodedDomainError>> {
-    const storage = this.ctx.storage as unknown as DurableObjectStorageLike
-    const layer = this.layer(storage)
-    // Mint a fresh request-scoped trace id and pin it on the
-    // `CurrentTraceId` FiberRef so every log / audit call beneath
-    // this RPC entry shares the same correlation key.
-    const traceId = mintTraceId()
-    const wrapped = withTraceId(traceId, program)
-    const result = await Effect.runPromise(Effect.either(wrapped.pipe(Effect.provide(layer))))
-    if (Either.isRight(result)) {
-      return Either.right(encodeResult(projectResult(result.right)))
-    }
-    return Either.left(encodeDomainError(result.left))
-  }
 
   private async expireStaleHolds(storage: DurableObjectStorageLike): Promise<void> {
     const all = loadAllBookings(storage)
