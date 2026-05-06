@@ -17,12 +17,14 @@ import {
   type HoldSlotResult,
   type IdGenerator,
   type Logger,
+  mintTraceId,
   RescheduleBooking,
   type RescheduleBookingInput,
   type RescheduleBookingResult,
   SystemClockLive,
   severityOf,
   UlidIdGeneratorLive,
+  withTraceId,
 } from "@booking/core"
 import { Effect, Either, Layer, Schema } from "effect"
 import {
@@ -187,7 +189,12 @@ export class DaySchedule extends DurableObject<Env> {
   ): Promise<Either.Either<EncodedHoldResult, EncodedDomainError>> {
     const storage = this.ctx.storage as unknown as DurableObjectStorageLike
     const layer = this.layer(storage)
-    const result = await Effect.runPromise(Effect.either(program.pipe(Effect.provide(layer))))
+    // Mint a fresh request-scoped trace id and pin it on the
+    // `CurrentTraceId` FiberRef so every log / audit call beneath
+    // this RPC entry shares the same correlation key.
+    const traceId = mintTraceId()
+    const wrapped = withTraceId(traceId, program)
+    const result = await Effect.runPromise(Effect.either(wrapped.pipe(Effect.provide(layer))))
     if (Either.isRight(result)) {
       return Either.right(encodeResult(projectResult(result.right)))
     }
