@@ -186,6 +186,17 @@ dev-default:
 migrate-local:
     {{DEV}} {{PNPM}} -F default exec wrangler d1 migrations apply DB --local
 
+# Apply the catalog seed to the local D1. Idempotent — re-running
+# refreshes the rows. Generates the SQL document on the fly via
+# `apps/default/seed/seed.ts`, so the seed is always in lockstep
+# with the catalog Schemas (no hand-written SQL to drift).
+seed:
+    {{DEV}} bash -c '\
+      cd apps/default && \
+      ../../node_modules/.bin/pnpm exec tsx seed/seed.ts > .seed.generated.sql && \
+      ../../node_modules/.bin/pnpm exec wrangler d1 execute DB --local --file=.seed.generated.sql && \
+      rm -f .seed.generated.sql'
+
 # ---------------------------------------------------------------------------
 # Aggregate gates
 # ---------------------------------------------------------------------------

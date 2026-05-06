@@ -9,10 +9,12 @@
     "build": "wrangler deploy --dry-run --outdir dist",
     "test": "echo 'no tests in default app yet'",
     "test:coverage": "echo 'no tests in default app yet'",
-    "migrate:local": "wrangler d1 migrations apply DB --local"
+    "migrate:local": "wrangler d1 migrations apply DB --local",
+    "seed:render": "tsx seed/seed.ts"
   },
   "dependencies": {
     "@booking/core": "workspace:*",
+    "@js-temporal/polyfill": "^0.5.1",
     "@pothos/core": "^4.12.0",
     "@pothos/plugin-errors": "^4.9.0",
     "drizzle-orm": "^0.45.0",
@@ -25,6 +27,7 @@
     "@types/node": "^25.6.0",
     "cloudflare": "^6.0.0",
     "drizzle-kit": "^0.31.0",
+    "tsx": "^4.21.0",
     "wrangler": "^4.87.0"
   }
 }

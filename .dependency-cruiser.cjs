@@ -60,7 +60,8 @@ module.exports = {
         pathNot:
           "(\\.config\\.|\\.test\\.|^test/" +
           "|apps/.*/src/worker\\.ts|apps/.*/src/server/schema\\.ts" +
-          "|^packages/core/src/derive/index\\.ts)",
+          "|^packages/core/src/derive/index\\.ts" +
+          "|^apps/default/seed/seed\\.ts)",
       },
       to: {},
     },

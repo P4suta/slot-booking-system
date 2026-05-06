@@ -8,7 +8,7 @@
     "tsBuildInfoFile": ".tsbuildinfo",
     "types": ["@cloudflare/workers-types", "node"]
   },
-  "include": ["src/**/*", "drizzle.config.ts"],
+  "include": ["src/**/*", "drizzle.config.ts", "seed/**/*"],
   "exclude": ["dist", "node_modules", "build", ".svelte-kit", ".wrangler"],
   "references": [{ "path": "../../packages/core/tsconfig.src.json" }]
 }
