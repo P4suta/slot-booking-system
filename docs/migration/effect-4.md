@@ -50,9 +50,11 @@ beta with a peer-dep escape hatch documented inline:
 "drizzle-orm": "^1.0.0-rc.2",
 ```
 
-## Breaking changes inventory (data-driven from
-`node_modules/.pnpm/effect@4.0.0-beta.60/.../dist/*.d.ts` + the
-[Schema migration guide](https://github.com/Effect-TS/effect-smol/blob/main/migration/schema.md))
+## Breaking changes inventory
+
+Data-driven from `node_modules/.pnpm/effect@4.0.0-beta.60/.../dist/*.d.ts`
+plus the upstream
+[Schema migration guide](https://github.com/Effect-TS/effect-smol/blob/main/migration/schema.md).
 
 ### Context
 
@@ -89,10 +91,7 @@ Affected files (7 ports + runtime):
 | `Schema.decodeUnknownEither(s)` | `Schema.decodeUnknownExit(s)` (Either-typed sync variant gone — `Exit`/`Result` is the closest) |
 | `Schema.decodeSync` | unchanged |
 | `Schema.encodeSync` | unchanged |
-| `Schema.brand(B)` | unchanged signature, but `Bottom` typing is much
-   stricter — branded `Schema<...>` no longer matches generic
-   `Schema<A>` constraints; use `Schema<A, I>` or
-   `Schema.Schema.Any` style |
+| `Schema.brand(B)` | unchanged signature, but `Bottom` typing is stricter — branded `Schema<...>` no longer matches generic `Schema<A>` constraints; use `Schema<A, I>` or `Schema.Schema.Any` style |
 | `validate*` family | gone; use `decode*` + `toType` pattern |
 | `filter()` | `check(makeFilter())` or `refine()` |
 | `pick`/`omit` | `mapFields(Struct.pick/omit([...]))` |
@@ -144,12 +143,9 @@ Affected files (every Schema definition + all decoders/encoders):
 
 | 3.21 form | 4.0 form |
 |-----------|----------|
-| `yield* Tag` (in `Effect.gen`) | `yield* Effect.service(Tag)` or
-   `yield* Tag.use((service) => Effect.succeed(...))` |
-| `Either.match(e, { onLeft, onRight })` | survived, but
-   `Either.isLeft / isRight` flow is preferred |
-| Effect.gen iterator semantics | rewritten — `[Symbol.iterator]()`
-   contract changed |
+| `yield* Tag` (in `Effect.gen`) | `yield* Effect.service(Tag)` or `yield* Tag.use((service) => Effect.succeed(...))` |
+| `Either.match(e, { onLeft, onRight })` | survived, but `Either.isLeft / isRight` flow is preferred |
+| Effect.gen iterator semantics | rewritten — `[Symbol.iterator]()` contract changed |
 | `Effect.try` + `Effect.tryPromise` | survive, syntax unchanged |
 
 The yield pattern change is the one that bites every use case. The
