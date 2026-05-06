@@ -1,6 +1,6 @@
 import { Temporal } from "@js-temporal/polyfill"
 import type { Brand } from "effect"
-import type { Booking } from "../booking/Booking.js"
+import { type Booking, isActive } from "../booking/Booking.js"
 import type { BusinessHours } from "../entities/BusinessHours.js"
 import type { Closure } from "../entities/Closure.js"
 import { type Provider, providerSatisfies } from "../entities/Provider.js"
@@ -73,8 +73,6 @@ export const mintAvailableSlot = (shape: AvailableSlotShape): AvailableSlot =>
   shape as AvailableSlot
 
 const MINUTES_PER_DAY = 1_440
-
-const isActiveBooking = (b: Booking): boolean => b.state === "Held" || b.state === "Confirmed"
 
 const idAsc = <T extends { readonly id: string }>(a: T, b: T): number => a.id.localeCompare(b.id)
 
@@ -161,7 +159,7 @@ const computeProviderAvailabilities = (
           return B.clearRange(mask, lo, hi)
         }, baseMask)
       const finalMask = bookings
-        .filter(({ booking }) => booking.providerId === p.id && isActiveBooking(booking))
+        .filter(({ booking }) => booking.providerId === p.id && isActive(booking))
         .reduce((mask, { booking, service: svc }) => {
           const lo = Math.max(
             0,
@@ -189,7 +187,7 @@ const resourceImpact = (
   timeZone: BusinessTimeZone,
 ): ResourceImpact => {
   const { booking, service: svc } = rb
-  if (!isActiveBooking(booking)) return { kind: "none" }
+  if (!isActive(booking)) return { kind: "none" }
   const bookingDate = booking.slot.start.toZonedDateTimeISO(timeZone).toPlainDate()
   const holdingEndDate =
     svc.holdingDays > 0 ? bookingDate.add({ days: svc.holdingDays }) : bookingDate

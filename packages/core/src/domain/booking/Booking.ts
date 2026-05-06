@@ -101,3 +101,54 @@ export type BookingState = Booking["state"]
 
 /** Common-fields helper used by entities, projections, and tests. */
 export type BookingCommon = Pick<Booking, keyof typeof CommonFields>
+
+/* -------------------------------------------------------------------------- */
+/* Typestate refinements (Phase 2.0 / BI-1)                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Phantom-narrowed `Booking` parameterised by its state. Lets the
+ * indexed-monad-flavoured `applyTyped<S, K>` (in `transitions.ts`)
+ * encode the (state, command) lattice at the call site: an illegal
+ * call site (e.g. `Complete` on a `Held`) becomes a compile-time type
+ * error, not a runtime `InvalidStateTransition` left.
+ *
+ * Usage at the boundary of pure transitions (`applyTyped`,
+ * `requireScope`-style helpers) and in projections / read models that
+ * must operate on a specific state. The runtime shape is identical
+ * to `Booking` — `BookingT<S>` is purely a TypeScript refinement.
+ */
+export type BookingT<S extends BookingState> = Extract<Booking, { state: S }>
+
+/**
+ * The two non-terminal states that still consume capacity. Used by
+ * `computeAvailableSlots` (booking masks) and the DurableObject
+ * scheduler when filtering active holds. Equivalent to
+ * `BookingT<"Held"> | BookingT<"Confirmed">`.
+ */
+export type Active = BookingT<"Held"> | BookingT<"Confirmed">
+
+/**
+ * Parametric type-guard factory. Calling `inState("Held")` yields a
+ * `(b: Booking) => b is BookingT<"Held">` predicate. Adding a new
+ * state to `BookingState` automatically extends the family — there is
+ * no per-state hand-written guard to fall out of sync.
+ */
+export const inState =
+  <S extends BookingState>(s: S) =>
+  (b: Booking): b is BookingT<S> =>
+    b.state === s
+
+export const isHeld = inState("Held")
+export const isConfirmed = inState("Confirmed")
+export const isCancelled = inState("Cancelled")
+export const isCompleted = inState("Completed")
+export const isNoShow = inState("NoShow")
+
+/**
+ * Active = Held ∨ Confirmed. The disjunction is what
+ * `computeAvailableSlots` needs to mask occupied minutes; carrying it
+ * as a single guard keeps the slot-availability code site-free of
+ * `b.state === "..."` literal comparisons.
+ */
+export const isActive = (b: Booking): b is Active => isHeld(b) || isConfirmed(b)

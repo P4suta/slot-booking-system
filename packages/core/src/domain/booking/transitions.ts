@@ -14,6 +14,8 @@ import type { BookingEventId, BookingId } from "../types/EntityId.js"
 import type {
   Booking,
   BookingCommon,
+  BookingState,
+  BookingT,
   Cancelled,
   Completed,
   Confirmed,
@@ -21,6 +23,7 @@ import type {
   NoShow,
 } from "./Booking.js"
 import type { Command } from "./Command.js"
+import type { AllowedCommandKinds, BookingMachineState, NextState } from "./machine.js"
 
 export type ApplyResult = {
   readonly booking: Booking
@@ -250,3 +253,56 @@ export const apply = (
     Match.discriminator("state")("NoShow", () => Either.left(new AlreadyNoShowError({}))),
     Match.exhaustive,
   )
+
+/* -------------------------------------------------------------------------- */
+/* Indexed-monad / typestate variant — Phase 2.0 / BI-1                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Successful payload of {@link applyTyped}. The `booking` field is
+ * narrowed to `BookingT<NextState<S, K>>` — the successor state of
+ * `S` under command `K` according to the type-level
+ * {@link TransitionTable}.
+ */
+export type TypedApplyResult<S extends BookingMachineState, K extends AllowedCommandKinds<S>> = {
+  readonly booking: BookingT<NextState<S, K>>
+  readonly event: BookingEvent
+}
+
+/**
+ * Indexed-monad / typestate variant of {@link apply}. The (state,
+ * command) pair is constrained at the type level via
+ * `BookingT<S>` × `Command & { kind: AllowedCommandKinds<S> }`, so an
+ * illegal call site (e.g. issuing `Complete` on a `Held`) becomes a
+ * compile-time error rather than a runtime
+ * `InvalidStateTransitionError` left. Terminal states (`Cancelled` /
+ * `Completed` / `NoShow`) have `AllowedCommandKinds<S> = never`, which
+ * makes them statically unable to receive any command.
+ *
+ * The runtime body is `apply` itself; the success-side narrowing to
+ * `BookingT<NextState<S, K>>` is justified by the
+ * {@link TransitionTable} adjacency invariant cross-validated in
+ * `machine.test.ts` — the type-level table and the runtime spec are
+ * isomorphic, so a `Right` of `apply(booking, command, _)` whose state
+ * is `S` and command kind is `K extends AllowedCommandKinds<S>` is
+ * provably in state `NextState<S, K>`.
+ *
+ * Failure side stays `DomainError` because capability scope checks
+ * (`InsufficientCapability`) and aggregate invariants
+ * (`SlotExpired` once Phase 0.10 hold semantics land) are runtime
+ * concerns the type system cannot enforce.
+ */
+export const applyTyped = <S extends BookingMachineState, K extends AllowedCommandKinds<S>>(
+  booking: BookingT<S>,
+  command: Command & { kind: K },
+  newEventId: BookingEventId,
+): Either.Either<TypedApplyResult<S, K>, DomainError> =>
+  apply(booking, command, newEventId) as Either.Either<TypedApplyResult<S, K>, DomainError>
+
+/**
+ * Type-level alias preserved for documentation: the set of
+ * `BookingState` values that are *not* terminal. Equal to
+ * `"Held" | "Confirmed"`. Useful when writing functions that take an
+ * "active aggregate that may transition" without spelling the union.
+ */
+export type ActiveState = Exclude<BookingState, "Cancelled" | "Completed" | "NoShow">

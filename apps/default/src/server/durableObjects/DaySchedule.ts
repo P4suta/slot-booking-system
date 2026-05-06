@@ -16,6 +16,7 @@ import {
   type HoldSlotInput,
   type HoldSlotResult,
   type IdGenerator,
+  isHeld,
   type Logger,
   mintTraceId,
   RescheduleBooking,
@@ -164,7 +165,7 @@ export class DaySchedule extends DurableObject<Env> {
     const nextOutbox = nextOutboxAttemptAt(storage)
     const all = loadAllBookings(storage)
     const earliestHoldExpiry = all
-      .filter((b) => b.state === "Held")
+      .filter(isHeld)
       .map((b) => b.expiresAt.epochMilliseconds)
       .reduce<number | null>((min, t) => (min === null || t < min ? t : min), null)
     const candidates: number[] = [Date.now() + 60_000]
@@ -204,7 +205,7 @@ export class DaySchedule extends DurableObject<Env> {
   private async expireStaleHolds(storage: DurableObjectStorageLike): Promise<void> {
     const all = loadAllBookings(storage)
     const now = Date.now()
-    const toExpire = all.filter((b) => b.state === "Held" && b.expiresAt.epochMilliseconds <= now)
+    const toExpire = all.filter((b) => isHeld(b) && b.expiresAt.epochMilliseconds <= now)
     if (toExpire.length === 0) return
     const layer = this.layer(storage)
     await Promise.all(
