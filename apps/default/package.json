@@ -16,6 +16,8 @@
     "@booking/core": "workspace:*",
     "@effect/rpc": "~0.75.1",
     "@js-temporal/polyfill": "^0.5.1",
+    "@microlabs/otel-cf-workers": "1.0.0-rc.52",
+    "@opentelemetry/api": "^1.9.1",
     "@pothos/core": "^4.12.0",
     "@pothos/plugin-errors": "^4.9.0",
     "drizzle-orm": "^0.45.0",

@@ -1,4 +1,5 @@
 import { PurgeStalePii, SystemClockLive } from "@booking/core"
+import { instrument, type ResolveConfigFn } from "@microlabs/otel-cf-workers"
 import { Effect, Layer } from "effect"
 import { makeD1AuditLogger } from "./server/adapters/D1AuditLoggerLive.js"
 import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
@@ -14,6 +15,10 @@ type Env = {
   DEPLOYMENT_NAME: string
   DEPLOYMENT_TIMEZONE: string
   SLOT_HMAC_SECRET: string
+  /** Optional — when set, OTLP traces are POSTed to this endpoint. */
+  OTEL_EXPORTER_URL?: string
+  /** Optional — vendor-specific auth header (e.g. Honeycomb / Axiom). */
+  OTEL_EXPORTER_KEY?: string
 }
 
 /**
@@ -32,8 +37,22 @@ type Env = {
  * SYSTEM §6): any booking whose terminal timestamp is more than 2
  * years old has its `nameKana` / `phoneLast4` / `freeText` columns
  * NULL'd. Cron schedule lives in `wrangler.toml` `[triggers].crons`.
+ *
+ * **Phase 2.6 / BI-9 — observability** — the entry handler is wrapped
+ * in `@microlabs/otel-cf-workers` `instrument(...)`, which:
+ *   - Auto-accepts inbound `traceparent` (W3C Trace Context) headers
+ *     and threads the trace context through the Effect runtime via
+ *     `@opentelemetry/api`'s active span.
+ *   - Auto-injects `traceparent` on outbound `fetch` calls so DO RPC
+ *     and downstream services participate in the same trace.
+ *   - Emits one root span per request / scheduled invocation. The
+ *     domain layer adds child spans via `Telemetry.withSpan(...)`.
+ *   - Posts spans to `OTEL_EXPORTER_URL` (optional) — falls back to
+ *     `http://localhost:4318/v1/traces` for local-dev OTLP collection.
+ *     Cloudflare's native Workers tracing remains active in parallel
+ *     when no exporter is configured.
  */
-export default {
+const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === "/healthz") {
@@ -79,3 +98,19 @@ export default {
     await Effect.runPromise(PurgeStalePii().pipe(Effect.provide(layer)))
   },
 } satisfies ExportedHandler<Env>
+
+const otelConfig: ResolveConfigFn<Env> = (env) => ({
+  service: { name: env.DEPLOYMENT_NAME, version: "0.0.0" },
+  exporter:
+    env.OTEL_EXPORTER_URL !== undefined
+      ? {
+          url: env.OTEL_EXPORTER_URL,
+          headers:
+            env.OTEL_EXPORTER_KEY !== undefined
+              ? { authorization: `Bearer ${env.OTEL_EXPORTER_KEY}` }
+              : {},
+        }
+      : { url: "http://localhost:4318/v1/traces" },
+})
+
+export default instrument(handler, otelConfig)
