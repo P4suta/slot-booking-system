@@ -7,7 +7,14 @@ import {
   type ServiceCatalogOps,
 } from "../../src/application/ports/ServiceCatalog.js"
 import { schemaToArbitrary } from "../../src/derive/index.js"
-import { ProviderSchema, ResourceSchema, ServiceSchema } from "../../src/domain/index.js"
+import {
+  BusinessHoursSchema,
+  ClosureSchema,
+  ProviderAbsenceSchema,
+  ProviderSchema,
+  ResourceSchema,
+  ServiceSchema,
+} from "../../src/domain/index.js"
 import { makeInMemoryServiceCatalog } from "../../src/infrastructure/serviceCatalog/InMemoryServiceCatalogLive.js"
 
 /**
@@ -28,14 +35,19 @@ import { makeInMemoryServiceCatalog } from "../../src/infrastructure/serviceCata
  * Cross-entity isolation: writes to one repository do not affect any
  * other (the in-memory backing store is a per-entity `TMap`).
  *
- * `BusinessHours`, `Closure`, and `ProviderAbsence` carry Temporal
- * values. The Temporal Schemas use `Schema.declare(...)` without an
- * `arbitrary` annotation, so `schemaToArbitrary` can't synthesise a
- * generator for them. Their CRUD invariants are kept in
- * `infrastructure/InMemoryServiceCatalogLive.test.ts` with hand-built
- * fixtures; once the Temporal Schemas advertise an arbitrary
- * annotation (Phase 0.12 follow-up), they fold back into this suite
- * trivially.
+ * Temporal-bearing entities (`BusinessHours`, `Closure`,
+ * `ProviderAbsence`) are included: the `Instant` / `PlainDate` /
+ * `PlainTime` Schemas advertise their own `arbitrary` annotation
+ * (`packages/core/src/domain/types/Temporal.ts`), so `Arbitrary.make`
+ * (and `schemaToArbitrary`) lifts them automatically — no per-entity
+ * fixture handwriting.
+ *
+ * `ProviderAbsence` is here too: the field-level Schema places no
+ * ordering constraint on `start` / `end` (the `start < end` invariant
+ * lives in the smart constructor `makeProviderAbsence`, not in the
+ * Schema). The CRUD round-trip therefore succeeds for any pair the
+ * Schema accepts; the smart-constructor invariant is exercised
+ * separately in the entities suite.
  */
 
 const propertyTriad = <E extends { readonly id: I }, I, R>(
@@ -111,6 +123,9 @@ describe("catalog property suite", () => {
   propertyTriad("services", ServiceSchema, (cat) => cat.services)
   propertyTriad("providers", ProviderSchema, (cat) => cat.providers)
   propertyTriad("resources", ResourceSchema, (cat) => cat.resources)
+  propertyTriad("businessHours", BusinessHoursSchema, (cat) => cat.businessHours)
+  propertyTriad("closures", ClosureSchema, (cat) => cat.closures)
+  propertyTriad("providerAbsences", ProviderAbsenceSchema, (cat) => cat.providerAbsences)
 
   it("writes to one repository do not bleed into another", async () => {
     await fc.assert(

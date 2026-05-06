@@ -12,6 +12,18 @@ import { ParseResult, Schema } from "effect"
  * `Temporal.X.from` and surfaces them as `ParseResult.Type` issues so
  * `summarizeParse` (`domain/errors/fromParseError.ts`) can render them
  * uniformly.
+ *
+ * Each declaration also carries an `arbitrary` annotation so
+ * `Arbitrary.make(schema)` (and our `schemaToArbitrary` helper)
+ * synthesises a fast-check generator without any per-call site
+ * shimming. Generators bound the search space to plausible business
+ * values: PlainTime second precision (no nanos), PlainDate inside
+ * 2000-2099 (epoch-day arithmetic stays in 32-bit range), Instant
+ * within ±100 years of epoch.
+ *
+ * The annotation is the docs-prescribed shape:
+ *   `arbitrary: () => (fc: typeof FastCheck) => Arbitrary<T>`
+ * (Effect Schema "Generating Arbitraries" section).
  */
 
 /* -------------------------------------------------------------------------- */
@@ -20,15 +32,41 @@ import { ParseResult, Schema } from "effect"
 
 const InstantSelf = Schema.declare(
   (input: unknown): input is Temporal.Instant => input instanceof Temporal.Instant,
-  { identifier: "Instant" },
+  {
+    identifier: "Instant",
+    arbitrary: () => (fc) =>
+      fc
+        .integer({ min: -3_155_692_597_470, max: 3_155_692_597_470 })
+        .map((ms) => Temporal.Instant.fromEpochMilliseconds(ms)),
+  },
 )
 const PlainDateSelf = Schema.declare(
   (input: unknown): input is Temporal.PlainDate => input instanceof Temporal.PlainDate,
-  { identifier: "PlainDate" },
+  {
+    identifier: "PlainDate",
+    arbitrary: () => (fc) =>
+      fc
+        .record({
+          year: fc.integer({ min: 2000, max: 2099 }),
+          month: fc.integer({ min: 1, max: 12 }),
+          day: fc.integer({ min: 1, max: 28 }),
+        })
+        .map((parts) => Temporal.PlainDate.from(parts)),
+  },
 )
 const PlainTimeSelf = Schema.declare(
   (input: unknown): input is Temporal.PlainTime => input instanceof Temporal.PlainTime,
-  { identifier: "PlainTime" },
+  {
+    identifier: "PlainTime",
+    arbitrary: () => (fc) =>
+      fc
+        .record({
+          hour: fc.integer({ min: 0, max: 23 }),
+          minute: fc.integer({ min: 0, max: 59 }),
+          second: fc.integer({ min: 0, max: 59 }),
+        })
+        .map((parts) => Temporal.PlainTime.from(parts)),
+  },
 )
 
 /* -------------------------------------------------------------------------- */
