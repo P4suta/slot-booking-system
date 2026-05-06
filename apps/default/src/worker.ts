@@ -65,9 +65,14 @@ export default {
     env: Env,
     _ctx: ExecutionContext,
   ): Promise<void> {
+    // Phase 2.6 / BI-9: D1AuditLoggerLive forwards write failures to
+    // Logger, so the audit layer depends on Logger. Provide
+    // WorkersLoggerLive into the audit layer explicitly before merging
+    // — `Layer.mergeAll` does not resolve cross-layer dependencies.
+    const auditLayer = makeD1AuditLogger(env.DB).pipe(Layer.provide(WorkersLoggerLive))
     const layer = Layer.mergeAll(
       makeD1PiiPurger(env.DB),
-      makeD1AuditLogger(env.DB),
+      auditLayer,
       SystemClockLive,
       WorkersLoggerLive,
     )
