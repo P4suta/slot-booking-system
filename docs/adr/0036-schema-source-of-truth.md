@@ -62,10 +62,14 @@ deserve being stated explicitly:
   current duplication is small and any drift fails Miniflare
   integration tests at the next Phase boundary.
 - **Miniflare integration test** — Phase 0.7-γ2 covers
-  property/fuzz at the domain layer. The Cloudflare-runtime DO +
-  alarm + outbox-drain integration test moves to Phase 0.10
-  (end-to-end Miniflare) where it joins the customer-flow smoke
-  tests.
+  property/fuzz at the domain layer. Phase 0.10's slot-token work
+  (HMAC envelope around `AvailableSlot`) closes the
+  resolver-side capability discipline; the Cloudflare-runtime DO +
+  alarm + outbox-drain integration test ride further out, beyond
+  the Phase 0.12 frontend/observability close-out. Until the
+  Miniflare suite lands, the curl smoke recipes
+  (`just smoke-available-slots`, `just smoke-booking-flow`) cover
+  the end-to-end signal against a running `wrangler dev --local`.
 
 ## Consequences
 

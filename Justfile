@@ -194,6 +194,14 @@ migrate-local:
 smoke-available-slots:
     bash apps/default/scripts/smoke-available-slots.sh
 
+# End-to-end smoke for the customer flow:
+# `availableSlots` → `holdSlot`. Same preconditions as above.
+# Until the Miniflare integration suite lands (ADR-0036 carry-over),
+# this is the operator-facing E2E signal that every layer (resolver,
+# token verify, DO RPC, SQL, outbox, audit) is wired up.
+smoke-booking-flow:
+    bash apps/default/scripts/smoke-booking-flow.sh
+
 # Apply the catalog seed to the local D1. Idempotent — re-running
 # refreshes the rows. Generates the SQL document on the fly via
 # `apps/default/seed/seed.ts`, so the seed is always in lockstep
