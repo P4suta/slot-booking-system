@@ -45,41 +45,50 @@ export const makeD1AuditLogger = (database: D1Database): Layer.Layer<AuditLogger
       const logger = yield* Logger
       return AuditLogger.of({
         write: (entry: AuditEntry) =>
-          Effect.tryPromise({
-            try: async () => {
-              const db = drizzle(database)
-              await db
-                .insert(auditLog)
-                .values({
-                  id: newAuditLogId(),
-                  at: entry.ts,
-                  actor: entry.actor,
-                  action: entry.errorTag,
-                  bookingId: null,
-                  traceId: entry.traceId ?? null,
-                  data: { code: entry.errorCode, outcome: entry.outcome },
-                })
-                .run()
+          Effect.withSpan("audit_write", {
+            attributes: {
+              "audit.actor": entry.actor,
+              "audit.action": entry.errorTag,
+              "audit.outcome": entry.outcome,
+              ...(entry.traceId !== undefined ? { "audit.trace_id": entry.traceId } : {}),
             },
-            catch: (e) => e,
-          }).pipe(
-            Effect.catchAll((cause) =>
-              Effect.flatMap(getCurrentTraceId, (traceId) =>
-                logger.error({
-                  _tag: "AuditWriteFailure",
-                  code: "E_INF_AUDIT_WRITE",
-                  severity: "infrastructure",
-                  data: {
-                    "error.type": "AuditWriteFailure",
-                    "error.code": "E_INF_AUDIT_WRITE",
-                    "error.severity": "infrastructure",
+          })(
+            Effect.tryPromise({
+              try: async () => {
+                const db = drizzle(database)
+                await db
+                  .insert(auditLog)
+                  .values({
+                    id: newAuditLogId(),
+                    at: entry.ts,
                     actor: entry.actor,
                     action: entry.errorTag,
-                    cause: cause instanceof Error ? cause.message : String(cause),
-                  },
-                  ...(traceId !== undefined ? { traceId } : {}),
-                  ...(entry.traceId !== undefined ? { traceId: entry.traceId } : {}),
-                }),
+                    bookingId: null,
+                    traceId: entry.traceId ?? null,
+                    data: { code: entry.errorCode, outcome: entry.outcome },
+                  })
+                  .run()
+              },
+              catch: (e) => e,
+            }).pipe(
+              Effect.catchAll((cause) =>
+                Effect.flatMap(getCurrentTraceId, (traceId) =>
+                  logger.error({
+                    _tag: "AuditWriteFailure",
+                    code: "E_INF_AUDIT_WRITE",
+                    severity: "infrastructure",
+                    data: {
+                      "error.type": "AuditWriteFailure",
+                      "error.code": "E_INF_AUDIT_WRITE",
+                      "error.severity": "infrastructure",
+                      actor: entry.actor,
+                      action: entry.errorTag,
+                      cause: cause instanceof Error ? cause.message : String(cause),
+                    },
+                    ...(traceId !== undefined ? { traceId } : {}),
+                    ...(entry.traceId !== undefined ? { traceId: entry.traceId } : {}),
+                  }),
+                ),
               ),
             ),
           ),
