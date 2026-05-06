@@ -7,9 +7,11 @@ import {
   codeOf,
   type DomainError,
   InvalidBookingCodeError,
+  InvalidCatalogInputError,
   InvalidPhoneLast4Error,
   InvalidStateTransitionError,
   isTraceId,
+  MissingStaffCapabilityError,
   parseTraceId,
   StorageError,
   severityOf,
@@ -150,6 +152,22 @@ describe("toLogPayload", () => {
     const e = new StorageError({ reason: "txn aborted" })
     const p = toLogPayload(e)
     expect(p.data.reason).toBe("txn aborted")
+  })
+
+  it("classifies catalog-input + missing-staff-capability as validation", () => {
+    expect(
+      severityOf(new InvalidCatalogInputError({ entity: "service", reason: "missing name" })),
+    ).toBe("validation")
+    expect(severityOf(new MissingStaffCapabilityError({ reason: "absent" }))).toBe("validation")
+  })
+
+  it("returns stable codes for catalog-input + missing-staff-capability", () => {
+    expect(codeOf(new InvalidCatalogInputError({ entity: "service", reason: "x" }))).toBe(
+      "E_VAL_CATALOG_INPUT",
+    )
+    expect(codeOf(new MissingStaffCapabilityError({ reason: "absent" }))).toBe(
+      "E_VAL_MISSING_STAFF_CAPABILITY",
+    )
   })
 })
 

@@ -5,5 +5,6 @@ import { builder } from "./builder.js"
 import "./resolvers/availableSlots.js"
 import "./resolvers/catalog.js"
 import "./resolvers/mutations.js"
+import "./resolvers/staffCatalog.js"
 
 export const schema = builder.toSchema()

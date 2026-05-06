@@ -173,7 +173,13 @@ describe("hasScope", () => {
 
 describe("StaffScopeSchema / SystemReasonSchema closed sets", () => {
   it("StaffScopeSchema.literals enumerates all permissible scopes", () => {
-    expect(StaffScopeSchema.literals).toEqual(["cancel", "reschedule", "complete", "noshow"])
+    expect(StaffScopeSchema.literals).toEqual([
+      "cancel",
+      "reschedule",
+      "complete",
+      "noshow",
+      "manage_catalog",
+    ])
   })
 
   it("SystemReasonSchema.literals enumerates all permissible reasons", () => {

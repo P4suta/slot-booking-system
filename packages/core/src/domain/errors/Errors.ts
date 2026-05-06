@@ -156,6 +156,45 @@ export class InvalidEntityIdError extends Data.TaggedError("InvalidEntityId")<{
   static readonly severity: ErrorSeverity = "validation"
 }
 
+/**
+ * Schema decoding rejected a catalog input payload (Service / Provider /
+ * Resource / BusinessHours / Closure / ProviderAbsence). Distinct from
+ * the per-value-object validation errors above because catalog inputs
+ * arrive as a whole struct and the failure may be in any field — the
+ * carrier `entity` records which entity rejected, `reason` carries the
+ * Schema parse summary.
+ */
+export class InvalidCatalogInputError extends Data.TaggedError("InvalidCatalogInput")<{
+  readonly entity:
+    | "service"
+    | "provider"
+    | "resource"
+    | "businessHours"
+    | "closure"
+    | "providerAbsence"
+  readonly reason: string
+  readonly meta?: ErrorMeta
+}> {
+  static readonly code = "E_VAL_CATALOG_INPUT"
+  static readonly severity: ErrorSeverity = "validation"
+}
+
+/**
+ * The request did not present a valid `StaffCapability`. Covers four
+ * causes the boundary cannot distinguish without leaking auth detail:
+ * missing header, malformed envelope (base64 / JSON parse), invalid
+ * Schema shape, and capability tag other than `StaffCapability`. Lack
+ * of *scope* on an otherwise-valid `StaffCapability` is a domain rule
+ * error (`InsufficientCapability`), not this one.
+ */
+export class MissingStaffCapabilityError extends Data.TaggedError("MissingStaffCapability")<{
+  readonly reason: "absent" | "malformed" | "wrong_kind"
+  readonly meta?: ErrorMeta
+}> {
+  static readonly code = "E_VAL_MISSING_STAFF_CAPABILITY"
+  static readonly severity: ErrorSeverity = "validation"
+}
+
 /* -------------------------------------------------------------------------- */
 /* Domain errors — business rule violations.                                   */
 /* -------------------------------------------------------------------------- */
@@ -329,6 +368,8 @@ export type ValidationError =
   | InvalidAbsenceError
   | InvalidBusinessTimeZoneError
   | InvalidEntityIdError
+  | InvalidCatalogInputError
+  | MissingStaffCapabilityError
 
 export type DomainRuleError =
   | BookingNotFoundError

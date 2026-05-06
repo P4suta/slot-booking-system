@@ -32,8 +32,25 @@ import { PhoneLast4Schema } from "../value-objects/PhoneLast4.js"
  * may issue it (`Complete` ⊆ Staff; `Expire` ⊆ System; `Cancel` ⊆ any).
  */
 
-/** Permissioned action the staff member may issue while bearing the capability. */
-export const StaffScopeSchema = Schema.Literal("cancel", "reschedule", "complete", "noshow")
+/**
+ * Permissioned action the staff member may issue while bearing the
+ * capability.
+ *
+ *   - `cancel` / `reschedule` / `complete` / `noshow` — per-booking
+ *     state transitions (`Booking.apply` consults `hasScope`).
+ *   - `manage_catalog` — create / update / delete on the six catalog
+ *     entities (`services` / `providers` / `resources` / `business
+ *     hours` / `closures` / `provider absences`). Granted to operators
+ *     who own the deployment's day-to-day catalog edits; not granted
+ *     to front-desk staff who only operate on bookings.
+ */
+export const StaffScopeSchema = Schema.Literal(
+  "cancel",
+  "reschedule",
+  "complete",
+  "noshow",
+  "manage_catalog",
+)
 export type StaffScope = Schema.Schema.Type<typeof StaffScopeSchema>
 
 /**
