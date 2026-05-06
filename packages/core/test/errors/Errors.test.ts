@@ -17,10 +17,34 @@ import {
   severityOf,
   type TraceId,
   toLogPayload,
-  withMeta,
 } from "../../src/domain/errors/index.js"
 
-describe("Data.TaggedError leaves", () => {
+/**
+ * Static structural assertion: every leaf error class declared in
+ * `Errors.ts` carries the metadata `metadataOf` reads. The `_typed`
+ * assignments would not compile if a leaf class were missing a
+ * `static readonly code` / `severity` / inherited `fields`; the
+ * `void`-cast then ensures TypeScript treats them as side-effect-only.
+ */
+type ErrorClassShape = {
+  readonly code: string
+  readonly severity: "validation" | "domain" | "infrastructure"
+  readonly fields: Readonly<Record<string, unknown>>
+}
+const _assertions: readonly ErrorClassShape[] = [
+  InvalidPhoneLast4Error,
+  BookingNotFoundError,
+  InvalidStateTransitionError,
+  AggregateNotFoundError,
+  ConcurrencyError,
+  StorageError,
+  InvalidBookingCodeError,
+  InvalidCatalogInputError,
+  MissingStaffCapabilityError,
+]
+void _assertions
+
+describe("Schema.TaggedError leaves", () => {
   it("carry _tag, name, message, stack", () => {
     const e = new InvalidPhoneLast4Error({ reason: "must be 4 digits" })
     expect(e._tag).toBe("InvalidPhoneLast4")
@@ -35,6 +59,14 @@ describe("Data.TaggedError leaves", () => {
     expect(a).toBeInstanceOf(InvalidPhoneLast4Error)
     expect(b).toBeInstanceOf(BookingNotFoundError)
     expect(a).not.toBeInstanceOf(BookingNotFoundError)
+  })
+
+  it("expose the Schema field table on the class side", () => {
+    // The factory installs a `fields` static for runtime introspection;
+    // `dataOf` enumerates this to build log payloads without ad-hoc
+    // string lists or `as unknown as` casts.
+    expect(Object.keys(InvalidPhoneLast4Error.fields).sort()).toEqual(["_tag", "reason"].sort())
+    expect(Object.keys(StorageError.fields).sort()).toEqual(["_tag", "cause", "reason"].sort())
   })
 })
 
@@ -62,23 +94,16 @@ describe("codeOf / severityOf", () => {
   })
 })
 
-describe("withMeta", () => {
-  it("returns a new error with meta attached without mutating the original", () => {
-    const e = new InvalidPhoneLast4Error({ reason: "x" })
-    const traceId = Either.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
-    const e2 = withMeta(e, { traceId })
-    expect(e.meta).toBeUndefined()
-    expect(e2.meta?.traceId).toBe(traceId)
-    expect(e2._tag).toBe(e._tag)
-    expect(e2).toBeInstanceOf(InvalidPhoneLast4Error)
+describe("StorageError cause is a first-class field (Phase 2.0 / BI-2)", () => {
+  it("preserves an Error cause on the instance", () => {
+    const cause = new TypeError("boom")
+    const e = new StorageError({ reason: "txn aborted", cause })
+    expect(e.cause).toBe(cause)
   })
 
-  it("merges with existing meta", () => {
-    const traceId = Either.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
-    const initial = withMeta(new BookingNotFoundError({}), { traceId })
-    const extended = withMeta(initial, { context: { bookingCode: "XXXX-YYY" } })
-    expect(extended.meta?.traceId).toBe(traceId)
-    expect(extended.meta?.context?.bookingCode).toBe("XXXX-YYY")
+  it("constructs without a cause when none is supplied", () => {
+    const e = new StorageError({ reason: "txn aborted" })
+    expect(e.cause).toBeUndefined()
   })
 })
 
@@ -92,20 +117,20 @@ describe("toLogPayload", () => {
     expect(p.data.reason).toBe("must be 4 digits")
   })
 
-  it("includes traceId and context when meta is present", () => {
+  it("attaches a traceId when the call site supplies one", () => {
     const traceId = Either.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
-    const e = withMeta(new BookingNotFoundError({}), {
-      traceId,
-      context: { bookingCode: "ABCD-EFG" },
-    })
-    const p = toLogPayload(e)
+    const p = toLogPayload(new BookingNotFoundError({}), { traceId })
     expect(p.traceId).toBe(traceId)
-    expect(p.context?.bookingCode).toBe("ABCD-EFG")
+  })
+
+  it("omits traceId when no option is supplied", () => {
+    const p = toLogPayload(new BookingNotFoundError({}))
+    expect(p.traceId).toBeUndefined()
   })
 
   it("serialises an Error cause as { name, message } only — never includes stack", () => {
     const cause = new TypeError("boom")
-    const e = withMeta(new BookingNotFoundError({}), { cause })
+    const e = new StorageError({ reason: "txn aborted", cause })
     const p = toLogPayload(e)
     expect(p.cause?.name).toBe("TypeError")
     expect(p.cause?.message).toBe("boom")
@@ -114,9 +139,17 @@ describe("toLogPayload", () => {
   })
 
   it("drops a non-Error cause", () => {
-    const e = withMeta(new BookingNotFoundError({}), { cause: "string-cause" })
+    const e = new StorageError({ reason: "txn aborted", cause: "string-cause" })
     const p = toLogPayload(e)
     expect(p.cause).toBeUndefined()
+  })
+
+  it("never surfaces the cause field as part of `data`", () => {
+    // `cause` is rendered separately by the cause-preview path; it must
+    // not double up under `data`, which is reserved for non-cause payload.
+    const e = new StorageError({ reason: "txn aborted", cause: new Error("boom") })
+    const p = toLogPayload(e)
+    expect(Object.keys(p.data)).toEqual(["reason"])
   })
 
   it("never surfaces customer PII keys (nameKana, phoneLast4, freeText)", () => {

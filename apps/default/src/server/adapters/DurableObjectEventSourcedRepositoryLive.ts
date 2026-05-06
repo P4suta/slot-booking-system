@@ -186,9 +186,7 @@ const eventToRow = (
 const wrapStorage =
   (reason: string) =>
   <A>(eff: Effect.Effect<A>): Effect.Effect<A, StorageError> =>
-    eff.pipe(
-      Effect.catchAllDefect((d) => Effect.fail(new StorageError({ reason, meta: { cause: d } }))),
-    )
+    eff.pipe(Effect.catchAllDefect((d) => Effect.fail(new StorageError({ reason, cause: d }))))
 
 /** Load every booking snapshot currently in DO storage. Used by alarm()'s outbox drain. */
 export const loadAllBookings = (storage: DurableObjectStorageLike): readonly Booking[] => {
@@ -295,7 +293,7 @@ export const makeDurableObjectEventSourcedRepository = (
             ),
           catch: (e) => {
             if (e instanceof ConcurrencyError) return e
-            return new StorageError({ reason: "DO save txn failed", meta: { cause: e } })
+            return new StorageError({ reason: "DO save txn failed", cause: e })
           },
         }),
 

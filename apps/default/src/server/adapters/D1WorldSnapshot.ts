@@ -82,7 +82,7 @@ export const readWorldSnapshot = (
         return decoded._tag === "Right" ? [decoded.right] : []
       })
     },
-    catch: (e) => new StorageError({ reason: "D1 world bookings", meta: { cause: e } }),
+    catch: (e) => new StorageError({ reason: "D1 world bookings", cause: e }),
   })
 
   return Effect.all(

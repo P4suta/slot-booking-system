@@ -1,5 +1,6 @@
 import {
   type BusinessTimeZone,
+  codeOf,
   computeAvailableSlots,
   type DomainError,
   ServiceCatalog,
@@ -7,6 +8,7 @@ import {
   type SlotCalcEnv,
   type SlotCalcQuery,
   StorageError,
+  severityOf,
 } from "@booking/core"
 import { Temporal } from "@js-temporal/polyfill"
 import { Effect } from "effect"
@@ -68,18 +70,11 @@ const AvailableSlotType = builder.objectRef<AvailableSlotShape>("AvailableSlot")
   }),
 })
 
-const errorCodeOf = (e: DomainError): string => (e as { code?: string }).code ?? "E_INF_STORAGE"
-
-const severityFromTag = (tag: string): "infrastructure" | "domain" | "validation" => {
-  if (tag === "Storage" || tag === "Concurrency" || tag === "AggregateNotFound")
-    return "infrastructure"
-  if (tag.startsWith("Invalid") || tag === "MissingStaffCapability") return "validation"
-  return "domain"
-}
-
 /**
  * Run a `world → slots` Effect through a fresh per-request catalog
- * Layer. Failures are mapped to the GraphQL `BookingError` arm.
+ * Layer. Failures are mapped to the GraphQL `BookingError` arm via
+ * the class-side metadata accessors `codeOf` / `severityOf`
+ * (Phase 2.0 / BI-2 — no string-tag dispatch).
  */
 const runQuery = async (
   env: GraphQLContext["env"],
@@ -92,8 +87,8 @@ const runQuery = async (
   if (result._tag === "Right") return result.right
   throw new BookingError({
     _tag: result.left._tag,
-    code: errorCodeOf(result.left),
-    severity: severityFromTag(result.left._tag),
+    code: codeOf(result.left),
+    severity: severityOf(result.left),
   })
 }
 
@@ -136,7 +131,7 @@ const slotsBody = (
               }
             }),
           ),
-        catch: (e) => new StorageError({ reason: "slot token signing failed", meta: { cause: e } }),
+        catch: (e) => new StorageError({ reason: "slot token signing failed", cause: e }),
       })
     },
   )

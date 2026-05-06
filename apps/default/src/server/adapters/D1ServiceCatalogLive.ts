@@ -57,9 +57,7 @@ type CatalogTable = SQLiteTable & { readonly id: SQLiteColumn }
 const wrapStorage =
   (reason: string) =>
   <A, E>(eff: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> =>
-    eff.pipe(
-      Effect.catchAllDefect((d) => Effect.fail(new StorageError({ reason, meta: { cause: d } }))),
-    )
+    eff.pipe(Effect.catchAllDefect((d) => Effect.fail(new StorageError({ reason, cause: d }))))
 
 /**
  * One parametric repository factory. The Schema is the entity codec,
@@ -85,7 +83,7 @@ const makeRepository = <E extends { readonly id: I }, I extends string, R>(
   const decodeOrThrow = (row: unknown, label: string): E => {
     const r = decodeRow(row)
     if (r._tag === "Right") return r.right
-    throw new StorageError({ reason: `D1 catalog ${label} decode`, meta: { cause: r.left } })
+    throw new StorageError({ reason: `D1 catalog ${label} decode`, cause: r.left })
   }
 
   return {
@@ -96,7 +94,7 @@ const makeRepository = <E extends { readonly id: I }, I extends string, R>(
             const rows = await db.select().from(table).all()
             return (rows as readonly unknown[]).map((row) => decodeOrThrow(row, "list"))
           },
-          catch: (e) => new StorageError({ reason: "D1 catalog list", meta: { cause: e } }),
+          catch: (e) => new StorageError({ reason: "D1 catalog list", cause: e }),
         }),
       ),
 
@@ -110,7 +108,7 @@ const makeRepository = <E extends { readonly id: I }, I extends string, R>(
         catch: (e) => {
           if (e instanceof AggregateNotFoundError) return e
           if (e instanceof StorageError) return e
-          return new StorageError({ reason: "D1 catalog get", meta: { cause: e } })
+          return new StorageError({ reason: "D1 catalog get", cause: e })
         },
       }),
 
@@ -128,7 +126,7 @@ const makeRepository = <E extends { readonly id: I }, I extends string, R>(
             .onConflictDoUpdate({ target: table.id, set: row })
             .run()
         },
-        catch: (e) => new StorageError({ reason: "D1 catalog save", meta: { cause: e } }),
+        catch: (e) => new StorageError({ reason: "D1 catalog save", cause: e }),
       }),
 
     delete: (id) =>
@@ -136,7 +134,7 @@ const makeRepository = <E extends { readonly id: I }, I extends string, R>(
         try: async () => {
           await db.delete(table).where(eq(table.id, id)).run()
         },
-        catch: (e) => new StorageError({ reason: "D1 catalog delete", meta: { cause: e } }),
+        catch: (e) => new StorageError({ reason: "D1 catalog delete", cause: e }),
       }),
   }
 }
