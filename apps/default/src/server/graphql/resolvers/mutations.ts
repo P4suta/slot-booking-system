@@ -1,7 +1,9 @@
-import { Either } from "effect"
+import { Effect, Either } from "effect"
 import { type DecodedSlot, verifySlotToken } from "../../auth/slotToken.js"
 import type { DaySchedule } from "../../durableObjects/DaySchedule.js"
+import { makeDayScheduleClient } from "../../durableObjects/effectRpc/client.js"
 import { BookingSourceEnum, builder, type GraphQLContext } from "../builder.js"
+import { runRpcOrThrow } from "../effectRpcRunner.js"
 import { BookingError, type EncodedDomainError } from "../errors.js"
 
 /**
@@ -93,36 +95,26 @@ builder.mutationType({
       resolve: async (_root, args, ctx) => {
         const slot = await verifyOrRefuse(ctx.env, args.slotToken)
         const stub = dayDoFor(ctx.env, args.date)
-        // Wire shape (`HoldSlotInputWire`) is the
-        // `Schema.Schema.Encoded` form of the DO's input codec — pure
-        // JSON the structured-clone envelope can carry untouched. The
-        // HMAC signature verification above guarantees the slot field
-        // values were minted by a previous `availableSlots` call.
-        // The DO body decodes wire → branded domain types via
-        // `decodeHoldSlotInput(tz, wire)` (Phase 2.1 / BI-3).
-        //
-        // RPC stub calls return Cloudflare's custom Thenable, not a
-        // real Promise (Workers RPC docs). `await` is mandatory; the
-        // `Promise.resolve(...)` wrapper coerces the Thenable into a
-        // value `@typescript-eslint/await-thenable` recognises (the
-        // generated `DurableObjectStub<T>` types do not surface the
-        // Thenable shape).
-        const result = await Promise.resolve(
-          stub.holdSlot({
-            slot: {
-              serviceId: slot.serviceId,
-              providerId: slot.providerId,
-              resourceIds: slot.resourceIds,
-              start: slot.start,
-              end: slot.end,
-            },
-            nameKana: args.nameKana,
-            phoneLast4: args.phoneLast4,
-            freeText: args.freeText ?? null,
-            source: args.source,
-          }),
+        return runRpcOrThrow(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* makeDayScheduleClient(stub)
+              return yield* client.HoldSlot({
+                slot: {
+                  serviceId: slot.serviceId,
+                  providerId: slot.providerId,
+                  resourceIds: slot.resourceIds,
+                  start: slot.start,
+                  end: slot.end,
+                },
+                nameKana: args.nameKana,
+                phoneLast4: args.phoneLast4,
+                freeText: args.freeText ?? null,
+                source: args.source,
+              })
+            }),
+          ),
         )
-        return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
     }),
 

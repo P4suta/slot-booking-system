@@ -47,26 +47,33 @@ const DomainErrorSchema = Schema.Union(
   ...(errorClassRegistry as readonly unknown[] as readonly Schema.Schema.All[]),
 ) as unknown as Schema.Schema<DomainError>
 
+/* The four RPC payload schemas are the *encoded* (string-only) form of
+ * the per-method input wire codecs. Cloudflare's `structuredClone`
+ * envelope can carry only JSON-shaped values, so the boundary speaks
+ * the encoded shape; the DO's handler re-decodes via `decode*Input`
+ * back into branded domain values (Phase 2.1 / BI-3). Using
+ * `Schema.encodedSchema(...)` here avoids forcing the resolver-side
+ * to construct branded types it does not own. */
 const HoldSlotRpc = Rpc.make("HoldSlot", {
-  payload: HoldSlotInputWireSchema,
+  payload: Schema.encodedSchema(HoldSlotInputWireSchema),
   success: BookingResultSchema,
   error: DomainErrorSchema,
 })
 
 const ConfirmBookingRpc = Rpc.make("ConfirmBooking", {
-  payload: ConfirmBookingInputWireSchema,
+  payload: Schema.encodedSchema(ConfirmBookingInputWireSchema),
   success: BookingResultSchema,
   error: DomainErrorSchema,
 })
 
 const CancelBookingRpc = Rpc.make("CancelBooking", {
-  payload: CancelBookingInputWireSchema,
+  payload: Schema.encodedSchema(CancelBookingInputWireSchema),
   success: BookingResultSchema,
   error: DomainErrorSchema,
 })
 
 const RescheduleBookingRpc = Rpc.make("RescheduleBooking", {
-  payload: RescheduleBookingInputWireSchema,
+  payload: Schema.encodedSchema(RescheduleBookingInputWireSchema),
   success: BookingResultSchema,
   error: DomainErrorSchema,
 })
