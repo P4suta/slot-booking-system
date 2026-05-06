@@ -16,7 +16,7 @@
  * `tag` for ergonomics — `lookup(error)` does the prefix work.
  */
 
-export type Locale = "ja" | "en"
+type Locale = "ja" | "en"
 
 type MessageMap = Readonly<Record<string, string>>
 
@@ -105,7 +105,7 @@ const en: MessageMap = {
 
 const messagesByLocale: Readonly<Record<Locale, MessageMap>> = { ja, en }
 
-export type LocalisableError = {
+type LocalisableError = {
   readonly tag: string
   readonly i18nKey?: string
   readonly message?: string
@@ -121,8 +121,7 @@ export type LocalisableError = {
  */
 export const localiseBookingError = (error: LocalisableError, locale: Locale = "ja"): string => {
   const map = messagesByLocale[locale]
-  const fromTag = map[error.tag]
-  if (fromTag !== undefined) return fromTag
+  if (Object.hasOwn(map, error.tag)) return map[error.tag]
   if (error.message !== undefined && error.message.length > 0) return error.message
   return locale === "ja" ? "予期しないエラーが発生しました" : "An unexpected error occurred"
 }
