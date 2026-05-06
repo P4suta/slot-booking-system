@@ -1,10 +1,10 @@
-import { Effect, Either } from "effect"
+import { Effect } from "effect"
 import { type DecodedSlot, verifySlotToken } from "../../auth/slotToken.js"
 import type { DaySchedule } from "../../durableObjects/DaySchedule.js"
 import { makeDayScheduleClient } from "../../durableObjects/effectRpc/client.js"
 import { BookingSourceEnum, builder, type GraphQLContext } from "../builder.js"
 import { runRpcOrThrow } from "../effectRpcRunner.js"
-import { BookingError, type EncodedDomainError } from "../errors.js"
+import { BookingError } from "../errors.js"
 
 /**
  * Booking mutations — `holdSlot`, `confirmBooking`, `cancelBooking`,
@@ -51,16 +51,6 @@ const BookingResultType = builder.objectRef<BookingResultShape>("BookingResult")
 const dayDoFor = (env: GraphQLContext["env"], date: string): DurableObjectStub<DaySchedule> => {
   const id = env.DAY_SCHEDULE.idFromName(date)
   return env.DAY_SCHEDULE.get(id)
-}
-
-/**
- * Lift a DO RPC `Either` into a typed GraphQL response. On Right,
- * return the success value. On Left, raise `BookingError` so the
- * Pothos errors plugin renders the typed union arm.
- */
-const unwrap = <R extends BookingResultShape>(result: Either.Either<R, EncodedDomainError>): R => {
-  if (Either.isRight(result)) return result.right
-  throw new BookingError(result.left)
 }
 
 const verifyOrRefuse = async (env: GraphQLContext["env"], token: string): Promise<DecodedSlot> => {
@@ -131,13 +121,17 @@ builder.mutationType({
       },
       resolve: async (_root, args, ctx) => {
         const stub = dayDoFor(ctx.env, args.date)
-        const result = await Promise.resolve(
-          stub.confirmBooking({
-            code: args.code,
-            phoneLast4: args.phoneLast4,
-          }),
+        return runRpcOrThrow(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* makeDayScheduleClient(stub)
+              return yield* client.ConfirmBooking({
+                code: args.code,
+                phoneLast4: args.phoneLast4,
+              })
+            }),
+          ),
         )
-        return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
     }),
 
@@ -155,14 +149,18 @@ builder.mutationType({
       },
       resolve: async (_root, args, ctx) => {
         const stub = dayDoFor(ctx.env, args.date)
-        const result = await Promise.resolve(
-          stub.cancelBooking({
-            code: args.code,
-            phoneLast4: args.phoneLast4,
-            reason: args.reason,
-          }),
+        return runRpcOrThrow(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* makeDayScheduleClient(stub)
+              return yield* client.CancelBooking({
+                code: args.code,
+                phoneLast4: args.phoneLast4,
+                reason: args.reason,
+              })
+            }),
+          ),
         )
-        return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
     }),
 
@@ -182,20 +180,24 @@ builder.mutationType({
       resolve: async (_root, args, ctx) => {
         const slot = await verifyOrRefuse(ctx.env, args.newSlotToken)
         const stub = dayDoFor(ctx.env, args.date)
-        const result = await Promise.resolve(
-          stub.rescheduleBooking({
-            code: args.code,
-            phoneLast4: args.phoneLast4,
-            newSlot: {
-              serviceId: slot.serviceId,
-              providerId: slot.providerId,
-              resourceIds: slot.resourceIds,
-              start: slot.start,
-              end: slot.end,
-            },
-          }),
+        return runRpcOrThrow(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* makeDayScheduleClient(stub)
+              return yield* client.RescheduleBooking({
+                code: args.code,
+                phoneLast4: args.phoneLast4,
+                newSlot: {
+                  serviceId: slot.serviceId,
+                  providerId: slot.providerId,
+                  resourceIds: slot.resourceIds,
+                  start: slot.start,
+                  end: slot.end,
+                },
+              })
+            }),
+          ),
         )
-        return unwrap(result as Either.Either<BookingResultShape, EncodedDomainError>)
       },
     }),
   }),
