@@ -2,6 +2,7 @@
   import { execute } from "$lib/graphql/client.js"
   import { graphqlEndpoint } from "$lib/graphql/endpoint.js"
   import { CancelBookingMutation } from "$lib/graphql/queries.js"
+  import { localiseBookingError } from "$lib/i18n.js"
 
   let bookingCode = $state("")
   let phoneLast4 = $state("")
@@ -23,7 +24,7 @@
         { endpoint: graphqlEndpoint() },
       )
       if (data.cancelBooking.__typename === "BookingError") {
-        error = data.cancelBooking.message
+        error = localiseBookingError(data.cancelBooking)
       } else {
         result = `キャンセル完了 (state=${data.cancelBooking.state})`
       }

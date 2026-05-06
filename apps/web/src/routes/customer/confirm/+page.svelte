@@ -3,6 +3,7 @@
   import { execute } from "$lib/graphql/client.js"
   import { graphqlEndpoint } from "$lib/graphql/endpoint.js"
   import { ConfirmBookingMutation } from "$lib/graphql/queries.js"
+  import { localiseBookingError } from "$lib/i18n.js"
 
   let held = $state<{ bookingId: string; date: string; phoneLast4: string } | null>(null)
   let bookingCode = $state("")
@@ -44,7 +45,7 @@
         { endpoint: graphqlEndpoint() },
       )
       if (data.confirmBooking.__typename === "BookingError") {
-        error = data.confirmBooking.message
+        error = localiseBookingError(data.confirmBooking)
         return
       }
       confirmedAt = new Date().toISOString()

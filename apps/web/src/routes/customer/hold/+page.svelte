@@ -4,6 +4,7 @@
   import { execute } from "$lib/graphql/client.js"
   import { graphqlEndpoint } from "$lib/graphql/endpoint.js"
   import { HoldSlotMutation, type AvailableSlot } from "$lib/graphql/queries.js"
+  import { localiseBookingError } from "$lib/i18n.js"
 
   let selected = $state<{ slot: AvailableSlot; date: string; serviceId: string } | null>(null)
   let nameKana = $state("")
@@ -40,7 +41,7 @@
         { endpoint: graphqlEndpoint() },
       )
       if (data.holdSlot.__typename === "BookingError") {
-        error = data.holdSlot.message
+        error = localiseBookingError(data.holdSlot)
         return
       }
       sessionStorage.setItem(
