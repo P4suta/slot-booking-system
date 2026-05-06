@@ -26,6 +26,7 @@ import {
   UlidIdGeneratorLive,
   withTraceId,
 } from "@booking/core"
+import { RpcServer } from "@effect/rpc"
 import { Effect, Either, Layer, Schema } from "effect"
 import {
   type DurableObjectStorageLike,
@@ -33,6 +34,8 @@ import {
   makeDurableObjectEventSourcedRepository,
 } from "../adapters/DurableObjectEventSourcedRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
+import { DayScheduleHandlersLayer } from "./effectRpc/handlers.js"
+import { DayScheduleRouter } from "./effectRpc/router.js"
 import {
   type CancelBookingInputWire,
   type ConfirmBookingInputWire,
@@ -188,6 +191,50 @@ export class DaySchedule extends DurableObject<Env> {
         const decoded = yield* decodeRescheduleBookingInput(tz, input)
         return yield* RescheduleBooking(decoded)
       }),
+    )
+  }
+
+  /**
+   * Phase 2.8 / BI-4 — `@effect/rpc` typed RPC entry point.
+   *
+   * Single multiplexed dispatch: callers send a `FromClientEncoded`
+   * envelope tagged with the RPC name; the response comes back as a
+   * single `FromServerEncoded` envelope (typically `ResponseExitEncoded`
+   * for request/response RPC). Both shapes are pure JSON so they
+   * traverse Cloudflare's `structuredClone` unchanged.
+   *
+   * Internally we spin up `RpcServer.makeNoSerialization` per request,
+   * push the inbound envelope through `server.write(0, msg)`, and
+   * collect the matching response in `onFromServer`. The single-shot
+   * lifecycle matches DO RPC's request/response shape — no daemon /
+   * mailbox coordination required.
+   *
+   * Eliminates the four legacy methods' `Either`-shaped return + the
+   * resolver-side `as Either.Either<...>` casts (Phase 2.8 BI-4 step
+   * 4-6 carries the migration).
+   */
+  async dispatch(envelope: unknown): Promise<unknown> {
+    const tz = await Effect.runPromise(this.deploymentTimeZone)
+    const storage = this.ctx.storage as unknown as DurableObjectStorageLike
+    const handlerLayer = DayScheduleHandlersLayer(tz, this.layer(storage))
+    const responses: unknown[] = []
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const server = yield* RpcServer.makeNoSerialization(DayScheduleRouter, {
+          onFromServer: (response) =>
+            Effect.sync(() => {
+              responses.push(response)
+            }),
+        })
+        yield* server.write(0, envelope as never)
+      }).pipe(Effect.provide(handlerLayer), Effect.scoped),
+    )
+    return responses.find(
+      (r): r is { _tag: "Exit" | "Defect" } =>
+        typeof r === "object" &&
+        r !== null &&
+        "_tag" in r &&
+        (r._tag === "Exit" || r._tag === "Defect"),
     )
   }
 

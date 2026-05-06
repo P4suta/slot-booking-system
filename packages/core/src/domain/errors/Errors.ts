@@ -548,7 +548,7 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] }
  * declares the static metadata, which is the smallest possible
  * "if-you-add-this-don't-forget-that" obligation.
  */
-const errorClassRegistry: readonly ErrorClass[] = [
+export const errorClassRegistry: readonly ErrorClass[] = [
   InvalidPhoneLast4Error,
   InvalidNameKanaError,
   InvalidBookingCodeError,
@@ -583,4 +583,3 @@ const errorClassRegistry: readonly ErrorClass[] = [
   ConcurrencyError,
   StorageError,
 ]
-void errorClassRegistry

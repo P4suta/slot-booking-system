@@ -51,7 +51,7 @@ const AvailableSlotInputWireSchema = Schema.Struct({
 })
 type AvailableSlotInputDecoded = Schema.Schema.Type<typeof AvailableSlotInputWireSchema>
 
-const HoldSlotInputWireSchema = Schema.Struct({
+export const HoldSlotInputWireSchema = Schema.Struct({
   slot: AvailableSlotInputWireSchema,
   nameKana: NameKanaSchema,
   phoneLast4: PhoneLast4Schema,
@@ -61,20 +61,20 @@ const HoldSlotInputWireSchema = Schema.Struct({
 /** The shape callers send across the structured-clone wire to `holdSlot`. */
 export type HoldSlotInputWire = Schema.Schema.Encoded<typeof HoldSlotInputWireSchema>
 
-const ConfirmBookingInputWireSchema = Schema.Struct({
+export const ConfirmBookingInputWireSchema = Schema.Struct({
   code: BookingCodeFromUserInputSchema,
   phoneLast4: PhoneLast4Schema,
 })
 export type ConfirmBookingInputWire = Schema.Schema.Encoded<typeof ConfirmBookingInputWireSchema>
 
-const CancelBookingInputWireSchema = Schema.Struct({
+export const CancelBookingInputWireSchema = Schema.Struct({
   code: BookingCodeFromUserInputSchema,
   phoneLast4: PhoneLast4Schema,
   reason: Schema.String,
 })
 export type CancelBookingInputWire = Schema.Schema.Encoded<typeof CancelBookingInputWireSchema>
 
-const RescheduleBookingInputWireSchema = Schema.Struct({
+export const RescheduleBookingInputWireSchema = Schema.Struct({
   code: BookingCodeFromUserInputSchema,
   phoneLast4: PhoneLast4Schema,
   newSlot: AvailableSlotInputWireSchema,
