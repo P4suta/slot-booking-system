@@ -12,6 +12,7 @@ import { Temporal } from "@js-temporal/polyfill"
 import { Effect } from "effect"
 import { makeD1ServiceCatalog } from "../../adapters/D1ServiceCatalogLive.js"
 import { businessTimeZoneFromEnv, readWorldSnapshot } from "../../adapters/D1WorldSnapshot.js"
+import { signSlot } from "../../auth/slotToken.js"
 import { builder, type GraphQLContext } from "../builder.js"
 import { BookingError } from "../errors.js"
 
@@ -46,16 +47,24 @@ type AvailableSlotShape = {
   readonly end: string
   readonly providerId: string
   readonly resourceIds: readonly string[]
+  readonly token: string
 }
 
 const AvailableSlotType = builder.objectRef<AvailableSlotShape>("AvailableSlot").implement({
-  description: "A bookable time interval with a tentative provider/resources assignment.",
+  description:
+    "A bookable time interval with a tentative provider/resources assignment. The " +
+    "`token` field is an HMAC-signed envelope over the slot fields; clients MUST " +
+    "echo it back unchanged on `holdSlot` / `rescheduleBooking`. The mutation " +
+    "resolver verifies the token before reaching the DO RPC, so a tampered slot " +
+    "cannot bypass the world-consistency check that justifies the brand on " +
+    "`AvailableSlot`.",
   fields: (t) => ({
     serviceId: t.exposeString("serviceId"),
     start: t.field({ type: "Instant", resolve: (s) => s.start }),
     end: t.field({ type: "Instant", resolve: (s) => s.end }),
     providerId: t.exposeString("providerId"),
     resourceIds: t.exposeStringList("resourceIds"),
+    token: t.exposeString("token"),
   }),
 })
 
@@ -94,6 +103,7 @@ const slotsBody = (
   serviceId: string,
   date: string,
   timeZone: BusinessTimeZone,
+  hmacSecret: string,
 ): Effect.Effect<readonly AvailableSlotShape[], StorageError> =>
   Effect.flatMap(
     readWorldSnapshot(catalog, database, Temporal.PlainDate.from(date), {
@@ -111,17 +121,23 @@ const slotsBody = (
         now: Temporal.Now.instant(),
       }
       const slots = computeAvailableSlots(world, query)
-      return Effect.succeed(
-        slots.map(
-          (s): AvailableSlotShape => ({
-            serviceId: s.serviceId,
-            start: s.start.toInstant().toString(),
-            end: s.end.toInstant().toString(),
-            providerId: s.providerId,
-            resourceIds: s.resourceIds,
-          }),
-        ),
-      )
+      return Effect.tryPromise({
+        try: async () =>
+          Promise.all(
+            slots.map(async (s): Promise<AvailableSlotShape> => {
+              const token = await signSlot(hmacSecret, s)
+              return {
+                serviceId: s.serviceId,
+                start: s.start.toInstant().toString(),
+                end: s.end.toInstant().toString(),
+                providerId: s.providerId,
+                resourceIds: s.resourceIds,
+                token,
+              }
+            }),
+          ),
+        catch: (e) => new StorageError({ reason: "slot token signing failed", meta: { cause: e } }),
+      })
     },
   )
 
@@ -145,7 +161,7 @@ builder.queryFields((t) => ({
         })
       }
       return runQuery(ctx.env, (cat) =>
-        slotsBody(cat, ctx.env.DB, args.serviceId, args.date, tz.right),
+        slotsBody(cat, ctx.env.DB, args.serviceId, args.date, tz.right, ctx.env.SLOT_HMAC_SECRET),
       )
     },
   }),

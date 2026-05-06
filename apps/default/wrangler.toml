@@ -29,6 +29,12 @@ new_sqlite_classes = ["DaySchedule"]
 [vars]
 DEPLOYMENT_NAME = "default"
 DEPLOYMENT_TIMEZONE = "UTC"
+# Local-dev secret used by `signSlot` / `verifySlotToken`. The value
+# is a deterministic 32-byte hex string so the local fixtures (curl
+# smoke, SvelteKit dev) can sign and verify without coordinating an
+# out-of-band secret. Production deployments rotate this through
+# `wrangler secret put SLOT_HMAC_SECRET`.
+SLOT_HMAC_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 # Daily cron at 04:00 UTC. Drives the `scheduled` handler in
 # `src/worker.ts` which NULLs PII fields on bookings whose terminal

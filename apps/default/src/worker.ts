@@ -11,6 +11,7 @@ type Env = {
   DAY_SCHEDULE: DurableObjectNamespace<DaySchedule>
   DEPLOYMENT_NAME: string
   DEPLOYMENT_TIMEZONE: string
+  SLOT_HMAC_SECRET: string
 }
 
 /**

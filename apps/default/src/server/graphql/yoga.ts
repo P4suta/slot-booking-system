@@ -7,6 +7,7 @@ type Env = {
   readonly DB: D1Database
   readonly DAY_SCHEDULE: DurableObjectNamespace<DaySchedule>
   readonly DEPLOYMENT_TIMEZONE: string
+  readonly SLOT_HMAC_SECRET: string
 }
 
 /**
@@ -30,6 +31,7 @@ export const yoga = createYoga<Env, GraphQLContext>({
       DB: initial.DB,
       DAY_SCHEDULE: initial.DAY_SCHEDULE,
       DEPLOYMENT_TIMEZONE: initial.DEPLOYMENT_TIMEZONE,
+      SLOT_HMAC_SECRET: initial.SLOT_HMAC_SECRET,
     },
     request: initial.request,
   }),

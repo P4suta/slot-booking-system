@@ -1,4 +1,5 @@
 import { Either } from "effect"
+import { type DecodedSlot, verifySlotToken } from "../../auth/slotToken.js"
 import type { DaySchedule } from "../../durableObjects/DaySchedule.js"
 import { builder, type GraphQLContext } from "../builder.js"
 import { BookingError, type EncodedDomainError } from "../errors.js"
@@ -12,17 +13,22 @@ import { BookingError, type EncodedDomainError } from "../errors.js"
  * the resolver narrows on `_tag` and either returns the encoded
  * success or throws a typed `BookingError`.
  *
- * Phase 0.7-β4 — the `@pothos/plugin-errors` plugin renders
- * `BookingError` as a typed union arm in the GraphQL schema (rather
- * than the legacy `throw new GraphQLError` path); the
- * `EncodedDomainError → BookingError` lift is the single boundary
- * surface that turns a domain refusal into a wire-shape error.
+ * **Phase 0.10 — slot tokens** — `holdSlot` and `rescheduleBooking`
+ * accept an HMAC-signed `slotToken` instead of raw slot fields. The
+ * resolver verifies the token (`SLOT_HMAC_SECRET`) before reaching
+ * the DO RPC, so a tampered slot cannot bypass the world-consistency
+ * check that justifies the brand on `AvailableSlot`. The DO body
+ * still re-decodes through Effect Schema, but the resolver-side
+ * verification is the boundary that turns a string into a trustworthy
+ * value.
  *
- * Throwing the domain error directly across the RPC boundary would
- * lose its discriminated-union shape (Cloudflare strips custom Error
- * subclass fields); the explicit `Either` channel preserves it, then
- * the resolver re-lifts it onto a typed Error class on the GraphQL
- * side.
+ * **Customer auth** — `confirmBooking` / `cancelBooking` /
+ * `rescheduleBooking` require `BookingCode + PhoneLast4`. The use
+ * cases mint a `CustomerCapability` internally (ADR-0033), so the
+ * resolver just forwards the fields without lifting the capability
+ * itself. Staff-issued mutations route through a separate path
+ * (`StaffCancelBooking` etc.) that bypasses the phone check; those
+ * land in Phase 0.11 alongside the dashboard.
  */
 
 type BookingResultShape = {
@@ -55,25 +61,37 @@ const unwrap = <R extends BookingResultShape>(result: Either.Either<R, EncodedDo
   throw new BookingError(result.left)
 }
 
+const verifyOrRefuse = async (env: GraphQLContext["env"], token: string): Promise<DecodedSlot> => {
+  const slot = await verifySlotToken(env.SLOT_HMAC_SECRET, token)
+  if (slot === null) {
+    throw new BookingError({
+      _tag: "InvalidSlotToken",
+      code: "E_VAL_INVALID_SLOT_TOKEN",
+      severity: "validation",
+    })
+  }
+  return slot
+}
+
 builder.mutationType({
   fields: (t) => ({
     holdSlot: t.field({
       type: BookingResultType,
       errors: { types: [BookingError] },
-      description: "Place a 5-minute hold on the supplied AvailableSlot.",
+      description:
+        "Place a 5-minute hold on the slot identified by the HMAC-signed `slotToken`. " +
+        "The token is one of the values returned by `availableSlots` — see ADR-0033 / " +
+        "Phase 0.7-α5 for the brand justification.",
       args: {
         date: t.arg({ type: "PlainDate", required: true }),
-        serviceId: t.arg.string({ required: true }),
-        providerId: t.arg.string({ required: true }),
-        resourceIds: t.arg.stringList({ required: true }),
-        slotStart: t.arg({ type: "Instant", required: true }),
-        slotEnd: t.arg({ type: "Instant", required: true }),
+        slotToken: t.arg.string({ required: true }),
         nameKana: t.arg.string({ required: true }),
         phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
         freeText: t.arg.string({ required: false }),
         source: t.arg.string({ required: true }),
       },
       resolve: async (_root, args, ctx) => {
+        const slot = await verifyOrRefuse(ctx.env, args.slotToken)
         const stub = dayDoFor(ctx.env, args.date)
         // The DO RPC method declares its argument with branded
         // domain types (`AvailableSlot` carrying `Temporal.ZonedDateTime`),
@@ -81,17 +99,19 @@ builder.mutationType({
         // `structuredClone` which strips brands and turns Temporal
         // values back into ISO-8601 strings. The DO body re-decodes
         // through Effect Schema before reaching the use case, so the
-        // cast here marks the wire boundary explicitly. Phase 0.10
-        // will close the loop with HMAC-signed slot tokens that
-        // re-mint the brand at the DO boundary.
+        // cast here marks the wire boundary explicitly. The HMAC
+        // signature verification above guarantees the slot field
+        // values were minted by a previous `availableSlots` call —
+        // an attacker cannot forge a slot the world snapshot didn't
+        // emit, even though the wire shape is plain JSON.
         const result = await Promise.resolve(
           stub.holdSlot({
             slot: {
-              serviceId: args.serviceId,
-              providerId: args.providerId,
-              resourceIds: args.resourceIds,
-              start: args.slotStart,
-              end: args.slotEnd,
+              serviceId: slot.serviceId,
+              providerId: slot.providerId,
+              resourceIds: slot.resourceIds,
+              start: slot.start,
+              end: slot.end,
             },
             nameKana: args.nameKana,
             phoneLast4: args.phoneLast4,
@@ -106,7 +126,9 @@ builder.mutationType({
     confirmBooking: t.field({
       type: BookingResultType,
       errors: { types: [BookingError] },
-      description: "Promote a Held booking to Confirmed via code + phoneLast4.",
+      description:
+        "Promote a Held booking to Confirmed. Customer auth = `BookingCode + " +
+        "PhoneLast4`, lifted to a `CustomerCapability` inside the use case.",
       args: {
         date: t.arg({ type: "PlainDate", required: true }),
         code: t.arg.string({ required: true }),
@@ -127,7 +149,9 @@ builder.mutationType({
     cancelBooking: t.field({
       type: BookingResultType,
       errors: { types: [BookingError] },
-      description: "Cancel a Held or Confirmed booking via code + phoneLast4.",
+      description:
+        "Cancel a Held or Confirmed booking. Customer auth = `BookingCode + " +
+        "PhoneLast4`, lifted to a `CustomerCapability` inside the use case.",
       args: {
         date: t.arg({ type: "PlainDate", required: true }),
         code: t.arg.string({ required: true }),
@@ -150,29 +174,29 @@ builder.mutationType({
     rescheduleBooking: t.field({
       type: BookingResultType,
       errors: { types: [BookingError] },
-      description: "Move a Confirmed booking to a different AvailableSlot on the same day.",
+      description:
+        "Move a Confirmed booking to a different slot on the same day. " +
+        "`newSlotToken` is the HMAC-signed envelope from a fresh `availableSlots` " +
+        "lookup — the verification path is identical to `holdSlot`.",
       args: {
         date: t.arg({ type: "PlainDate", required: true }),
         code: t.arg.string({ required: true }),
         phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
-        serviceId: t.arg.string({ required: true }),
-        providerId: t.arg.string({ required: true }),
-        resourceIds: t.arg.stringList({ required: true }),
-        slotStart: t.arg({ type: "Instant", required: true }),
-        slotEnd: t.arg({ type: "Instant", required: true }),
+        newSlotToken: t.arg.string({ required: true }),
       },
       resolve: async (_root, args, ctx) => {
+        const slot = await verifyOrRefuse(ctx.env, args.newSlotToken)
         const stub = dayDoFor(ctx.env, args.date)
         const result = await Promise.resolve(
           stub.rescheduleBooking({
             code: args.code,
             phoneLast4: args.phoneLast4,
             newSlot: {
-              serviceId: args.serviceId,
-              providerId: args.providerId,
-              resourceIds: args.resourceIds,
-              start: args.slotStart,
-              end: args.slotEnd,
+              serviceId: slot.serviceId,
+              providerId: slot.providerId,
+              resourceIds: slot.resourceIds,
+              start: slot.start,
+              end: slot.end,
             },
           } as unknown as Parameters<DaySchedule["rescheduleBooking"]>[0]),
         )
