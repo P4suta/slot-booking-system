@@ -1,22 +1,25 @@
 import { Schema } from "effect"
-import type { AST, Check } from "effect/SchemaAST"
 import type { Arbitrary as FCArbitrary } from "fast-check"
+import { fold, fromSchemaAst, toSqlCheck } from "./algebra.js"
 
 /**
  * Phase 0.7-β3 derive helpers — Effect Schema as the single source of
- * truth for the project's secondary surfaces.
+ * truth for the project's secondary surfaces. Phase 3 (BI Schema-
+ * Predicate Algebra, ADR-0042 draft) re-grounds the SQL CHECK
+ * extraction on a generic predicate fold (see `./algebra.ts`); this
+ * file now hosts only the public surface and the Pothos-layer
+ * disclaimer below.
  *
  * `schemaToArbitrary` lifts a Schema into a fast-check `Arbitrary`,
  * threading through Effect 4's native `Schema.toArbitrary`. Call sites
  * import this project alias rather than the upstream symbol so a
  * future Effect rename is one-line away.
  *
- * `schemaToCheckConstraint` projects a regex `isPattern` annotation
- * onto a SQLite `REGEXP` CHECK clause. The walk is a one-pass
- * traversal over `ast.checks` (Effect 4 stores filters as a flat
- * `Checks` tuple at the node, not as nested `Refinement` AST nodes).
- * Schemas without an `isPattern` annotation surface `null`; the
- * caller decides whether to fall back to a column-level NOT NULL.
+ * `schemaToCheckConstraint` projects the Schema's `isPattern`
+ * annotations onto a SQLite `REGEXP` CHECK clause by folding the
+ * predicate tree extracted from `schema.ast`. Schemas with no
+ * recognised constraint surface `null`; the caller decides whether
+ * to fall back to a column-level NOT NULL.
  *
  * Pothos `objectRef` derivation (the third planned helper) lives in
  * `apps/default/src/server/graphql/derive.ts` because Pothos is an
@@ -41,57 +44,16 @@ export const schemaToArbitrary = <S extends Schema.Top>(s: S): FCArbitrary<S["Ty
   Schema.toArbitrary(s)
 
 /**
- * Internal shape of `isPattern`'s annotation `meta`. Effect 4 attaches
- * `{ _tag: "isPattern", regExp: RegExp }` to the `Filter` produced by
- * `Schema.isPattern(re)`. Schemas without that annotation expose no
- * regex, and the SQL projection is a no-op.
- */
-type IsPatternMeta = {
-  readonly _tag: "isPattern"
-  readonly regExp: RegExp
-}
-
-const isIsPatternMeta = (meta: unknown): meta is IsPatternMeta =>
-  typeof meta === "object" &&
-  meta !== null &&
-  "_tag" in meta &&
-  (meta as { readonly _tag: unknown })._tag === "isPattern" &&
-  "regExp" in meta &&
-  (meta as { readonly regExp: unknown }).regExp instanceof RegExp
-
-const patternFromCheck = (check: Check<unknown>): RegExp | null => {
-  const meta = check.annotations?.meta
-  return isIsPatternMeta(meta) ? meta.regExp : null
-}
-
-/**
- * Extract the first `isPattern` regex declared on a schema's check
- * tuple. The walk is shallow — Effect 4's `Checks` is a flat array
- * attached to the AST node itself, not a chain of nested AST kinds.
- */
-const extractPattern = (ast: AST): RegExp | null => {
-  if (ast.checks === undefined) return null
-  for (const check of ast.checks) {
-    const re = patternFromCheck(check as Check<unknown>)
-    if (re !== null) return re
-  }
-  return null
-}
-
-/**
  * Render a SQLite CHECK constraint clause from a Schema, suitable for
  * appending to a Drizzle column definition or hand-written DDL.
- * Returns `null` when the schema does not advertise a regex pattern —
- * the column then relies on application-level decode for shape
- * validation.
+ * Returns `null` when the schema does not advertise a recognised
+ * constraint — the column then relies on application-level decode
+ * for shape validation.
  *
- * The emitted clause uses SQLite's `regexp` operator, which the
- * Cloudflare DO SQLite build supports out of the box. Single quotes
- * inside the pattern are doubled to keep the SQL well-formed.
+ * Implemented as `fromSchemaAst → fold(toSqlCheck)`. Adding a new
+ * constraint kind (e.g. length / range) is one entry in
+ * `algebra.ts:fromCheck` plus the corresponding `PredicateAlgebra`
+ * arm; this caller does not change.
  */
-export const schemaToCheckConstraint = (schema: Schema.Top, columnName: string): string | null => {
-  const re = extractPattern(schema.ast)
-  if (re === null) return null
-  const escaped = re.source.replace(/'/g, "''")
-  return `${columnName} REGEXP '${escaped}'`
-}
+export const schemaToCheckConstraint = (schema: Schema.Top, columnName: string): string | null =>
+  fold(toSqlCheck(columnName))(fromSchemaAst(schema.ast))
