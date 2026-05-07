@@ -129,13 +129,18 @@ export const shiftDown: {
   }
 })
 
-/** Population count. */
+/**
+ * Population count via Brian Kernighan's bit-twiddling: each iteration
+ * `v &= v - 1n` clears the lowest set bit, so the loop runs once per
+ * set bit instead of once per bit position. O(popcount) rather than
+ * O(length).
+ */
 export const popcount = (bm: Bitmap): number => {
   let v = bm.value
   let total = 0
   while (v > ZERO) {
-    total += Number(v & ONE)
-    v >>= ONE
+    v &= v - ONE
+    total++
   }
   return total
 }
