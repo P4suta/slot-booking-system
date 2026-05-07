@@ -70,4 +70,3 @@ the GraphQL response only in dev mode (ADR-0043).
 | `AggregateNotFound` | `E_INF_AGG_NOT_FOUND` | `error.AggregateNotFound` |
 | `Concurrency` | `E_INF_CONCURRENCY` | `error.Concurrency` |
 | `Storage` | `E_INF_STORAGE` | `error.Storage` |
-

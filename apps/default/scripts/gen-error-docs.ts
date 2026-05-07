@@ -92,7 +92,6 @@ const document = [
   "the GraphQL response only in dev mode (ADR-0043).",
   "",
   renderTable(infrastructure),
-  "",
 ].join("\n")
 
 process.stdout.write(`${document}\n`)

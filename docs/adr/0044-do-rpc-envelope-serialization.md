@@ -21,18 +21,18 @@ The first attempted local smoke run on `effect@4.0.0-beta.62`
 demonstrated otherwise. `holdSlot` against `wrangler dev --local`
 failed with:
 
-```
+```text
 DataCloneError: Could not serialize object of type "Object".
 ```
 
 A printed dump of the message right before `stub.dispatch(message)`
 revealed two structurally-clone-incompatible fields:
 
-  - `id` / `requestId` — typed as `RpcMessage.RequestId =
-    Branded<bigint, ...>`, a BigInt by spec. workerd's RPC
-    serializer rejects naked BigInts on cross-isolate calls.
-  - `headers` — a `Object.create(null)` (null-prototype) record
-    that workerd's serializer also refuses.
+- `id` / `requestId` — typed as `RpcMessage.RequestId =
+  Branded<bigint, ...>`, a BigInt by spec. workerd's RPC
+  serializer rejects naked BigInts on cross-isolate calls.
+- `headers` — a `Object.create(null)` (null-prototype) record
+  that workerd's serializer also refuses.
 
 The "pure JSON" claim is true at the schema level (the encoded
 form is JSON-compatible), but the in-memory representation that
@@ -126,14 +126,14 @@ brands.
 The sigil string is a tiny dialect rather than a structural marker
 (`{__bigint__: "..."}`) because:
 
-  - It survives JSON-clean structured clone trivially.
-  - The reviver runs on every key via simple string-prefix check,
-    so any future BigInt field on a sub-record (e.g. a future
-    `Snowflake` payload field) would be picked up without changing
-    this module.
-  - The prefix is a short colon-bearing literal that Effect's
-    internal RpcMessage fields never collide with by convention
-    (their string fields are tag literals or ULID-like ids).
+- It survives JSON-clean structured clone trivially.
+- The reviver runs on every key via simple string-prefix check,
+  so any future BigInt field on a sub-record (e.g. a future
+  `Snowflake` payload field) would be picked up without changing
+  this module.
+- The prefix is a short colon-bearing literal that Effect's
+  internal RpcMessage fields never collide with by convention
+  (their string fields are tag literals or ULID-like ids).
 
 The `FromServer` response is sanitised in `DaySchedule.dispatch`
 on the way out and desanitised on the client on receipt — the

@@ -16,7 +16,6 @@
     "apps/web": {
       "entry": ["src/routes/**/*.{svelte,ts}", "src/app.html", "test/**/*.test.ts"],
       "project": ["src/**/*.{ts,svelte}", "test/**/*.ts"],
-      "ignore": ["src/lib/graphql/client.ts"],
       "ignoreDependencies": ["@booking/core", "@cloudflare/workers-types"]
     }
   }
