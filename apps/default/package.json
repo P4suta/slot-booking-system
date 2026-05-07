@@ -8,6 +8,7 @@
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run --outdir dist",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage": "vitest run --coverage",
     "migrate:local": "wrangler d1 migrations apply DB --local",
     "seed:render": "tsx seed/seed.ts"
@@ -25,6 +26,7 @@
     "graphql-yoga": "latest"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "latest",
     "@cloudflare/workers-types": "latest",
     "@opentelemetry/sdk-trace-base": "latest",
     "@types/node": "latest",

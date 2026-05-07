@@ -6,9 +6,16 @@
     "noEmit": true,
     "incremental": true,
     "tsBuildInfoFile": ".tsbuildinfo",
-    "types": ["@cloudflare/workers-types", "node"]
+    "types": ["@cloudflare/workers-types", "node", "@cloudflare/vitest-pool-workers/types"]
   },
-  "include": ["src/**/*", "drizzle.config.ts", "seed/**/*", "test/**/*", "vitest.config.ts"],
+  "include": [
+    "src/**/*",
+    "drizzle.config.ts",
+    "seed/**/*",
+    "test/**/*",
+    "vitest.config.ts",
+    "vitest.integration.config.ts"
+  ],
   "exclude": ["dist", "node_modules", "build", ".svelte-kit", ".wrangler"],
   "references": [{ "path": "../../packages/core/tsconfig.src.json" }]
 }
