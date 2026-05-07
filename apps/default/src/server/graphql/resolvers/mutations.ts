@@ -1,15 +1,16 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import {
   type GraphQLFieldConfig,
   type GraphQLFieldConfigArgumentMap,
   GraphQLNonNull,
-  GraphQLObjectType,
+  type GraphQLObjectType,
   GraphQLString,
 } from "graphql"
 import { type DecodedSlot, verifySlotToken } from "../../auth/slotToken.js"
 import type { DaySchedule } from "../../durableObjects/DaySchedule.js"
 import { makeDayScheduleClient } from "../../durableObjects/effectRpc/client.js"
 import type { GraphQLContext } from "../context.js"
+import { schemaToGraphQLOutputType } from "../derive.js"
 import { runRpcOrThrow } from "../effectRpcRunner.js"
 import { BookingError } from "../errors.js"
 import {
@@ -47,21 +48,23 @@ import {
  * land in Phase 0.11 alongside the dashboard.
  */
 
-type BookingResultShape = {
-  readonly bookingId: string
-  readonly state: string
-  readonly eventType: string
-}
+/**
+ * Wire shape for the success arm of every booking mutation. The
+ * Schema source drives the GraphQL output type via
+ * {@link schemaToGraphQLOutputType}; schema-faithful nullability
+ * makes all three fields required (`String!`).
+ */
+const BookingResultSchema = Schema.Struct({
+  bookingId: Schema.String,
+  state: Schema.String,
+  eventType: Schema.String,
+})
+type BookingResultShape = Schema.Schema.Type<typeof BookingResultSchema>
 
-const bookingResultType = new GraphQLObjectType({
+const bookingResultType = schemaToGraphQLOutputType(BookingResultSchema, {
   name: "BookingResult",
   description: "Outcome of a write to a booking; carries the new state and the emitted event.",
-  fields: () => ({
-    bookingId: { type: GraphQLString },
-    state: { type: GraphQLString },
-    eventType: { type: GraphQLString },
-  }),
-})
+}) as GraphQLObjectType
 
 const dayDoFor = (env: GraphQLContext["env"], date: string): DurableObjectStub<DaySchedule> => {
   const id = env.DAY_SCHEDULE.idFromName(date)

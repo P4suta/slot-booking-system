@@ -150,12 +150,15 @@ export const bookingErrorType = new GraphQLObjectType({
   description:
     "A booking operation refused by the domain. Carries the discriminator tag, " +
     "stable error code, severity, and an i18n key the frontend can localize.",
+  // Schema-faithful: every field on a `BookingError` value is always
+  // present — the class constructor (`apps/default/src/server/graphql/errors.ts`)
+  // requires the full payload — so they surface as `String!` to clients.
   fields: () => ({
-    tag: { type: GraphQLString },
-    code: { type: GraphQLString },
-    severity: { type: GraphQLString },
-    i18nKey: { type: GraphQLString },
-    message: { type: GraphQLString },
+    tag: { type: new GraphQLNonNull(GraphQLString) },
+    code: { type: new GraphQLNonNull(GraphQLString) },
+    severity: { type: new GraphQLNonNull(GraphQLString) },
+    i18nKey: { type: new GraphQLNonNull(GraphQLString) },
+    message: { type: new GraphQLNonNull(GraphQLString) },
   }),
 })
 

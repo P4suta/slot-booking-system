@@ -10,20 +10,21 @@ import {
   StorageError,
 } from "@booking/core"
 import { Temporal } from "@js-temporal/polyfill"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import {
   type GraphQLFieldConfig,
   GraphQLList,
   GraphQLNonNull,
-  GraphQLObjectType,
+  type GraphQLObjectType,
   GraphQLString,
 } from "graphql"
 import { makeD1ServiceCatalog } from "../../adapters/D1ServiceCatalogLive.js"
 import { businessTimeZoneFromEnv, readWorldSnapshot } from "../../adapters/D1WorldSnapshot.js"
 import { signSlot } from "../../auth/slotToken.js"
 import type { GraphQLContext } from "../context.js"
+import { schemaToGraphQLOutputType } from "../derive.js"
 import { BookingError } from "../errors.js"
-import { instantScalar, plainDateScalar } from "../resolver.js"
+import { instantScalar, phoneLast4Scalar, plainDateScalar } from "../resolver.js"
 
 /**
  * `availableSlots` query — Phase 0.9 wires
@@ -50,16 +51,32 @@ import { instantScalar, plainDateScalar } from "../resolver.js"
 // without touching the core.
 const DEFAULT_SLOT_GRANULARITY_MINUTES = 30
 
-type AvailableSlotShape = {
-  readonly serviceId: string
-  readonly start: string
-  readonly end: string
-  readonly providerId: string
-  readonly resourceIds: readonly string[]
-  readonly token: string
-}
+/**
+ * Wire shape for the `availableSlots` query. Brands on `start` /
+ * `end` route through {@link schemaToGraphQLOutputType}'s scalar
+ * registry to {@link instantScalar}; the rest reads as plain strings
+ * (`token` is the opaque HMAC envelope, not a domain identifier).
+ */
+const AvailableSlotWireSchema = Schema.Struct({
+  serviceId: Schema.String,
+  start: Schema.String.pipe(Schema.brand("Instant")),
+  end: Schema.String.pipe(Schema.brand("Instant")),
+  providerId: Schema.String,
+  resourceIds: Schema.Array(Schema.String),
+  token: Schema.String,
+})
+// Encoded shape (post-decode brand stripped) — matches the runtime
+// values produced by `slotsBody` (`Temporal.Instant.toString()` is a
+// plain string until it's parsed back through `InstantSchema`).
+type AvailableSlotShape = Schema.Codec.Encoded<typeof AvailableSlotWireSchema>
 
-const availableSlotType = new GraphQLObjectType({
+const availableSlotScalarRegistry = new Map([
+  ["PlainDate", plainDateScalar],
+  ["Instant", instantScalar],
+  ["PhoneLast4", phoneLast4Scalar],
+])
+
+const availableSlotType = schemaToGraphQLOutputType(AvailableSlotWireSchema, {
   name: "AvailableSlot",
   description:
     "A bookable time interval with a tentative provider/resources assignment. The " +
@@ -68,15 +85,8 @@ const availableSlotType = new GraphQLObjectType({
     "resolver verifies the token before reaching the DO RPC, so a tampered slot " +
     "cannot bypass the world-consistency check that justifies the brand on " +
     "`AvailableSlot`.",
-  fields: () => ({
-    serviceId: { type: GraphQLString },
-    start: { type: instantScalar },
-    end: { type: instantScalar },
-    providerId: { type: GraphQLString },
-    resourceIds: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
-    token: { type: GraphQLString },
-  }),
-})
+  scalarRegistry: availableSlotScalarRegistry,
+}) as GraphQLObjectType
 
 /**
  * Run a `world → slots` Effect through a fresh per-request catalog

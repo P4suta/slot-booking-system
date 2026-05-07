@@ -30,17 +30,106 @@ import { instantScalar, plainDateScalar } from "../resolver.js"
  * are exposed as one query field per `list` operation. Writes land in
  * a separate resolver module gated by `StaffCapability`.
  *
- * Each resolver runs the port's `list()`, then encodes the entity
- * sequence through its `*FromRow` codec — `Schema.Codec.Encoded` is
- * the wire shape the GraphQL schema serialises. This keeps the
- * resolver-to-wire mapping a pure derivation: adding a column to a
- * table propagates through the row codec and the encoded shape, while
- * the GraphQL output type stays a hand-rolled `GraphQLObjectType` (the
- * Schema → GraphQL functor at `../derive.ts` does not yet detect
- * `Schema.Int` annotations or custom-scalar branding, so the byte-
- * equal SDL constraint forces a hand-rolled construction here; the
- * functor extension is recorded as a deferred ADR-0041 follow-up).
+ * Each output `GraphQLObjectType` is hand-rolled to match the gold
+ * SDL — the row codec ASTs go through `drizzle-orm/effect-schema`'s
+ * `createSelectSchema`, which lowers `text(... mode: "json")` columns
+ * to plain `Schema.String` rather than the JSON-decoded
+ * `Schema.Array(...)` shape, so the AST walker in `../derive.ts` can
+ * neither detect arrays nor brands on the encoded form. The
+ * `Schema.encodeSync(*FromRow)(...)` runtime still produces the
+ * right wire shape (the overlay decode/encode is a separate concern
+ * from the AST representation).
  */
+
+/* -------------------------------------------------------------------------- */
+/* Output GraphQL types                                                        */
+
+const serviceType = new GraphQLObjectType({
+  name: "Service",
+  description: "Catalog entry for a unit of work the business offers.",
+  fields: () => ({
+    id: { type: new GraphQLNonNull(GraphQLString) },
+    name: { type: new GraphQLNonNull(GraphQLString) },
+    description: { type: new GraphQLNonNull(GraphQLString) },
+    durationMinutes: { type: new GraphQLNonNull(GraphQLInt) },
+    bufferBeforeMinutes: { type: new GraphQLNonNull(GraphQLInt) },
+    bufferAfterMinutes: { type: new GraphQLNonNull(GraphQLInt) },
+    holdingDays: { type: new GraphQLNonNull(GraphQLInt) },
+    requiredSkills: {
+      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))),
+    },
+    requiredResourceTypes: {
+      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))),
+    },
+    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
+  }),
+})
+
+const providerType = new GraphQLObjectType({
+  name: "Provider",
+  description: "A person who performs the work for a Service.",
+  fields: () => ({
+    id: { type: new GraphQLNonNull(GraphQLString) },
+    name: { type: new GraphQLNonNull(GraphQLString) },
+    skills: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) },
+    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
+  }),
+})
+
+const resourceType = new GraphQLObjectType({
+  name: "Resource",
+  description: "A single indivisible unit of physical capacity.",
+  fields: () => ({
+    id: { type: new GraphQLNonNull(GraphQLString) },
+    name: { type: new GraphQLNonNull(GraphQLString) },
+    type: { type: new GraphQLNonNull(GraphQLString) },
+    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
+  }),
+})
+
+const openWindowType = new GraphQLObjectType({
+  name: "OpenWindow",
+  description: "Half-open `[start, end)` time interval within a single civil day.",
+  fields: () => ({
+    start: { type: new GraphQLNonNull(GraphQLString) },
+    end: { type: new GraphQLNonNull(GraphQLString) },
+  }),
+})
+
+const businessHoursType = new GraphQLObjectType({
+  name: "BusinessHours",
+  description: "Open intervals for one ISO weekday (1=Mon..7=Sun).",
+  fields: () => ({
+    id: { type: new GraphQLNonNull(GraphQLString) },
+    weekday: { type: new GraphQLNonNull(GraphQLInt) },
+    windows: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(openWindowType))) },
+  }),
+})
+
+const closureType = new GraphQLObjectType({
+  name: "Closure",
+  description: "Calendar-date business closure (overrides the weekday template).",
+  fields: () => ({
+    id: { type: new GraphQLNonNull(GraphQLString) },
+    date: { type: new GraphQLNonNull(plainDateScalar) },
+    reason: { type: new GraphQLNonNull(GraphQLString) },
+  }),
+})
+
+const providerAbsenceType = new GraphQLObjectType({
+  name: "ProviderAbsence",
+  description: "Per-provider unavailability window (vacation, training, sick leave).",
+  fields: () => ({
+    id: { type: new GraphQLNonNull(GraphQLString) },
+    providerId: { type: new GraphQLNonNull(GraphQLString) },
+    start: { type: new GraphQLNonNull(instantScalar) },
+    end: { type: new GraphQLNonNull(instantScalar) },
+    reason: { type: new GraphQLNonNull(GraphQLString) },
+  }),
+})
+
+/* -------------------------------------------------------------------------- */
+/* Effect runner                                                               */
 
 const runCatalog = async <A>(
   env: GraphQLContext["env"],
@@ -56,12 +145,6 @@ const runCatalog = async <A>(
     ),
   )
   if (result._tag === "Success") return result.success
-  // Catalog reads can fail with `StorageError`; surface as a typed
-  // BookingError so the existing client error union covers it without
-  // a second arm. The synthetic GraphQLErrorPayload mirrors what
-  // `errorToGraphQLPayload(new StorageError(...))` would produce
-  // without forcing the Effect.result failure type to widen back to
-  // a concrete StorageError instance.
   throw new BookingError({
     __typename: "Storage",
     code: "E_INF_STORAGE",
@@ -71,100 +154,16 @@ const runCatalog = async <A>(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Output GraphQL types — hand-rolled to match the gold SDL anchor at         */
-/* `apps/default/schema.graphql` (descriptions, field types, custom-scalar    */
-/* mapping). All output fields default to nullable, matching Pothos's         */
-/* baseline; list-element non-null wrap (`[X!]`) carries through unchanged.   */
-
-const serviceType = new GraphQLObjectType({
-  name: "Service",
-  description: "Catalog entry for a unit of work the business offers.",
-  fields: () => ({
-    id: { type: GraphQLString },
-    name: { type: GraphQLString },
-    description: { type: GraphQLString },
-    durationMinutes: { type: GraphQLInt },
-    bufferBeforeMinutes: { type: GraphQLInt },
-    bufferAfterMinutes: { type: GraphQLInt },
-    holdingDays: { type: GraphQLInt },
-    requiredSkills: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
-    requiredResourceTypes: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
-    enabled: { type: GraphQLBoolean },
-  }),
-})
-
-const providerType = new GraphQLObjectType({
-  name: "Provider",
-  description: "A person who performs the work for a Service.",
-  fields: () => ({
-    id: { type: GraphQLString },
-    name: { type: GraphQLString },
-    skills: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
-    enabled: { type: GraphQLBoolean },
-  }),
-})
-
-const resourceType = new GraphQLObjectType({
-  name: "Resource",
-  description: "A single indivisible unit of physical capacity.",
-  fields: () => ({
-    id: { type: GraphQLString },
-    name: { type: GraphQLString },
-    type: { type: GraphQLString },
-    enabled: { type: GraphQLBoolean },
-  }),
-})
-
-const openWindowType = new GraphQLObjectType({
-  name: "OpenWindow",
-  description: "Half-open `[start, end)` time interval within a single civil day.",
-  fields: () => ({
-    start: { type: GraphQLString },
-    end: { type: GraphQLString },
-  }),
-})
-
-const businessHoursType = new GraphQLObjectType({
-  name: "BusinessHours",
-  description: "Open intervals for one ISO weekday (1=Mon..7=Sun).",
-  fields: () => ({
-    id: { type: GraphQLString },
-    weekday: { type: GraphQLInt },
-    windows: { type: new GraphQLList(new GraphQLNonNull(openWindowType)) },
-  }),
-})
-
-const closureType = new GraphQLObjectType({
-  name: "Closure",
-  description: "Calendar-date business closure (overrides the weekday template).",
-  fields: () => ({
-    id: { type: GraphQLString },
-    date: { type: plainDateScalar },
-    reason: { type: GraphQLString },
-  }),
-})
-
-const providerAbsenceType = new GraphQLObjectType({
-  name: "ProviderAbsence",
-  description: "Per-provider unavailability window (vacation, training, sick leave).",
-  fields: () => ({
-    id: { type: GraphQLString },
-    providerId: { type: GraphQLString },
-    start: { type: instantScalar },
-    end: { type: instantScalar },
-    reason: { type: GraphQLString },
-  }),
-})
-
-/* -------------------------------------------------------------------------- */
 /* Query field factory                                                         */
+
+const listOf = (t: GraphQLObjectType) => new GraphQLList(new GraphQLNonNull(t))
 
 export const catalogQueryFields = (): Record<
   string,
   GraphQLFieldConfig<unknown, GraphQLContext>
 > => ({
   services: {
-    type: new GraphQLList(new GraphQLNonNull(serviceType)),
+    type: listOf(serviceType),
     description: "Every catalog Service, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
@@ -174,7 +173,7 @@ export const catalogQueryFields = (): Record<
       ),
   },
   providers: {
-    type: new GraphQLList(new GraphQLNonNull(providerType)),
+    type: listOf(providerType),
     description: "Every catalog Provider, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
@@ -184,7 +183,7 @@ export const catalogQueryFields = (): Record<
       ),
   },
   resources: {
-    type: new GraphQLList(new GraphQLNonNull(resourceType)),
+    type: listOf(resourceType),
     description: "Every catalog Resource, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
@@ -194,7 +193,7 @@ export const catalogQueryFields = (): Record<
       ),
   },
   businessHours: {
-    type: new GraphQLList(new GraphQLNonNull(businessHoursType)),
+    type: listOf(businessHoursType),
     description: "Weekly opening template, one row per ISO weekday.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
@@ -204,7 +203,7 @@ export const catalogQueryFields = (): Record<
       ),
   },
   closures: {
-    type: new GraphQLList(new GraphQLNonNull(closureType)),
+    type: listOf(closureType),
     description: "Calendar-date closures (public holidays, planned maintenance).",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
@@ -214,7 +213,7 @@ export const catalogQueryFields = (): Record<
       ),
   },
   providerAbsences: {
-    type: new GraphQLList(new GraphQLNonNull(providerAbsenceType)),
+    type: listOf(providerAbsenceType),
     description: "Per-provider unavailability windows.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>

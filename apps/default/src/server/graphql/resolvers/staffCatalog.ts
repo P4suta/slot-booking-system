@@ -27,17 +27,19 @@ import {
 } from "@booking/core"
 import { Effect, Schema } from "effect"
 import {
-  GraphQLBoolean,
   type GraphQLFieldConfig,
-  GraphQLInputObjectType,
-  GraphQLInt,
-  GraphQLList,
+  type GraphQLInputObjectType,
   GraphQLNonNull,
-  GraphQLObjectType,
+  type GraphQLObjectType,
   GraphQLString,
 } from "graphql"
 import { makeD1ServiceCatalog } from "../../adapters/D1ServiceCatalogLive.js"
 import type { GraphQLContext } from "../context.js"
+import {
+  makeInputTypeRegistry,
+  schemaToGraphQLInputType,
+  schemaToGraphQLOutputType,
+} from "../derive.js"
 import { BookingError } from "../errors.js"
 import { type ErrorEnvelopeRegistry, errorEnvelope } from "../resolver.js"
 
@@ -113,105 +115,123 @@ const runCatalog = async <A>(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Output mutation result + input shapes                                       */
+/* Output mutation result + input Schema sources                               */
 /* -------------------------------------------------------------------------- */
 
 type MutationResultShape = { readonly id: string }
 
-const catalogMutationResultType = new GraphQLObjectType({
+/**
+ * Wire shape for staff mutations' success arm. The Schema source
+ * drives the GraphQL output type via the functor; schema-faithful
+ * nullability makes `id` non-null.
+ */
+const CatalogMutationResultSchema = Schema.Struct({ id: Schema.String })
+const catalogMutationResultType = schemaToGraphQLOutputType(CatalogMutationResultSchema, {
   name: "CatalogMutationResult",
   description: "Identity of the catalog row written by a staff mutation.",
-  fields: () => ({ id: { type: GraphQLString } }),
-})
+}) as GraphQLObjectType
 
-const skillListInput = new GraphQLInputObjectType({
-  name: "SkillListInput",
-  fields: () => ({
-    values: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) },
-  }),
-})
+/**
+ * Schema sources for the nine `*Input` GraphQL input types.
+ *
+ * Each schema is a stand-alone source-of-truth for the wire shape;
+ * `Schema.optional` marks fields the client may omit (only `id` —
+ * the staff-side mint path generates a fresh id when absent), and
+ * the integer-bound fields use `Schema.Number.check(Schema.isInt())`
+ * so the functor's `Number → GraphQLInt` detection lifts them
+ * correctly. Nested struct names propagate through the
+ * `identifier` annotation so `requiredSkills: SkillListInput!` /
+ * `windows: [OpenWindowInput!]!` resolve to named members rather
+ * than to anonymous structs.
+ */
 
-const resourceTypeListInput = new GraphQLInputObjectType({
-  name: "ResourceTypeListInput",
-  fields: () => ({
-    values: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) },
-  }),
-})
+const SkillListInputSchema = Schema.Struct({
+  values: Schema.Array(Schema.String),
+}).annotate({ identifier: "SkillListInput" })
 
-const openWindowInput = new GraphQLInputObjectType({
-  name: "OpenWindowInput",
-  fields: () => ({
-    start: { type: new GraphQLNonNull(GraphQLString) },
-    end: { type: new GraphQLNonNull(GraphQLString) },
-  }),
-})
+const ResourceTypeListInputSchema = Schema.Struct({
+  values: Schema.Array(Schema.String),
+}).annotate({ identifier: "ResourceTypeListInput" })
 
-const serviceInput = new GraphQLInputObjectType({
-  name: "ServiceInput",
-  fields: () => ({
-    id: { type: GraphQLString },
-    name: { type: new GraphQLNonNull(GraphQLString) },
-    description: { type: new GraphQLNonNull(GraphQLString) },
-    durationMinutes: { type: new GraphQLNonNull(GraphQLInt) },
-    bufferBeforeMinutes: { type: new GraphQLNonNull(GraphQLInt) },
-    bufferAfterMinutes: { type: new GraphQLNonNull(GraphQLInt) },
-    holdingDays: { type: new GraphQLNonNull(GraphQLInt) },
-    requiredSkills: { type: new GraphQLNonNull(skillListInput) },
-    requiredResourceTypes: { type: new GraphQLNonNull(resourceTypeListInput) },
-    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
-  }),
-})
+const OpenWindowInputSchema = Schema.Struct({
+  start: Schema.String,
+  end: Schema.String,
+}).annotate({ identifier: "OpenWindowInput" })
 
-const providerInput = new GraphQLInputObjectType({
-  name: "ProviderInput",
-  fields: () => ({
-    id: { type: GraphQLString },
-    name: { type: new GraphQLNonNull(GraphQLString) },
-    skills: { type: new GraphQLNonNull(skillListInput) },
-    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
-  }),
-})
+const ServiceInputSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  name: Schema.String,
+  description: Schema.String,
+  durationMinutes: Schema.Number.check(Schema.isInt()),
+  bufferBeforeMinutes: Schema.Number.check(Schema.isInt()),
+  bufferAfterMinutes: Schema.Number.check(Schema.isInt()),
+  holdingDays: Schema.Number.check(Schema.isInt()),
+  requiredSkills: SkillListInputSchema,
+  requiredResourceTypes: ResourceTypeListInputSchema,
+  enabled: Schema.Boolean,
+}).annotate({ identifier: "ServiceInput" })
 
-const resourceInput = new GraphQLInputObjectType({
-  name: "ResourceInput",
-  fields: () => ({
-    id: { type: GraphQLString },
-    name: { type: new GraphQLNonNull(GraphQLString) },
-    type: { type: new GraphQLNonNull(GraphQLString) },
-    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
-  }),
-})
+const ProviderInputSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  name: Schema.String,
+  skills: SkillListInputSchema,
+  enabled: Schema.Boolean,
+}).annotate({ identifier: "ProviderInput" })
 
-const businessHoursInput = new GraphQLInputObjectType({
-  name: "BusinessHoursInput",
-  fields: () => ({
-    id: { type: GraphQLString },
-    weekday: { type: new GraphQLNonNull(GraphQLInt) },
-    windows: {
-      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(openWindowInput))),
-    },
-  }),
-})
+const ResourceInputSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  name: Schema.String,
+  type: Schema.String,
+  enabled: Schema.Boolean,
+}).annotate({ identifier: "ResourceInput" })
 
-const closureInput = new GraphQLInputObjectType({
-  name: "ClosureInput",
-  fields: () => ({
-    id: { type: GraphQLString },
-    date: { type: new GraphQLNonNull(GraphQLString) },
-    reason: { type: new GraphQLNonNull(GraphQLString) },
-  }),
-})
+const BusinessHoursInputSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  weekday: Schema.Number.check(Schema.isInt()),
+  windows: Schema.Array(OpenWindowInputSchema),
+}).annotate({ identifier: "BusinessHoursInput" })
 
-const providerAbsenceInput = new GraphQLInputObjectType({
-  name: "ProviderAbsenceInput",
-  fields: () => ({
-    id: { type: GraphQLString },
-    providerId: { type: new GraphQLNonNull(GraphQLString) },
-    start: { type: new GraphQLNonNull(GraphQLString) },
-    end: { type: new GraphQLNonNull(GraphQLString) },
-    reason: { type: new GraphQLNonNull(GraphQLString) },
-  }),
-})
+const ClosureInputSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  date: Schema.String,
+  reason: Schema.String,
+}).annotate({ identifier: "ClosureInput" })
+
+const ProviderAbsenceInputSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  providerId: Schema.String,
+  start: Schema.String,
+  end: Schema.String,
+  reason: Schema.String,
+}).annotate({ identifier: "ProviderAbsenceInput" })
+
+const inputRegistry = makeInputTypeRegistry()
+
+const inputTypeOf = (s: Schema.Top, name: string): GraphQLInputObjectType =>
+  schemaToGraphQLInputType(s, { name, registry: inputRegistry }) as GraphQLInputObjectType
+
+const skillListInput = inputTypeOf(SkillListInputSchema, "SkillListInput")
+const resourceTypeListInput = inputTypeOf(ResourceTypeListInputSchema, "ResourceTypeListInput")
+const openWindowInput = inputTypeOf(OpenWindowInputSchema, "OpenWindowInput")
+const serviceInput = inputTypeOf(ServiceInputSchema, "ServiceInput")
+const providerInput = inputTypeOf(ProviderInputSchema, "ProviderInput")
+const resourceInput = inputTypeOf(ResourceInputSchema, "ResourceInput")
+const businessHoursInput = inputTypeOf(BusinessHoursInputSchema, "BusinessHoursInput")
+const closureInput = inputTypeOf(ClosureInputSchema, "ClosureInput")
+const providerAbsenceInput = inputTypeOf(ProviderAbsenceInputSchema, "ProviderAbsenceInput")
+
+// Force lazy `fields` thunks to materialise so any derivation drift
+// surfaces at module load. Also keeps knip from flagging the input
+// references as unused — the resolver field configs reference them.
+void [
+  skillListInput,
+  resourceTypeListInput,
+  openWindowInput,
+  providerInput,
+  resourceInput,
+  closureInput,
+  providerAbsenceInput,
+]
 
 const decodeOrRefuse = <E, R>(
   entity: InvalidCatalogInputError["entity"],

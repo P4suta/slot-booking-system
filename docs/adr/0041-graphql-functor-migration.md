@@ -2,7 +2,8 @@
 
 ## Status
 
-Phase 3 PR#7. **Accepted** — M16/M17/M18/M19/M20 landed.
+Phase 3 PR#7. **Accepted** — M16/M17/M18/M19/M20/M21/M22/M23/M24/M25/M26 landed.
+No deferred follow-ups.
 
 ## Context
 
@@ -31,168 +32,164 @@ Effect Schema annotations the rest of the read path already drives.
 
 ### M16 — Schema → GraphQLOutputType functor (`derive.ts`)
 
-`apps/default/src/server/graphql/derive.ts` provides
-`schemaToGraphQLOutputType(schema, { name?, registry?, fieldNullability? })`,
-a structurally-recursive functor on `SchemaAST.AST` covering the
-variants the booking domain currently exposes through GraphQL:
-
-- scalar leaves (`String`, `Number`, `Boolean`, `Literal`)
-- `Arrays` → `GraphQLList(GraphQLNonNull(...))` (list-element non-
-  null wrap mirrors `Schema.Array(NonNullable)`)
-- `Objects` → named `GraphQLObjectType` (with `registry` dedupe so
-  recursive / mutually-referential schemas resolve cleanly)
-- `Union` of string-`Literal`s → `GraphQLEnumType`
-- `fieldNullability` policy parameter — default `"nullable"` matches
-  the Pothos baseline, opt-in `"nonNull"` exposes the strict-Schema
-  reading
+Initial structurally-recursive functor on `SchemaAST.AST` covering
+scalars / arrays / objects / enum-from-string-literals.
 
 ### M17 — Resolver primitives (`resolver.ts`)
 
-`apps/default/src/server/graphql/resolver.ts` carries the pieces the
-functor cannot derive:
-
-- `errorEnvelope({ verb, inner, args, body, registry })` — the verb-
-  indexed combinator that projects `Result<BookingError, A>` onto the
-  GraphQL category. Mints `Mutation<Verb>Success { data: A! }` and
-  `Mutation<Verb>Result = BookingError | Mutation<Verb>Success` once
-  per verb, threaded through a shared `ErrorEnvelopeRegistry`. The
-  resolver wrapper catches a thrown `BookingError`, wraps it into a
-  brand-tagged plain envelope (graphql-js short-circuits any returned
-  `Error` instance into a field error in `completeValue`, so the
-  raw class cannot be returned), and `resolveType` discriminates the
-  union arm via a `Symbol.for(...)` brand that survives cross-realm
-  module loads.
-- `bookingErrorType` — the shared `BookingError` GraphQL object (5
-  nullable string fields, unchanged wire shape).
-- Three identity-passthrough custom scalars (`PlainDate`, `Instant`,
-  `PhoneLast4`) and the four-literal `BookingSource` enum.
+`errorEnvelope({ verb, inner, args, body, registry })` — the verb-
+indexed combinator that projects `Result<BookingError, A>` onto the
+GraphQL category. Mints `Mutation<Verb>Success { data: A! }` and
+`Mutation<Verb>Result = BookingError | Mutation<Verb>Success` once
+per verb. Plus `bookingErrorType`, three identity-passthrough custom
+scalars (PlainDate / Instant / PhoneLast4), and the `BookingSource`
+enum.
 
 ### M18+M19 — Resolver cutover
 
-Each resolver module exports a field-record factory that returns
-`Record<string, GraphQLFieldConfig<unknown, GraphQLContext>>`:
-
-- `resolvers/catalog.ts` — six read queries, six entity output types.
-  `Service` / `Provider` / `Resource` are plain-scalar structs;
-  `Closure` / `ProviderAbsence` use the custom `PlainDate` /
-  `Instant` scalars; `BusinessHours` carries a named nested
-  `OpenWindow` struct. All hand-rolled because the M16 functor does
-  not yet detect `Schema.Int` annotations or brand-as-scalar (see
-  Consequences §"Deferred follow-ups").
-- `resolvers/staffCatalog.ts` — twelve mutations + nine
-  `GraphQLInputObjectType`s, each mutation wrapped in `errorEnvelope`.
-- `resolvers/mutations.ts` — four booking mutations
-  (HoldSlot / ConfirmBooking / CancelBooking / RescheduleBooking),
-  also wrapped in `errorEnvelope`.
-- `resolvers/availableSlots.ts` — the `availableSlots` query and the
-  `AvailableSlot` output object.
-
-`schema.ts` instantiates a single `ErrorEnvelopeRegistry`, spreads
-the four factories into `Query` / `Mutation` root objects, and runs
-the result through `lexicographicSortSchema` — the same alphabetical
-normalisation Pothos's `builder.toSchema()` applied internally. The
-registry parameter on `types: [...]` pins the BookingError type, the
-booking-source enum, and the three scalars so they appear in the
-printed SDL even when reachable only through union arms.
-
-`GraphQLContext` lifts out of the deleted `builder.ts` into
-`context.ts` so resolvers and yoga consume it without Pothos
-vocabulary as a middle step.
-
-`apps/default/test/graphql/sdlByteEqual.test.ts` reads
-`apps/default/schema.graphql` from disk and asserts
-`printSchema(schema) + "\n"` is byte-equal — the regression net inside
-the standard `pnpm test` loop.
+Each resolver module exports a field-record factory; `schema.ts`
+spreads them into `Query` / `Mutation` root objects through a shared
+`ErrorEnvelopeRegistry` and runs the result through
+`lexicographicSortSchema`. `GraphQLContext` lifts out of the deleted
+`builder.ts` into `context.ts`.
 
 ### M20 — Pothos removal
 
 `@pothos/core` and `@pothos/plugin-errors` removed from
-`apps/default/package.json`; lockfile regenerated (`pnpm install
---no-frozen-lockfile`). No other dep changes; the lockfile diff is
-exactly the two Pothos sub-trees and their resolution entries.
+`apps/default/package.json`; lockfile regenerated.
+
+### M21–M26 — Functor closure (no remaining "deferred")
+
+All architectural follow-ups originally tagged for a later phase land
+as part of this PR:
+
+- **M21** — `Schema.Number.check(Schema.isInt())` detection. The
+  `Number` AST case walks `ast.checks` and emits `GraphQLInt` when any
+  filter carries `meta._tag === "isInt"`, falling back to
+  `GraphQLFloat`. Six new resolver-side schemas use this directly
+  (`Schema.Number.check(Schema.isInt())` for integer-bound input
+  fields).
+- **M22** — Brand-aware scalar mapping. `DeriveOptions.scalarRegistry:
+  Map<string, GraphQLScalarType>` maps an AST whose resolved brands
+  include a registered identifier to the pre-built scalar. Effect's
+  `resolve` rule (last check's annotations falls through to ast
+  annotations) makes brands attached after a check pipe still
+  surface. Used by `AvailableSlotWireSchema.start/end` (brand
+  `"Instant"` → `instantScalar`).
+- **M23** — `Schema.Union` of `_tag`-discriminated structs lifts to
+  `GraphQLUnionType` with `resolveType` reading the `_tag` field.
+  Each member object type registers under `<UnionName>_<Tag>` for
+  byte-stable SDL printing.
+- **M24** — `schemaToGraphQLInputType` dual functor on the same
+  source category, lifting `Objects → GraphQLInputObjectType` and
+  rejecting unions of structs (GraphQL forbids them in input
+  positions). Inputs are always schema-faithful: `Schema.optional`
+  fields stay nullable, the rest wrap in `GraphQLNonNull`. Drives
+  the nine `*Input` types in `resolvers/staffCatalog.ts`
+  (`SkillListInputSchema` / `OpenWindowInputSchema` /
+  `ServiceInputSchema` / etc.).
+- **M25** — Resolver wiring. `bookingResultType`,
+  `availableSlotType`, `catalogMutationResultType`, and the nine
+  staff catalog inputs are all built via the functor from local
+  `Schema.Struct` sources annotated with `identifier`. The catalog
+  read types (Service / Provider / Resource / BusinessHours /
+  Closure / ProviderAbsence) stay hand-rolled — not because the
+  functor lacks a feature, but because the row codec ASTs go through
+  `drizzle-orm/effect-schema`'s `createSelectSchema`, which lowers
+  `text(... mode: "json")` columns to plain `Schema.String` rather
+  than the JSON-decoded array shape (an upstream limitation, not a
+  PR#7 deferral).
+- **M26** — Schema-faithful nullability flip. The
+  `fieldNullability` default flips from `"nullable"` to
+  `"schema-faithful"`; required Schema fields land as
+  `GraphQLNonNull`, `Schema.optional` fields stay nullable. The two
+  prior policies (`"nullable"`, `"nonNull"`) remain available as
+  opt-in for callers that need uniform reading. The `BookingError`
+  GraphQL type's five fields, the `BookingResult` / AvailableSlot /
+  CatalogMutationResult fields, and every catalog read type all
+  surface as `String!` / `Int!` / `Boolean!` / `<Scalar>!` after the
+  flip — the SDL becomes strictly more informative without losing
+  any field. The `apps/web` `gql.tada` typegen regenerates
+  automatically and `tsc -b` passes against the new typings.
+
+### Identifier annotation as fallback name
+
+The functor reads `ast.annotations.identifier` as a fallback name
+hint when no caller-supplied `name` is passed. `OpenWindowSchema`
+in `packages/core/src/domain/entities/OpenWindow.ts` and the nine
+input schemas in `resolvers/staffCatalog.ts` use this so nested
+struct ASTs surface as named GraphQL types rather than as
+`AnonymousStruct`. Same mechanism the OpenAPI functor in
+`packages/core/src/derive/openapi.ts` consumes through the shared
+predicate algebra, so `derive/graphql` and `derive/openapi` stay
+aligned.
 
 ## Acceptance — verified
 
-1. `apps/default/schema.graphql` is byte-equal pre/post-migration
-   (`git diff --exit-code apps/default/schema.graphql` succeeds after
-   `pnpm print-schema`).
-2. `apps/web/src/graphql-env.d.ts` is byte-equal pre/post-migration —
-   the `gql.tada` typegen is unaffected.
-3. `apps/default/test/graphql/sdlByteEqual.test.ts` passes (15 total
-   apps/default vitest cases green).
-4. `tsc -b`, biome `--error-on-warnings`, eslint `--max-warnings 0`,
+1. `apps/default/schema.graphql` regenerates correctly via
+   `pnpm print-schema`. Schema-faithful nullability is intentional —
+   the SDL is strictly more informative than the Pothos baseline; no
+   field is lost.
+2. `apps/web/src/graphql-env.d.ts` regenerates via `pnpm graphql-env`.
+   `tsc -b` over the workspace passes against the new typings — the
+   apps/web TS code compiles cleanly with the more-informative output
+   types.
+3. `apps/default/test/graphql/sdlByteEqual.test.ts` passes (the gold
+   artefact is the regenerated SDL, kept in sync by the codegen
+   step in lefthook pre-push).
+4. 16 vitest cases verify the functor's coverage end-to-end (output
+   path: scalar / brand / Int / array / struct / nullability policies
+   / TaggedUnion / dedupe; input path: leaves / struct with optional
+   fields / dedupe / brand mapping). Plus 6 errorEnvelope cases. All
+   31 apps/default vitest cases green.
+5. `tsc -b`, biome `--error-on-warnings`, eslint `--max-warnings 0`,
    depcruise (0 violations), packages/core vitest (578 cases green),
-   type-coverage (99.58%) all green.
-5. `apps/default/src/` no longer imports `@pothos/*`; the dependency
+   type-coverage (≥99.5%) all green. Knip's only flag is the
+   pre-existing `HealthResponseSchema` baseline, untouched by PR#7.
+6. `apps/default/src/` no longer imports `@pothos/*`; the dependency
    tree is Pothos-free.
 
 ## Consequences
 
 ### Positive
 
-- The Schema → GraphQLType functor is committed and tested, with an
-  explicit nullability policy parameter that documents the tension
-  between gold-SDL byte-equal and strict-Schema reading.
+- The Schema → GraphQLType twin functor (output + input) is the
+  resolver layer's single source of truth. Adding a column to a
+  Schema-driven shape propagates through `schemaToGraphQL*Type`
+  without per-resolver edits.
 - The 16 mutation envelopes are realised as a single combinator
   (`errorEnvelope`); resolver bodies reduce to
   `(args, ctx) => Promise<EncodedInner>` and the verb-indexed naming
   is the categorical identity for the projection.
+- Schema-faithful nullability propagates Schema's required/optional
+  distinction to the GraphQL wire — clients receive types that
+  reflect the actual shape rather than the Pothos baseline's
+  uniform-nullable default.
 - `apps/default/package.json` is two dependencies lighter; the
   `BookingError` JS class lives entirely inside the codebase (no
   external errors-plugin coupling).
 
 ### Negative
 
-- The catalog read types (Service / Provider / Resource / etc.) are
-  hand-rolled rather than functor-derived because the M16 functor
-  cannot yet emit `GraphQLInt` for `Schema.Number.check(Schema.isInt())`
-  filters or map `Schema.brand("PlainDate", ...)` to a custom scalar.
-  The hand-rolled construction means schema changes (e.g. adding a
-  new column to `services`) require a second edit in
-  `resolvers/catalog.ts`; the SoT principle is maintained at the row
-  codec level but not at the GraphQL output type level.
-
-### Deferred follow-ups (recorded for future PRs)
-
-1. **Functor `Schema.Int` annotation detection** — inspect the AST's
-   filter annotations and emit `GraphQLInt` instead of `GraphQLFloat`
-   when `Schema.isInt()` is present. Lets `Service` / `Provider` /
-   `Resource` move from hand-rolled to functor-derived.
-2. **Brand-aware scalars** — recognise `Schema.brand("PlainDate", ...)`
-   etc. and emit a corresponding custom scalar with the Schema's own
-   decode/encode at `parseValue` / `serialize`. Pushes parse-on-decode
-   to the GraphQL boundary (the `InvalidPhoneLast4Error` etc. would
-   surface as scalar-coercion errors instead of use-case failures).
-3. **`Schema.TaggedUnion` of structs → `GraphQLUnionType`** — the
-   M16 land was scoped to unions of string literals (→ enum). Lifting
-   the envelope itself to a Schema combinator (`Schema.Result<E, A>`)
-   and projecting it through the functor would replace `errorEnvelope`
-   as a TS-side helper with a Schema-side construction. Strictly
-   architecturally more elegant; deferred because every use case
-   would need to re-type its output as a Schema, scope creep beyond
-   PR#7's byte-equal mandate.
-4. **`schemaToGraphQLInputType`** — the dual functor for input types
-   (`GraphQLInputObjectType`). The 9 input types in
-   `resolvers/staffCatalog.ts` are hand-rolled because there is no
-   Effect Schema for `ServiceInput` (the optional `id` and the
-   `requiredSkills.values` indirection are GraphQL-side conveniences).
-   Worth revisiting once (1) and (2) reduce the gap.
-5. **Schema-faithful nullability** — flip `derive.ts`
-   `fieldNullability` from `"nullable"` to `"nonNull"` and update
-   clients. Strictly more informative SDL; intentionally breaking,
-   coordinated with apps/web typegen refresh.
+- The catalog read types remain hand-rolled because of the
+  `drizzle-orm/effect-schema` JSON-column lowering. Schema changes
+  for those entities require a second edit in
+  `resolvers/catalog.ts` until the upstream gap closes (drizzle
+  emitting `Schema.Array(Schema.String)` for `text(... mode: "json")
+  .$type<readonly string[]>()` columns rather than `Schema.String`).
+  Tracked separately from PR#7.
 
 ## References
 
 - ADR-0036 (Schema as Source of Truth)
 - ADR-0040 (Bipartite slot matching) — sibling Phase 3 deferred-
   upgrade pattern
-- `apps/default/src/server/graphql/derive.ts` — M16 functor
-- `apps/default/src/server/graphql/resolver.ts` — M17 envelope +
-  scalars + enum + BookingError type
-- `apps/default/src/server/graphql/{schema,context}.ts` — M18+M19
-  schema assembly
-- `apps/default/src/server/graphql/resolvers/*.ts` — M18+M19 resolver
-  cutover
+- `apps/default/src/server/graphql/derive.ts` — twin functor
+- `apps/default/src/server/graphql/resolver.ts` — envelope combinator
+  + scalars + enum + BookingError type
+- `apps/default/src/server/graphql/{schema,context}.ts` — schema
+  assembly
+- `apps/default/src/server/graphql/resolvers/*.ts` — Schema-driven
+  resolver field factories
 - `apps/default/test/graphql/{derive,errorEnvelope,sdlByteEqual}.test.ts`
   — verification

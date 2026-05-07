@@ -9,11 +9,18 @@ import { type Comparator, type Interval, intervalSmartCtor } from "../value-obje
  * sides are `Temporal.PlainTime`. The same-day constraint means a
  * window cannot wrap across midnight; deployments that need an
  * overnight shift must split it into two windows on adjacent weekdays.
+ *
+ * The `identifier` annotation flows through to downstream functors
+ * (the GraphQL `Schema → GraphQLOutputType` projection in
+ * `apps/default/src/server/graphql/derive.ts`, the OpenAPI projection
+ * in `packages/core/src/derive/openapi.ts`) so the nested struct
+ * surfaces as a named type in each artefact rather than as
+ * `AnonymousStruct`.
  */
 export const OpenWindowSchema = Schema.Struct({
   start: PlainTimeSchema,
   end: PlainTimeSchema,
-})
+}).annotate({ identifier: "OpenWindow" })
 export type OpenWindow = Interval<Temporal.PlainTime>
 
 // Narrowing wrapper around `Temporal.PlainTime.compare` (which accepts
