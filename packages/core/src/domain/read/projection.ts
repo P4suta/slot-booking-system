@@ -1,12 +1,5 @@
 import { Match } from "effect"
-import type {
-  BookingCommon,
-  Cancelled,
-  Completed,
-  Confirmed,
-  Held,
-  NoShow,
-} from "../booking/Booking.js"
+import type { BookingCommon, Cancelled, Completed, Confirmed, NoShow } from "../booking/Booking.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
 import { asView, type BookingView } from "./BookingView.js"
 
@@ -101,12 +94,3 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
     }),
     Match.exhaustive,
   )
-
-/**
- * Replay an event stream from a `Held` seed. The seed event must be
- * present (it carries the bookingCode + slot + service identity), and
- * subsequent events are folded in order. The seed is brand-lifted at
- * the boundary so the rest of the fold operates on `BookingView`.
- */
-export const replay = (seed: Held, events: readonly BookingEvent[]): BookingView =>
-  events.reduce<BookingView>((view, ev) => applyEvent(view, ev), asView(seed))

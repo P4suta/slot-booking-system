@@ -1,7 +1,7 @@
 import type { Brand } from "effect"
-import type { BookingState } from "../booking/Booking.js"
+import type { BookingState, Held } from "../booking/Booking.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
-import type { BookingView } from "./BookingView.js"
+import { asView, type BookingView } from "./BookingView.js"
 import { applyEvent } from "./projection.js"
 
 /**
@@ -101,3 +101,72 @@ export const applyEventTyped = <S extends BookingState, E extends EventOnState<S
 export const indexView = <S extends BookingState>(
   view: BookingView & { readonly state: S },
 ): ViewT<S> => view as unknown as ViewT<S>
+
+/* -------------------------------------------------------------------------- */
+/* Atkey indexed state monad                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Atkey-style indexed state monad. `IxState<S1, S2, A>` is a pure
+ * morphism `ViewT<S1> → [A, ViewT<S2>]` — input state `S1`, output
+ * state `S2`, carried value `A`. The two state indices encode the
+ * read-side adjacency the runtime `applyEvent` no-ops outside of:
+ * statically unknown event sequences erase to
+ * `IxState<BookingState, BookingState, A>`, while statically-known
+ * sequences carry their `S1 → S2` transition through `flatMap`.
+ *
+ * Monad laws (cross-validated by `IxState.test.ts`):
+ *   - left identity:  `flatMap(pure(a), f) ≡ f(a)`
+ *   - right identity: `flatMap(m, pure)   ≡ m`
+ *   - associativity:  `flatMap(flatMap(m, f), g) ≡ flatMap(m, x => flatMap(f(x), g))`
+ */
+export type IxState<S1 extends BookingState, S2 extends BookingState, A> = (
+  view: ViewT<S1>,
+) => readonly [A, ViewT<S2>]
+
+/** Pure / return — value `a`, state unchanged. */
+export const pure =
+  <S extends BookingState, A>(a: A): IxState<S, S, A> =>
+  (view) =>
+    [a, view] as const
+
+/** Monadic bind. Threads the state output of `m` into the start of `f(a)`. */
+export const flatMap =
+  <S1 extends BookingState, S2 extends BookingState, S3 extends BookingState, A, B>(
+    m: IxState<S1, S2, A>,
+    f: (a: A) => IxState<S2, S3, B>,
+  ): IxState<S1, S3, B> =>
+  (view) => {
+    const [a, mid] = m(view)
+    return f(a)(mid)
+  }
+
+/** Run an IxState computation against a starting view. */
+export const run = <S1 extends BookingState, S2 extends BookingState, A>(
+  m: IxState<S1, S2, A>,
+  initial: ViewT<S1>,
+): readonly [A, ViewT<S2>] => m(initial)
+
+/**
+ * Lift one statically-typed event into an IxState step. The runtime
+ * body delegates to {@link applyEventTyped}; the success-side index
+ * transitions from `S` to `NextOf<S, E>` per the read-side adjacency
+ * table.
+ */
+export const stepEvent =
+  <S extends BookingState, E extends EventOnState<S>>(event: E): IxState<S, NextOf<S, E>, void> =>
+  (view) =>
+    [undefined, applyEventTyped(view, event)] as const
+
+/**
+ * Replay a heterogeneous event stream as an IxState catamorphism. The
+ * static index erases to `BookingState` because the event sequence is
+ * only known at runtime, but the runtime body is still the natural
+ * fold over IxState — `pure(seed) >>= step(e_1) >>= step(e_2) >>= …`.
+ *
+ * Each fold step delegates to `projection.applyEvent` (the runtime
+ * dispatcher with the per-state guards), so this entry point is the
+ * named, type-aware face of the existing `projection.replay` fold.
+ */
+export const runReplay = (seed: Held, events: readonly BookingEvent[]): BookingView =>
+  events.reduce<BookingView>((view, ev) => applyEvent(view, ev), asView(seed))
