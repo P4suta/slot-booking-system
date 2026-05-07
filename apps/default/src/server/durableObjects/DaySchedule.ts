@@ -18,6 +18,7 @@ import {
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { DayScheduleHandlersLayer } from "./effectRpc/handlers.js"
 import { DayScheduleRouter } from "./effectRpc/router.js"
+import { desanitiseFromStructuredClone, sanitiseForStructuredClone } from "./effectRpc/transport.js"
 import { drainOutbox, nextOutboxAttemptAt } from "./relay.js"
 import { ensureDurableObjectSchema } from "./schema.js"
 
@@ -113,6 +114,7 @@ export class DaySchedule extends DurableObject<Env> {
    * mailbox coordination required.
    */
   async dispatch(envelope: unknown): Promise<unknown> {
+    const decoded = desanitiseFromStructuredClone(envelope)
     const tz = await Effect.runPromise(this.deploymentTimeZone)
     const storage = this.ctx.storage as unknown as DurableObjectStorageLike
     const handlerLayer = DayScheduleHandlersLayer(tz, this.layer(storage))
@@ -125,16 +127,17 @@ export class DaySchedule extends DurableObject<Env> {
               responses.push(response)
             }),
         })
-        yield* server.write(0, envelope as never)
+        yield* server.write(0, decoded as never)
       }).pipe(Effect.provide(handlerLayer), Effect.scoped),
     )
-    return responses.find(
+    const reply = responses.find(
       (r): r is { _tag: "Exit" | "Defect" } =>
         typeof r === "object" &&
         r !== null &&
         "_tag" in r &&
         (r._tag === "Exit" || r._tag === "Defect"),
     )
+    return reply === undefined ? undefined : sanitiseForStructuredClone(reply)
   }
 
   /**

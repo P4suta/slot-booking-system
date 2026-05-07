@@ -3,6 +3,7 @@ import { RpcClient, type RpcGroup } from "effect/unstable/rpc"
 import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError"
 import type { DaySchedule } from "../DaySchedule.js"
 import { DayScheduleRouter } from "./router.js"
+import { desanitiseFromStructuredClone, sanitiseForStructuredClone } from "./transport.js"
 
 type DayScheduleRpcs = typeof DayScheduleRouter extends RpcGroup.RpcGroup<infer R> ? R : never
 type DayScheduleClient = RpcClient.RpcClient<DayScheduleRpcs, RpcClientError>
@@ -56,8 +57,8 @@ export const makeDayScheduleClient = (
       onFromClient: ({ message, discard }) =>
         Effect.gen(function* () {
           if (discard) return
-          const reply: unknown = yield* Effect.tryPromise({
-            try: () => Promise.resolve<unknown>(stub.dispatch(message)),
+          const sanitisedReply: unknown = yield* Effect.tryPromise({
+            try: () => Promise.resolve<unknown>(stub.dispatch(sanitiseForStructuredClone(message))),
             catch: (cause) =>
               new RpcClientError({
                 reason: new RpcClientDefect({
@@ -66,6 +67,7 @@ export const makeDayScheduleClient = (
                 }),
               }),
           })
+          const reply = desanitiseFromStructuredClone(sanitisedReply)
           if (typeof reply === "object" && reply !== null) {
             const w = yield* Deferred.await(writeReady)
             yield* w(reply as Parameters<WriteFn>[0])

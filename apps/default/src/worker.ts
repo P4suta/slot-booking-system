@@ -21,8 +21,9 @@ type Env = {
   /**
    * `"1"` flips {@link RuntimeMode} to dev (verbose error extensions,
    * permissive log sampling, console OTel exporter). Anything else
-   * (including missing) maps to prod. Wired via wrangler `[env.dev.vars]`
-   * so `wrangler dev -e dev` is the only entry point that sees `"1"`.
+   * (including missing) maps to prod. The `dev` npm script flips the
+   * bit via `wrangler dev --var IS_DEV:1`; deploys inherit the
+   * `[vars] IS_DEV = "0"` default in `wrangler.toml`.
    */
   IS_DEV?: string
   /**

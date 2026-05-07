@@ -250,13 +250,14 @@ seed:
 
 # Bring up the full local-dev stack: OTel collector + Jaeger UI under
 # the `observability` docker-compose profile (`docker-compose.yml`),
-# then `wrangler dev -e dev` in the foreground. Exit Ctrl-C closes
-# wrangler; collector + jaeger keep running until `just dev-down`.
-# The dev env wires `OTEL_EXPORTER_URL = http://otel-collector:4318/v1/traces`,
-# so usecase / graphql spans land in Jaeger at http://localhost:16686.
+# then `wrangler dev` in the foreground with the OTLP endpoint pinned
+# to the collector container. Exit Ctrl-C closes wrangler; collector
+# + jaeger keep running until `just dev-down`. usecase / graphql
+# spans land in Jaeger at http://localhost:16686.
 dev-up:
     docker compose --profile observability up -d otel-collector jaeger
-    {{DEVP}} {{PNPM}} -F default run dev
+    {{DEVP}} {{PNPM}} -F default exec wrangler dev --ip 0.0.0.0 --test-scheduled \
+      --var IS_DEV:1 --var OTEL_EXPORTER_URL:http://otel-collector:4318/v1/traces
 
 # Tear down the observability profile services brought up by `dev-up`.
 dev-down:

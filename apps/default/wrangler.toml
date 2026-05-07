@@ -29,15 +29,20 @@ new_sqlite_classes = ["DaySchedule"]
 [vars]
 DEPLOYMENT_NAME = "default"
 DEPLOYMENT_TIMEZONE = "UTC"
-# `IS_DEV` flips RuntimeMode (ADR-0042). Default is `"0"` so any
-# `wrangler deploy` lands in production mode; `wrangler dev -e dev`
-# overrides through `[env.dev.vars]` below.
+# `IS_DEV` flips RuntimeMode (ADR-0042). Default `"0"` so every
+# `wrangler deploy` lands in production mode; `wrangler dev` flips
+# the bit through `--var IS_DEV:1` (see `apps/default/package.json`
+# `dev` script). Named-env wiring is intentionally unused —
+# wrangler v4's `[env.<name>]` does not inherit `[vars]` / D1 / DO
+# bindings, so the CLI override is the simpler categorical lift.
 IS_DEV = "0"
-# OTel exporter triage (ADR-0042 + ADR-0044): `"disabled"` drops
-# spans through a NoopSpanExporter so the worker never opens a
-# network round-trip to a non-existent collector. Override with a
-# concrete OTLP URL when wiring an actual deploy-side collector;
-# `"console"` falls back to `ConsoleSpanExporter` (stdout, dev local).
+# OTel exporter triage (ADR-0044): `"disabled"` drops spans through
+# a NoopSpanExporter so the worker never opens a network round-trip
+# to a non-existent collector. `wrangler dev` overrides via
+# `--var OTEL_EXPORTER_URL:console` (stdout exporter); the
+# observability docker-compose profile + an explicit
+# `OTEL_EXPORTER_URL=http://otel-collector:4318/v1/traces` env var
+# is the path that posts to Jaeger.
 OTEL_EXPORTER_URL = "disabled"
 # Local-dev secret used by `signSlot` / `verifySlotToken`. The value
 # is a deterministic 32-byte hex string so the local fixtures (curl
@@ -45,17 +50,6 @@ OTEL_EXPORTER_URL = "disabled"
 # out-of-band secret. Production deployments rotate this through
 # `wrangler secret put SLOT_HMAC_SECRET`.
 SLOT_HMAC_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-# Dev environment overrides. `wrangler dev -e dev` (the `dev` npm
-# script appends `-e dev`) flips `IS_DEV` so the worker can switch
-# adapters off the `RuntimeMode` port — verbose error extensions,
-# permissive log sampling, console OTel exporter — without leaking
-# those affordances into deploy targets. The OTel endpoint points
-# to `otel-collector` because `just dev-up` brings the container up
-# under the `observability` docker-compose profile (Phase 3 PR#8).
-[env.dev.vars]
-IS_DEV = "1"
-OTEL_EXPORTER_URL = "http://otel-collector:4318/v1/traces"
 
 # Daily cron at 04:00 UTC. Drives the `scheduled` handler in
 # `src/worker.ts` which NULLs PII fields on bookings whose terminal

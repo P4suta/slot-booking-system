@@ -35,7 +35,9 @@ describe("errorClassRegistry", () => {
   })
 
   it("uses unique class names", () => {
-    const names = errorClassRegistry.map((cls) => (cls as { readonly name: string }).name)
+    const names = errorClassRegistry.map(
+      (cls) => (cls as unknown as { readonly name: string }).name,
+    )
     expect(new Set(names).size).toBe(names.length)
   })
 })

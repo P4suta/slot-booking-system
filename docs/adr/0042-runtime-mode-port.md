@@ -60,16 +60,22 @@ configured via wrangler:
 ```toml
 [vars]
 IS_DEV = "0"
-
-[env.dev.vars]
-IS_DEV = "1"
 ```
 
-`wrangler dev -e dev` (the `dev` npm script appends the flag) sees
-`"1"`; `wrangler deploy` sees `"0"`. The boolean is intentionally
-dumb — multi-valued environments (`staging`, `canary`, …) will be
-modelled by separate ports if and when needed, not by widening this
-union.
+…with the `dev` npm script overriding via the wrangler CLI:
+
+```jsonc
+"dev": "wrangler dev --ip 0.0.0.0 --test-scheduled --var IS_DEV:1 --var OTEL_EXPORTER_URL:console"
+```
+
+`wrangler dev` therefore sees `"1"`; `wrangler deploy` sees `"0"`.
+We intentionally do **not** route through a `[env.<name>]` block —
+wrangler v4's named environments do not inherit `[vars]`, D1, or
+DO bindings, so the CLI override is the simpler categorical lift
+(one place to look, no surprises across deploy targets). The
+boolean is intentionally dumb — multi-valued environments
+(`staging`, `canary`, …) will be modelled by separate ports if and
+when needed, not by widening this union.
 
 ## Consequences
 
@@ -98,7 +104,7 @@ union.
   deploy pipeline forgets to set it, the worker silently runs in
   prod mode. The default-to-prod posture is intentional (fail
   closed); a misconfigured local dev still works because
-  `wrangler dev -e dev` is the documented entry point.
+  `wrangler dev --var IS_DEV:1` is the documented entry point.
 
 ## Alternatives considered
 
