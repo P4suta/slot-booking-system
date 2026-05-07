@@ -19,7 +19,10 @@ import {
 } from "../../src/domain/types/EntityId.js"
 import { minutesUnchecked } from "../../src/domain/value-objects/Duration.js"
 import { parseHoldingDays } from "../../src/domain/value-objects/HoldingDays.js"
-import { parseResourceType } from "../../src/domain/value-objects/ResourceType.js"
+import {
+  parseResourceType,
+  type ResourceType,
+} from "../../src/domain/value-objects/ResourceType.js"
 import { parseSkill, type Skill } from "../../src/domain/value-objects/Skill.js"
 
 const skill = (s: string) => Result.getOrThrow(parseSkill(s))
@@ -149,7 +152,7 @@ describe("Service.totalProviderMinutes", () => {
         bufferAfterMinutes: minutesUnchecked(10),
         holdingDays: Result.getOrThrow(parseHoldingDays(0)),
         requiredSkills: new Set<Skill>(),
-        requiredResourceTypes: new Set(),
+        requiredResourceTypes: new Set<ResourceType>(),
         enabled: true,
       }),
     ).toBe(75)
@@ -187,7 +190,7 @@ describe("Provider.providerSatisfies", () => {
       skills: new Set<Skill>(),
       enabled: true,
     } as const
-    expect(providerSatisfies(p, new Set())).toBe(true)
+    expect(providerSatisfies(p, new Set<Skill>())).toBe(true)
   })
 })
 

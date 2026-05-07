@@ -3,6 +3,7 @@ import { instrument, type ResolveConfigFn } from "@microlabs/otel-cf-workers"
 import { Effect, Layer } from "effect"
 import { makeD1AuditLogger } from "./server/adapters/D1AuditLoggerLive.js"
 import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
+import { makeRuntimeModeLayer } from "./server/adapters/RuntimeModeLive.js"
 import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
 import type { DaySchedule } from "./server/durableObjects/DaySchedule.js"
 import { yoga } from "./server/graphql/yoga.js"
@@ -16,6 +17,13 @@ type Env = {
   DEPLOYMENT_NAME: string
   DEPLOYMENT_TIMEZONE: string
   SLOT_HMAC_SECRET: string
+  /**
+   * `"1"` flips {@link RuntimeMode} to dev (verbose error extensions,
+   * permissive log sampling, console OTel exporter). Anything else
+   * (including missing) maps to prod. Wired via wrangler `[env.dev.vars]`
+   * so `wrangler dev -e dev` is the only entry point that sees `"1"`.
+   */
+  IS_DEV?: string
   /** Optional — when set, OTLP traces are POSTed to this endpoint. */
   OTEL_EXPORTER_URL?: string
   /** Optional — vendor-specific auth header (e.g. Honeycomb / Axiom). */
@@ -101,6 +109,7 @@ const handler = {
       auditLayer,
       SystemClockLive,
       WorkersLoggerLive,
+      makeRuntimeModeLayer(env),
     )
     await Effect.runPromise(PurgeStalePii().pipe(Effect.provide(layer)))
   },

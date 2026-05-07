@@ -47,7 +47,11 @@ const sampleCommands: readonly Command[] = [
   { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
 ]
 
-const TERMINAL: ReadonlySet<Booking["state"]> = new Set(["Cancelled", "Completed", "NoShow"])
+const TERMINAL: ReadonlySet<Booking["state"]> = new Set<Booking["state"]>([
+  "Cancelled",
+  "Completed",
+  "NoShow",
+])
 
 describe("apply property suite (race-aware invariants)", () => {
   it("is total: never throws on any random sequence of commands", () => {

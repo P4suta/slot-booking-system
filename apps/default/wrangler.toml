@@ -29,12 +29,24 @@ new_sqlite_classes = ["DaySchedule"]
 [vars]
 DEPLOYMENT_NAME = "default"
 DEPLOYMENT_TIMEZONE = "UTC"
+# `IS_DEV` flips RuntimeMode (ADR-0042). Default is `"0"` so any
+# `wrangler deploy` lands in production mode; `wrangler dev -e dev`
+# overrides through `[env.dev.vars]` below.
+IS_DEV = "0"
 # Local-dev secret used by `signSlot` / `verifySlotToken`. The value
 # is a deterministic 32-byte hex string so the local fixtures (curl
 # smoke, SvelteKit dev) can sign and verify without coordinating an
 # out-of-band secret. Production deployments rotate this through
 # `wrangler secret put SLOT_HMAC_SECRET`.
 SLOT_HMAC_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+# Dev environment overrides. `wrangler dev -e dev` (the `dev` npm
+# script appends `-e dev`) flips `IS_DEV` so the worker can switch
+# adapters off the `RuntimeMode` port — verbose error extensions,
+# permissive log sampling, console OTel exporter — without leaking
+# those affordances into deploy targets.
+[env.dev.vars]
+IS_DEV = "1"
 
 # Daily cron at 04:00 UTC. Drives the `scheduled` handler in
 # `src/worker.ts` which NULLs PII fields on bookings whose terminal
