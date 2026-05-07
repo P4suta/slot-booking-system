@@ -66,10 +66,33 @@ type Env = {
 }
 
 export class DaySchedule extends DurableObject<Env> {
+  /**
+   * Resolved deployment timezone. Parsed once at constructor time
+   * inside `blockConcurrencyWhile` — the value cannot change for the
+   * lifetime of this DO instance, so re-parsing on every `dispatch`
+   * was wasted CPU and a lurking allocation per RPC. `parseError`
+   * holds the failure if `DEPLOYMENT_TIMEZONE` is invalid; the
+   * `deploymentTimeZone` Effect surfaces it through the same
+   * `StorageError` channel that the resolver already handles.
+   */
+  private timeZone: BusinessTimeZone | null = null
+  private timeZoneError: StorageError | null = null
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     void ctx.blockConcurrencyWhile(() => {
       ensureDurableObjectSchema(ctx.storage.sql)
+      const parsed = parseBusinessTimeZone(env.DEPLOYMENT_TIMEZONE)
+      Result.match(parsed, {
+        onSuccess: (tz) => {
+          this.timeZone = tz
+        },
+        onFailure: () => {
+          this.timeZoneError = new StorageError({
+            reason: `invalid DEPLOYMENT_TIMEZONE: ${env.DEPLOYMENT_TIMEZONE}`,
+          })
+        },
+      })
       return Promise.resolve()
     })
   }
@@ -115,21 +138,16 @@ export class DaySchedule extends DurableObject<Env> {
   }
 
   /**
-   * Effect view of the deployment timezone. Surfaces an invalid
-   * `DEPLOYMENT_TIMEZONE` env var as a `StorageError` so the resolver
-   * sees the same shape it does for any other config-time failure.
+   * Effect view of the cached deployment timezone. The parse happened
+   * once in the constructor; subsequent reads short-circuit to the
+   * pre-resolved value or its parse failure.
    */
   private readonly deploymentTimeZone: Effect.Effect<BusinessTimeZone, StorageError> =
     Effect.suspend(() =>
-      Result.match(parseBusinessTimeZone(this.env.DEPLOYMENT_TIMEZONE), {
-        onFailure: () =>
-          Effect.fail(
-            new StorageError({
-              reason: `invalid DEPLOYMENT_TIMEZONE: ${this.env.DEPLOYMENT_TIMEZONE}`,
-            }),
-          ),
-        onSuccess: (tz) => Effect.succeed(tz),
-      }),
+      this.timeZoneError !== null
+        ? Effect.fail(this.timeZoneError)
+        : // biome-ignore lint/style/noNonNullAssertion: blockConcurrencyWhile sets one of the two before any dispatch runs
+          Effect.succeed(this.timeZone!),
     )
 
   /* -------------------------------------------------------------------- */
