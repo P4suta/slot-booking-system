@@ -1,6 +1,6 @@
-import { Result, Schema, SchemaGetter } from "effect"
-import { type DomainError, InvalidNameKanaError } from "../errors/Errors.js"
-import { summarizeParse } from "../errors/fromParseError.js"
+import type { Schema } from "effect"
+import { InvalidNameKanaError } from "../errors/Errors.js"
+import { brandedString } from "./_brandedString.js"
 
 const NAME_KANA_PATTERN = /^[゠-ヿ぀-ゟ･-ﾟー]+(?: [゠-ヿ぀-ゟ･-ﾟー]+)*$/
 const MAX_LENGTH = 50
@@ -27,25 +27,16 @@ export const normalizeNameKana = (raw: string): string =>
  *   - ASCII space and full-width ideographic space (` ` and `U+3000`),
  *     normalised to a single ASCII space between non-space tokens.
  *
- * Encoded as a `Schema.transform` whose `decode` runs `normalizeNameKana`
- * before the brand's refinement filters apply, and whose `encode` is
- * identity (the branded output is already normalised).
- *
  * The PII storage policy (ADR-0009) keeps this field at most 2 years.
  */
-const NameKanaBrand = Schema.String.check(
-  Schema.makeFilter((s) => s.length > 0 && s.length <= MAX_LENGTH && NAME_KANA_PATTERN.test(s)),
-).pipe(Schema.brand("NameKana"))
+const nameKana = brandedString({
+  brand: "NameKana",
+  predicate: (s) => s.length > 0 && s.length <= MAX_LENGTH && NAME_KANA_PATTERN.test(s),
+  normalize: normalizeNameKana,
+  errorClass: InvalidNameKanaError,
+})
 
-export const NameKanaSchema = Schema.String.pipe(
-  Schema.decodeTo(NameKanaBrand, {
-    decode: SchemaGetter.transform(normalizeNameKana),
-    encode: SchemaGetter.transform((norm: string) => norm),
-  }),
-)
+export const NameKanaSchema = nameKana.schema
 export type NameKana = Schema.Schema.Type<typeof NameKanaSchema>
 
-const decode = Schema.decodeUnknownResult(NameKanaSchema)
-
-export const parseNameKana = (raw: string): Result.Result<NameKana, DomainError> =>
-  Result.mapError(decode(raw), (e) => new InvalidNameKanaError({ reason: summarizeParse(e) }))
+export const parseNameKana = nameKana.parse

@@ -1,6 +1,6 @@
-import { Result, Schema, SchemaGetter } from "effect"
-import { type DomainError, InvalidFreeTextError } from "../errors/Errors.js"
-import { summarizeParse } from "../errors/fromParseError.js"
+import type { Schema } from "effect"
+import { InvalidFreeTextError } from "../errors/Errors.js"
+import { brandedString } from "./_brandedString.js"
 
 const MAX_LENGTH = 500
 
@@ -46,19 +46,14 @@ const codePointCount = (s: string): number => {
  * Control characters other than `\n` (U+000A) and `\t` (U+0009) are
  * stripped during decode.
  */
-const FreeTextBrand = Schema.String.check(
-  Schema.makeFilter((s) => codePointCount(s) <= MAX_LENGTH),
-).pipe(Schema.brand("FreeText"))
+const freeText = brandedString({
+  brand: "FreeText",
+  predicate: (s) => codePointCount(s) <= MAX_LENGTH,
+  normalize: normalizeFreeText,
+  errorClass: InvalidFreeTextError,
+})
 
-export const FreeTextSchema = Schema.String.pipe(
-  Schema.decodeTo(FreeTextBrand, {
-    decode: SchemaGetter.transform(normalizeFreeText),
-    encode: SchemaGetter.transform((norm: string) => norm),
-  }),
-)
+export const FreeTextSchema = freeText.schema
 export type FreeText = Schema.Schema.Type<typeof FreeTextSchema>
 
-const decode = Schema.decodeUnknownResult(FreeTextSchema)
-
-export const parseFreeText = (raw: string): Result.Result<FreeText, DomainError> =>
-  Result.mapError(decode(raw), (e) => new InvalidFreeTextError({ reason: summarizeParse(e) }))
+export const parseFreeText = freeText.parse
