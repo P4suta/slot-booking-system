@@ -22,6 +22,14 @@ import { Effect, Option, Schema, SchemaGetter, SchemaIssue } from "effect"
  * within ±100 years of epoch.
  */
 
+/**
+ * One day expressed as minutes — the shared invariant behind both the
+ * 1440-bit per-day slot bitmap (ADR-0012) and the `Minutes` value
+ * object's upper cap. Anywhere this constant is recomputed as
+ * `24 * 60` is a missed dependency on the same fact.
+ */
+export const MINUTES_PER_DAY = 1_440
+
 /* -------------------------------------------------------------------------- */
 /* Type-only `is` Schemas (no codec). Exported so internal flat-row schemas    */
 /* (BookingRow.ts) can compose against the Type level without forcing the     */

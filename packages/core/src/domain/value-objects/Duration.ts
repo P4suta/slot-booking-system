@@ -1,17 +1,16 @@
 import { Result, Schema } from "effect"
 import { type DomainError, InvalidDurationError } from "../errors/Errors.js"
 import { summarizeParse } from "../errors/fromParseError.js"
-
-const MAX_MINUTES = 24 * 60
+import { MINUTES_PER_DAY } from "../types/Temporal.js"
 
 /**
  * A non-negative count of minutes. Used for service work durations and
- * pre/post buffers. Capped at 24 × 60 = 1440 to keep slot bitmaps
- * within a single-day allocation (ADR-0012).
+ * pre/post buffers. The upper bound is one day (`MINUTES_PER_DAY`), which
+ * is the same invariant that sizes the slot bitmap (ADR-0012).
  */
 export const MinutesSchema = Schema.Number.check(
   Schema.isInt(),
-  Schema.isBetween({ minimum: 0, maximum: MAX_MINUTES }),
+  Schema.isBetween({ minimum: 0, maximum: MINUTES_PER_DAY }),
 ).pipe(Schema.brand("Minutes"))
 export type Minutes = Schema.Schema.Type<typeof MinutesSchema>
 

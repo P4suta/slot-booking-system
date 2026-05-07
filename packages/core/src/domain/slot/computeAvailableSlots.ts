@@ -9,6 +9,7 @@ import type { Resource } from "../entities/Resource.js"
 import type { Service } from "../entities/Service.js"
 import type { Weekday } from "../entities/Weekday.js"
 import type { ProviderId, ResourceId, ServiceId } from "../types/EntityId.js"
+import { MINUTES_PER_DAY } from "../types/Temporal.js"
 import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import type { ResourceType } from "../value-objects/ResourceType.js"
 import * as B from "./Bitmap.js"
@@ -71,8 +72,6 @@ export type AvailableSlot = AvailableSlotShape & Brand.Brand<"AvailableSlot">
  */
 export const mintAvailableSlot = (shape: AvailableSlotShape): AvailableSlot =>
   shape as AvailableSlot
-
-const MINUTES_PER_DAY = 1_440
 
 const idAsc = <T extends { readonly id: string }>(a: T, b: T): number => a.id.localeCompare(b.id)
 
