@@ -56,4 +56,22 @@ describe("Telemetry — inside an active span", () => {
     const program = withSpan("test.tap.success", {}, tapTaggedError(Effect.succeed("ok")))
     expect(await Effect.runPromise(program)).toBe("ok")
   })
+
+  it("recordTaggedError + currentSpan reads non-trivially mid-flow (e2e)", async () => {
+    // Confirms the Telemetry stack is reachable end-to-end: the helper
+    // resolves Effect.currentSpan inside an active span, projects the
+    // tagged-error metadata onto the span's attribute API, and ignores
+    // a missing-span case without raising. Closes ADR-0038 carry-over B
+    // for the unit-suite — full worker-bound integration lives in
+    // apps/default/test/effectRpc/spanEmission.test.ts.
+    const err = new InvalidPhoneLast4Error({ reason: "wrong-length" })
+    const program = withSpan(
+      "test.e2e",
+      {},
+      Effect.flatMap(Effect.currentSpan, (span) =>
+        Effect.map(recordTaggedError(err), () => span.name),
+      ),
+    )
+    expect(await Effect.runPromise(program)).toBe("test.e2e")
+  })
 })
