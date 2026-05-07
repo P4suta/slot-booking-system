@@ -43,11 +43,25 @@ import {
  * instances stand in.
  */
 
+/**
+ * Policy controlling whether `Object` property types are wrapped in
+ * `GraphQLNonNull`. Default `"nullable"` matches the gold SDL emitted
+ * by the Pothos baseline (every output field is nullable by default
+ * unless explicitly annotated). `"nonNull"` is the strict-Schema
+ * reading and is exposed for callers that already speak a non-null-
+ * everywhere category. Lists keep their inner-element non-null wrap
+ * either way (`[X!]` is the GraphQL idiom that mirrors
+ * `Schema.Array(NonNullable)`).
+ */
+type FieldNullability = "nullable" | "nonNull"
+
 export type DeriveOptions = {
   /** Required when the schema is a Struct without an inherent name. */
   readonly name?: string
   /** Optional dedupe registry shared across nested calls. */
   readonly registry?: Map<string, GraphQLObjectType>
+  /** Defaults to `"nullable"` (gold-SDL byte-equal policy). */
+  readonly fieldNullability?: FieldNullability
 }
 
 const stringLiteralValues = (ast: SchemaAST.AST): readonly string[] | undefined => {
@@ -84,11 +98,12 @@ const isArrays = (
 /**
  * Walk a `SchemaAST.AST` to a `GraphQLOutputType`. Returns the bare
  * type without `GraphQLNonNull` wrapping; field nullability is
- * applied at the field level.
+ * applied at the field level by the policy parameter.
  */
 const astToOutputType = (
   ast: SchemaAST.AST,
   registry: Map<string, GraphQLObjectType>,
+  policy: FieldNullability,
   hint?: string,
 ): GraphQLOutputType => {
   switch (ast._tag) {
@@ -111,7 +126,11 @@ const astToOutputType = (
   if (isArrays(ast)) {
     const rest = ast.rest[0]
     if (rest !== undefined) {
-      return new GraphQLList(new GraphQLNonNull(astToOutputType(rest, registry)))
+      // List-element non-null wrapping is preserved regardless of
+      // `policy`: `[X!]` is the GraphQL idiom that mirrors a
+      // `Schema.Array(NonNullable<X>)` wire shape — switching it off
+      // would drop information the schema source provides.
+      return new GraphQLList(new GraphQLNonNull(astToOutputType(rest, registry, policy)))
     }
   }
 
@@ -126,8 +145,9 @@ const astToOutputType = (
         const out: Record<string, { type: GraphQLOutputType }> = {}
         for (const prop of ast.propertySignatures) {
           if (typeof prop.name !== "string") continue
-          const inner = astToOutputType(prop.type, registry)
-          out[prop.name] = { type: new GraphQLNonNull(inner) }
+          const inner = astToOutputType(prop.type, registry, policy)
+          out[prop.name] =
+            policy === "nonNull" ? { type: new GraphQLNonNull(inner) } : { type: inner }
         }
         return out
       },
@@ -143,12 +163,17 @@ const astToOutputType = (
  * Top-level entry point. Lift an Effect `Schema.Codec` to a
  * `GraphQLObjectType` (or scalar). Caller supplies `name` for any
  * schema that doesn't carry an inherent identifier, and optionally a
- * `registry` to dedupe across multiple calls.
+ * `registry` to dedupe across multiple calls. The `fieldNullability`
+ * policy defaults to `"nullable"` — the gold-SDL byte-equal posture
+ * inherited from the Pothos baseline (`apps/default/schema.graphql`).
+ * Pass `"nonNull"` for callers that already speak a non-null-by-
+ * default category and want strict-Schema reading.
  */
 export const schemaToGraphQLOutputType = (
   schema: Schema.Top,
   options: DeriveOptions = {},
 ): GraphQLOutputType => {
   const registry = options.registry ?? new Map<string, GraphQLObjectType>()
-  return astToOutputType(schema.ast, registry, options.name)
+  const policy = options.fieldNullability ?? "nullable"
+  return astToOutputType(schema.ast, registry, policy, options.name)
 }
