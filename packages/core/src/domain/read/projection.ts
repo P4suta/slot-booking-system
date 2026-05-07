@@ -1,5 +1,12 @@
 import { Match } from "effect"
-import type { BookingCommon, Cancelled, Completed, Confirmed, NoShow } from "../booking/Booking.js"
+import type {
+  BookingCommon,
+  Cancelled,
+  Completed,
+  Confirmed,
+  Held,
+  NoShow,
+} from "../booking/Booking.js"
 import { confirmedSlotLens } from "../booking/optics.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
 import { asView, type BookingView } from "./BookingView.js"
@@ -89,3 +96,62 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
     }),
     Match.exhaustive,
   )
+
+/* -------------------------------------------------------------------------- */
+/* Profunctor wrapper                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Profunctor wrapper around the booking event-fold.
+ * `Projection<E, V>` is a `(seed: Held, events: readonly E[]) → V`
+ * morphism with two variances:
+ *
+ *   - **contravariant input** (`lmap` / left of `dimap`): pre-compose
+ *     a per-event upcaster `Upcaster<E', E>` so a legacy v_n event
+ *     stream feeds the same fold as the latest-version stream;
+ *   - **covariant output** (`rmap` / right of `dimap`): post-compose
+ *     a serialiser `BookingView → DTO` for the GraphQL / OpenAPI /
+ *     audit emit paths to share the read body.
+ *
+ * Profunctor laws (cross-validated by `projection.test.ts`):
+ *   - identity:    `dimap(p, x⇒x, x⇒x) ≡ p`
+ *   - composition: `dimap(p, f1 ∘ f2, g2 ∘ g1) ≡
+ *                   dimap(dimap(p, f1, g1), f2, g2)`
+ */
+export type Projection<E, V> = {
+  readonly run: (seed: Held, events: readonly E[]) => V
+}
+
+/** Smart constructor — wraps a fold function as a Projection. */
+export const makeProjection = <E, V>(
+  run: (seed: Held, events: readonly E[]) => V,
+): Projection<E, V> => ({ run })
+
+/** Contravariant input map. Pre-composes a per-event transformation. */
+export const lmap = <E, E2, V>(p: Projection<E, V>, f: (e: E2) => E): Projection<E2, V> => ({
+  run: (seed, events) => p.run(seed, events.map(f)),
+})
+
+/** Covariant output map. Post-composes a result transformation. */
+export const rmap = <E, V, V2>(p: Projection<E, V>, g: (v: V) => V2): Projection<E, V2> => ({
+  run: (seed, events) => g(p.run(seed, events)),
+})
+
+/** Bifunctorial map — both directions in one call. */
+export const dimap = <E, E2, V, V2>(
+  p: Projection<E, V>,
+  f: (e: E2) => E,
+  g: (v: V) => V2,
+): Projection<E2, V2> => ({
+  run: (seed, events) => g(p.run(seed, events.map(f))),
+})
+
+/**
+ * Canonical booking projection. The runtime fold delegates to
+ * {@link applyEvent} — this profunctor instance is the named entry
+ * point GraphQL / audit / OpenAPI emitters reach for when they need a
+ * `Projection<E, V>` value to compose with `dimap`.
+ */
+export const bookingProjection: Projection<BookingEvent, BookingView> = makeProjection(
+  (seed, events) => events.reduce<BookingView>((view, ev) => applyEvent(view, ev), asView(seed)),
+)

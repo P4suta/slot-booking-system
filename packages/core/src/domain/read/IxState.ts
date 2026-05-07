@@ -1,8 +1,8 @@
 import type { Brand } from "effect"
 import type { BookingState, Held } from "../booking/Booking.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
-import { asView, type BookingView } from "./BookingView.js"
-import { applyEvent } from "./projection.js"
+import type { BookingView } from "./BookingView.js"
+import { applyEvent, bookingProjection } from "./projection.js"
 
 /**
  * Phase 3 / BI Indexed read projections (ADR-0043 draft).
@@ -164,9 +164,9 @@ export const stepEvent =
  * only known at runtime, but the runtime body is still the natural
  * fold over IxState — `pure(seed) >>= step(e_1) >>= step(e_2) >>= …`.
  *
- * Each fold step delegates to `projection.applyEvent` (the runtime
- * dispatcher with the per-state guards), so this entry point is the
- * named, type-aware face of the existing `projection.replay` fold.
+ * Delegates to {@link bookingProjection} (the canonical
+ * profunctor instance over `applyEvent`); future `dimap`-composed
+ * projections share the same fold body.
  */
 export const runReplay = (seed: Held, events: readonly BookingEvent[]): BookingView =>
-  events.reduce<BookingView>((view, ev) => applyEvent(view, ev), asView(seed))
+  bookingProjection.run(seed, events)
