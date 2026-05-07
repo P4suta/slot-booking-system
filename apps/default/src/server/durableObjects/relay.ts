@@ -1,4 +1,4 @@
-import { fixedBackoff, nextAttemptAt } from "@booking/core"
+import { fixedBackoff, nextAttemptMs } from "@booking/core"
 import { asc, eq, lte } from "drizzle-orm"
 import { drizzle as drizzleD1 } from "drizzle-orm/d1"
 import { drizzle } from "drizzle-orm/durable-sqlite"
@@ -149,7 +149,9 @@ export const drainOutbox = async (
           .set({
             attempts,
             lastError: errMsg,
-            nextAttemptAt: nextAttemptAt(RELAY_BACKOFF, attempts - 1, nowMs),
+            nextAttemptAt: new Date(
+              nextAttemptMs(RELAY_BACKOFF, attempts - 1, nowMs),
+            ).toISOString(),
           })
           .where(eq(outbox.id, row.id))
           .run()

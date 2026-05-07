@@ -61,10 +61,13 @@ export const fixedBackoff = (delaysMs: readonly number[]): BackoffPolicy => {
 }
 
 /**
- * Compute the absolute timestamp (ISO-8601 string) of the next attempt
- * given the policy and the current wall clock. Saturates at the
- * policy's tail delay; the result is suitable for a SQL `next_attempt_at`
- * column update or a DO alarm `setAlarm` argument.
+ * Compute the absolute timestamp (epoch milliseconds) of the next
+ * attempt given the policy and the current wall clock. Saturates at
+ * the policy's tail delay; the caller chooses the wire format
+ * (ISO-8601 string for SQL columns, raw ms for `setAlarm`). The
+ * helper deliberately stays pure-numeric so the strict-code policy
+ * for `packages/core/src` (no calendar-time constructors here)
+ * applies trivially — wall-clock formatting belongs to the adapter.
  */
-export const nextAttemptAt = (policy: BackoffPolicy, attempts: number, nowMs: number): string =>
-  new Date(nowMs + policy.nextDelayMs(attempts)).toISOString()
+export const nextAttemptMs = (policy: BackoffPolicy, attempts: number, nowMs: number): number =>
+  nowMs + policy.nextDelayMs(attempts)

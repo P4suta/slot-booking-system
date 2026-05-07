@@ -58,7 +58,7 @@ export const AvailableSlotWireFields = {
   resourceIds: Schema.Array(ResourceIdSchema),
 } as const
 
-export const AvailableSlotInputWireSchema = Schema.Struct(AvailableSlotWireFields)
+const AvailableSlotInputWireSchema = Schema.Struct(AvailableSlotWireFields)
 type AvailableSlotInputDecoded = Schema.Schema.Type<typeof AvailableSlotInputWireSchema>
 
 export const HoldSlotInputWireSchema = Schema.Struct({
