@@ -2,6 +2,10 @@ import { Match, Schema } from "effect"
 import { StaffIdSchema } from "../types/EntityId.js"
 import { BookingCodeFromUserInputSchema } from "../value-objects/BookingCode.js"
 import { PhoneLast4Schema } from "../value-objects/PhoneLast4.js"
+import * as ScopeSet from "./ScopeSet.js"
+import { type StaffScope, StaffScopeSchema } from "./ScopeSet.js"
+
+export { type StaffScope, StaffScopeSchema } from "./ScopeSet.js"
 
 /**
  * Authorisation capability — the witness that a command-issuer has
@@ -31,27 +35,6 @@ import { PhoneLast4Schema } from "../value-objects/PhoneLast4.js"
  * driven: each `*Command` schema accepts only the capability subset that
  * may issue it (`Complete` ⊆ Staff; `Expire` ⊆ System; `Cancel` ⊆ any).
  */
-
-/**
- * Permissioned action the staff member may issue while bearing the
- * capability.
- *
- *   - `cancel` / `reschedule` / `complete` / `noshow` — per-booking
- *     state transitions (`Booking.apply` consults `hasScope`).
- *   - `manage_catalog` — create / update / delete on the six catalog
- *     entities (`services` / `providers` / `resources` / `business
- *     hours` / `closures` / `provider absences`). Granted to operators
- *     who own the deployment's day-to-day catalog edits; not granted
- *     to front-desk staff who only operate on bookings.
- */
-export const StaffScopeSchema = Schema.Literals([
-  "cancel",
-  "reschedule",
-  "complete",
-  "noshow",
-  "manage_catalog",
-])
-export type StaffScope = Schema.Schema.Type<typeof StaffScopeSchema>
 
 /**
  * Why a System capability was minted. Closed set — every new auto-issued
@@ -107,6 +90,14 @@ export const subjectOf: (cap: Capability) => "customer" | "staff" | "system" =
     Match.exhaustive,
   )
 
+/**
+ * Materialise a {@link StaffCapability}'s wire-shape `scopes` array into
+ * a {@link ScopeSet} bitmap so callers can compose / query capabilities
+ * via the semilattice's join + isSet primitives in `O(1)`.
+ */
+export const scopeSetOf = (cap: StaffCapability): ScopeSet.ScopeSet =>
+  ScopeSet.fromScopes(cap.scopes)
+
 /** Whether a staff capability includes the requested scope. */
 export const hasScope = (cap: StaffCapability, scope: StaffScope): boolean =>
-  cap.scopes.includes(scope)
+  ScopeSet.hasScope(scopeSetOf(cap), scope)
