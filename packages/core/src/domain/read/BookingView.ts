@@ -1,18 +1,28 @@
+import type { Brand } from "effect"
 import type { Booking } from "../booking/Booking.js"
 
 /**
- * Read-side view of a booking aggregate. Phase 0.7-α4 introduces the
- * type alias to **mark the read/write seam** so future divergence
- * (denormalised audit columns, materialised counters, capability
- * derivations) lands on the read side without leaking into transition
- * code on the write side.
+ * Read-side view of a booking aggregate. Structurally identical to
+ * {@link Booking} but **branded** so a `BookingView` cannot silently
+ * cross back into the write side: `apply(view, command)` is a
+ * compile-time error, forcing callers to acknowledge the read/write
+ * seam explicitly. The brand is phantom — no runtime change — and
+ * costs zero bytes of payload.
  *
- * Today's shape is structurally identical to {@link Booking}; the
- * alias is the editorial seam, not a runtime conversion. A later
- * phase may brand the alias to enforce the boundary at the type level
- * (preventing a stale projection from being fed back into `apply`),
- * but doing so requires every read-side surface (D1 reader, GraphQL
- * resolver, audit log) to thread `asView(...)` consistently — that
- * lift is out of scope for α4.
+ * Phase 3 (BI / pre-typestate) — the brand is a stepping stone toward
+ * the indexed-monad `ViewT<S>` (Phase 3.4) that will narrow the view
+ * by phantom state. Branding now means call sites already thread the
+ * conversion, so the indexed lift can rebrand at the same seam
+ * without churn.
  */
-export type BookingView = Booking
+export type BookingView = Booking & Brand.Brand<"BookingView">
+
+/**
+ * Witness the read/write seam: take a `Booking` (write-side aggregate
+ * fresh from `apply` or a Schema decode) and present it as a
+ * `BookingView` for projection / mirror / audit consumers.
+ *
+ * The cast is a compile-time-only operation — `Brand` carries no
+ * runtime data — so this is a free abstraction.
+ */
+export const asView = (booking: Booking): BookingView => booking as BookingView

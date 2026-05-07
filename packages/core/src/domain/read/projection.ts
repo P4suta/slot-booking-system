@@ -8,7 +8,7 @@ import type {
   NoShow,
 } from "../booking/Booking.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
-import type { BookingView } from "./BookingView.js"
+import { asView, type BookingView } from "./BookingView.js"
 
 /**
  * Read-side projection over the booking event log (Step 15, ADR-0024
@@ -57,7 +57,7 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
         state: "Confirmed",
         confirmedAt: ev.occurredAt,
       }
-      return next
+      return asView(next)
     }),
     Match.discriminator("type")("Cancelled", (ev): BookingView => {
       if (view.state !== "Held" && view.state !== "Confirmed") return view
@@ -68,7 +68,7 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
         reason: ev.reason,
         cancelledBy: ev.by,
       }
-      return next
+      return asView(next)
     }),
     Match.discriminator("type")("Rescheduled", (ev): BookingView => {
       if (view.state !== "Confirmed") return view
@@ -78,7 +78,7 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
         state: "Confirmed",
         confirmedAt: view.confirmedAt,
       }
-      return next
+      return asView(next)
     }),
     Match.discriminator("type")("Completed", (ev): BookingView => {
       if (view.state !== "Confirmed") return view
@@ -87,7 +87,7 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
         state: "Completed",
         completedAt: ev.occurredAt,
       }
-      return next
+      return asView(next)
     }),
     Match.discriminator("type")("NoShow", (ev): BookingView => {
       if (view.state !== "Confirmed") return view
@@ -97,7 +97,7 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
         markedAt: ev.occurredAt,
         markedBy: ev.by,
       }
-      return next
+      return asView(next)
     }),
     Match.exhaustive,
   )
@@ -105,7 +105,8 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
 /**
  * Replay an event stream from a `Held` seed. The seed event must be
  * present (it carries the bookingCode + slot + service identity), and
- * subsequent events are folded in order.
+ * subsequent events are folded in order. The seed is brand-lifted at
+ * the boundary so the rest of the fold operates on `BookingView`.
  */
 export const replay = (seed: Held, events: readonly BookingEvent[]): BookingView =>
-  events.reduce<BookingView>((view, ev) => applyEvent(view, ev), seed)
+  events.reduce<BookingView>((view, ev) => applyEvent(view, ev), asView(seed))

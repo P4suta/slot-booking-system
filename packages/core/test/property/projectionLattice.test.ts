@@ -5,6 +5,7 @@ import type { Booking } from "../../src/domain/booking/Booking.js"
 import type { Command } from "../../src/domain/booking/Command.js"
 import { apply } from "../../src/domain/booking/transitions.js"
 import type { BookingEvent } from "../../src/domain/events/BookingEvent.js"
+import { asView, type BookingView } from "../../src/domain/read/BookingView.js"
 import { applyEvent } from "../../src/domain/read/projection.js"
 import { newBookingEventId } from "../../src/domain/types/EntityId.js"
 import { at, baseHeld, customerCap, slot, staffCap, systemExpire } from "../_fixtures/index.js"
@@ -47,11 +48,11 @@ const expectRight = <A, E>(e: Result.Result<A, E>): A => {
   return e.success
 }
 
-const heldBooking = (): Booking => baseHeld()
+const heldBooking = (): BookingView => asView(baseHeld())
 
-const confirmedFrom = (held: Booking): Booking => {
+const confirmedFrom = (held: BookingView): BookingView => {
   const cmd: Command = { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }
-  return expectRight(apply(held, cmd, ev())).booking
+  return asView(expectRight(apply(held, cmd, ev())).booking)
 }
 
 const eventFor = (booking: Booking, command: Command): BookingEvent =>

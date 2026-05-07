@@ -1,12 +1,22 @@
 import { Result } from "effect"
 import { describe, expect, it } from "vitest"
+import type { Booking } from "../../src/domain/booking/Booking.js"
 import type { Command } from "../../src/domain/booking/Command.js"
 import { apply } from "../../src/domain/booking/transitions.js"
-import { applyEvent, replay } from "../../src/domain/read/projection.js"
+import type { BookingEvent } from "../../src/domain/events/BookingEvent.js"
+import { asView, type BookingView } from "../../src/domain/read/BookingView.js"
+import { applyEvent as applyEventCore, replay } from "../../src/domain/read/projection.js"
 import { newBookingEventId } from "../../src/domain/types/EntityId.js"
 import { at, baseHeld, customerCap, slot, staffCap } from "../_fixtures/index.js"
 
 const ev = newBookingEventId
+
+/**
+ * Lift the test's raw `Booking` fixtures through the read/write seam
+ * before handing them to the projection. The brand cast is purely
+ * compile-time so this is a free wrapper.
+ */
+const applyEvent = (b: Booking, e: BookingEvent): BookingView => applyEventCore(asView(b), e)
 
 const expectRight = <A, E>(e: Result.Result<A, E>): A => {
   if (Result.isFailure(e)) {
