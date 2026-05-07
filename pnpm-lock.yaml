@@ -44,12 +44,6 @@ importers:
       '@opentelemetry/api':
         specifier: latest
         version: 1.9.1
-      '@pothos/core':
-        specifier: latest
-        version: 4.12.0(graphql@16.14.0)
-      '@pothos/plugin-errors':
-        specifier: latest
-        version: 4.9.0(@pothos/core@4.12.0(graphql@16.14.0))(graphql@16.14.0)
       drizzle-orm:
         specifier: rc
         version: 1.0.0-rc.2(@cloudflare/workers-types@4.20260507.1)(@opentelemetry/api@1.9.1)(effect@4.0.0-beta.62)(zod@4.4.3)
@@ -1985,17 +1979,6 @@ packages:
 
   '@poppinss/exception@1.2.3':
     resolution: {integrity: sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw==}
-
-  '@pothos/core@4.12.0':
-    resolution: {integrity: sha512-PeiODrj3GjQ7Nbs/5p65DEyBWZTSGGjgGO/BgaMEqS1jBNX/2zJTEQJA9zM5uPmCHUCDjE7Qn2U7lOi0ALp/8A==}
-    peerDependencies:
-      graphql: ^16.10.0
-
-  '@pothos/plugin-errors@4.9.0':
-    resolution: {integrity: sha512-RargBiHpg+LTQb8VcpR3FHX0cSLR2+rpU70v1Hhj2caOoNOMP7J+T2Y9vyXqJo3d+DtchPBjtixZ3lkQ11S/wQ==}
-    peerDependencies:
-      '@pothos/core': '*'
-      graphql: ^16.10.0
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -5600,15 +5583,6 @@ snapshots:
       supports-color: 10.2.2
 
   '@poppinss/exception@1.2.3': {}
-
-  '@pothos/core@4.12.0(graphql@16.14.0)':
-    dependencies:
-      graphql: 16.14.0
-
-  '@pothos/plugin-errors@4.9.0(@pothos/core@4.12.0(graphql@16.14.0))(graphql@16.14.0)':
-    dependencies:
-      '@pothos/core': 4.12.0(graphql@16.14.0)
-      graphql: 16.14.0
 
   '@protobufjs/aspromise@1.1.2': {}
 

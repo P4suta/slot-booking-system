@@ -20,8 +20,6 @@
     "@js-temporal/polyfill": "latest",
     "@microlabs/otel-cf-workers": "latest",
     "@opentelemetry/api": "latest",
-    "@pothos/core": "latest",
-    "@pothos/plugin-errors": "latest",
     "drizzle-orm": "rc",
     "effect": "beta",
     "graphql": "latest",
