@@ -30,6 +30,21 @@ back.
 | [0021](./adr/0021-tsc-references.md)                | tsc Project References for src ↔ test isolation              | accepted |
 | [0026](./adr/0026-logger-clock-port.md)             | Logger and Clock port wiring on Cloudflare Workers           | accepted |
 | [0027](./adr/0027-day-schedule-durable-object.md)   | Per-day DurableObject + outbox-to-D1 — write-side architecture | accepted |
+| [0028](./adr/0028-do-sql-storage.md)                | DurableObject SQL storage via drizzle-orm/durable-sqlite     | accepted |
+| [0029](./adr/0029-event-sourced-repository.md)      | EventSourcedRepository port + atomic save semantics          | accepted |
+| [0030](./adr/0030-do-rpc-either.md)                 | DurableObject RPC methods returning `Either<E, R>`           | superseded by 0037 |
+| [0031](./adr/0031-xstate-removal.md)                | Remove the xstate runtime; the transition table is the spec  | accepted |
+| [0032](./adr/0032-bitemporal-versioning-row-codec.md) | Bitemporal events + version literal + schema-driven row codec | accepted |
+| [0033](./adr/0033-capability-newtype-bloom-removal.md) | Capability newtype + drop the bloom-filter pre-screen      | accepted |
+| [0034](./adr/0034-greedy-slot-matching.md)          | Greedy provider/resource matching for AvailableSlots         | accepted |
+| [0035](./adr/0035-d1-batch-atomicity-limits.md)     | D1 batch atomicity limits + idempotency-as-rescue            | accepted |
+| [0036](./adr/0036-schema-source-of-truth.md)        | Schema as the source of truth + Capability stays first-class | accepted |
+| [0037](./adr/0037-effect-rpc-do-transport.md)       | `@effect/rpc` over a Cloudflare Durable Object dispatch method | accepted |
+| [0038](./adr/0038-otel-semconv-unification.md)      | OpenTelemetry semconv unification of Trace · Audit · Log     | accepted |
+| [0039](./adr/0039-effect-4-drizzle-1-migration.md)  | Effect 4 + drizzle-orm 1 migration retrospective (Phase 2.2) | accepted |
+
+> ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
+> for proposals that did not survive review).
 
 ## Authoring a new ADR
 
