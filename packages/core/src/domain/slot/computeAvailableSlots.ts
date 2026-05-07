@@ -13,6 +13,7 @@ import { MINUTES_PER_DAY } from "../types/Temporal.js"
 import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import type { ResourceType } from "../value-objects/ResourceType.js"
 import * as B from "./Bitmap.js"
+import { type Adjacency, matchBipartite } from "./bipartite.js"
 
 /**
  * Deployment-scoped, request-independent inputs to slot computation.
@@ -239,19 +240,48 @@ const pickProvider = (
   return undefined
 }
 
+/**
+ * Match the service's required resource types to concrete resource
+ * instances via a bipartite maximum-cardinality matching (ADR-0040).
+ * Left nodes are the requirement slots in the order
+ * `requiredTypes.values()` produces them; right nodes are every
+ * `(type, resource)` candidate available at `startMin` in ID-ascending
+ * order. An edge connects requirement L to candidate R when
+ * `candidates[R].type === requiredTypes[L]`. A perfect matching of
+ * size `requiredTypes.size` is the witness that the slot is
+ * feasible; anything less means at least one type cannot be filled
+ * without double-assigning a resource, and the slot is dropped.
+ *
+ * The previous greedy first-match (ADR-0034) was correct for the
+ * single-type-per-resource model. The matching primitive subsumes
+ * it deterministically (left-first, right-input-order augmentation)
+ * and gives the codebase a ready-made algorithm for the next time a
+ * resource gains multiple type tags or weighted preferences.
+ */
 const pickResources = (
   resourcesByType: ReadonlyMap<ResourceType, readonly ResourceAvailability[]>,
   requiredTypes: ReadonlySet<ResourceType>,
   startMin: number,
 ): readonly ResourceId[] | undefined => {
-  const chosen: ResourceId[] = []
-  for (const requiredType of requiredTypes) {
-    const candidates = resourcesByType.get(requiredType) ?? []
-    const pick = candidates.find((r) => !chosen.includes(r.id) && r.runStarts.has(startMin))
-    if (!pick) return undefined
-    chosen.push(pick.id)
+  const types = [...requiredTypes]
+  const candidates: readonly { readonly id: ResourceId; readonly type: ResourceType }[] = types
+    .flatMap((t) => resourcesByType.get(t) ?? [])
+    .filter((r) => r.runStarts.has(startMin))
+    .map(({ id, type }) => ({ id, type }))
+  if (candidates.length === 0 && types.length > 0) return undefined
+  const adj: Adjacency = types.map((t) =>
+    candidates.map((c, idx) => (c.type === t ? idx : -1)).filter((idx): idx is number => idx >= 0),
+  )
+  const { assignment, cardinality } = matchBipartite(adj, candidates.length)
+  if (cardinality !== types.length) return undefined
+  const out: ResourceId[] = []
+  for (const r of assignment) {
+    if (r === null) return undefined
+    const c = candidates[r]
+    if (c === undefined) return undefined
+    out.push(c.id)
   }
-  return chosen
+  return out
 }
 
 const groupByType = (

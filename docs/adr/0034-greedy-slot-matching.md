@@ -1,6 +1,6 @@
 # 0034. Greedy provider/resource matching for AvailableSlots
 
-- Status: accepted
+- Status: superseded by [ADR-0040](./0040-bipartite-slot-matching.md)
 - Date: 2026-05-06
 - Deciders: Yasunobu
 - Tags: algorithm, determinism
