@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Match, Schema } from "effect"
 import { StaffIdSchema } from "../types/EntityId.js"
 import { BookingCodeFromUserInputSchema } from "../value-objects/BookingCode.js"
 import { PhoneLast4Schema } from "../value-objects/PhoneLast4.js"
@@ -99,16 +99,13 @@ export type Capability = Schema.Schema.Type<typeof CapabilitySchema>
  * scalar — call sites that need the wire-shape can read this rather
  * than serialise the full capability (which carries credentials).
  */
-export const subjectOf = (cap: Capability): "customer" | "staff" | "system" => {
-  switch (cap._tag) {
-    case "CustomerCapability":
-      return "customer"
-    case "StaffCapability":
-      return "staff"
-    case "SystemCapability":
-      return "system"
-  }
-}
+export const subjectOf: (cap: Capability) => "customer" | "staff" | "system" =
+  Match.type<Capability>().pipe(
+    Match.discriminator("_tag")("CustomerCapability", () => "customer" as const),
+    Match.discriminator("_tag")("StaffCapability", () => "staff" as const),
+    Match.discriminator("_tag")("SystemCapability", () => "system" as const),
+    Match.exhaustive,
+  )
 
 /** Whether a staff capability includes the requested scope. */
 export const hasScope = (cap: StaffCapability, scope: StaffScope): boolean =>
