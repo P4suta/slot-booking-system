@@ -1,9 +1,16 @@
-import { devRedactCause, errorToGraphQLExtensions, prodRedactCause } from "@booking/core"
+import {
+  devRedactCause,
+  type ErrorSeverity,
+  errorToGraphQLExtensions,
+  prodRedactCause,
+  prodSamplingRates,
+} from "@booking/core"
 import { trace } from "@opentelemetry/api"
 import { GraphQLError } from "graphql"
 import { createYoga, type Plugin } from "graphql-yoga"
 import type { DaySchedule } from "../durableObjects/DaySchedule.js"
 import type { GraphQLContext } from "./context.js"
+import { operationLogPlugin } from "./plugins/operationLogPlugin.js"
 import { schema } from "./schema.js"
 
 type Env = {
@@ -25,6 +32,34 @@ type Env = {
  */
 const redactorFor = (env: Env): GraphQLContext["redactCause"] =>
   env.IS_DEV === "1" ? devRedactCause : prodRedactCause
+
+const modeOf = (env: Env): "dev" | "prod" => (env.IS_DEV === "1" ? "dev" : "prod")
+
+const decideAtRate = (rate: number): boolean => {
+  if (rate >= 1) return true
+  if (rate <= 0) return false
+  return Math.random() < rate
+}
+
+/**
+ * Build the operation-log emitter from the worker `env`. Dev mode
+ * passes everything to `console.info`; prod mode applies a
+ * severity-indexed rate (table at `prodSamplingRates()`, ADR-0026
+ * sampler shape). This is the sync mirror of the Effect-runtime
+ * `LogSamplerLive` — both consume the same rate table so log
+ * behaviour stays uniform whether the call site is the yoga plugin
+ * (hot-path sync) or a use-case via the `LogSampler` port (Effect).
+ */
+const operationLogEmitFor = (env: Env) => {
+  const mode = modeOf(env)
+  const rates = prodSamplingRates()
+  return (record: Readonly<Record<string, unknown>>) => {
+    const severity = (record.severity as ErrorSeverity | undefined) ?? "domain"
+    if (mode !== "dev" && !decideAtRate(rates[severity])) return
+    // biome-ignore lint/suspicious/noConsole: structured access log sink — Workers Logs ingestion
+    console.info(JSON.stringify(record))
+  }
+}
 
 type DomainErrorExtensions = {
   readonly __typename?: unknown
@@ -145,7 +180,7 @@ export const yoga = createYoga<Env, GraphQLContext>({
   graphqlEndpoint: "/graphql",
   landingPage: false,
   graphiql: { defaultQuery: "{ __schema { types { name } } }" },
-  plugins: [useDevErrorExtensions, useDomainErrorTrace],
+  plugins: [operationLogPlugin(), useDevErrorExtensions, useDomainErrorTrace],
   context: (initial): GraphQLContext => ({
     env: {
       DB: initial.DB,
@@ -155,5 +190,7 @@ export const yoga = createYoga<Env, GraphQLContext>({
     },
     request: initial.request,
     redactCause: redactorFor(initial),
+    runtimeMode: modeOf(initial),
+    emitOperationLog: operationLogEmitFor(initial),
   }),
 })

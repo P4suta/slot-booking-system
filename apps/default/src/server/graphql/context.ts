@@ -35,4 +35,14 @@ export type GraphQLContext = {
    * synchronous (no `Effect.runSync` inside `onExecuteDone`).
    */
   readonly redactCause: (cause: unknown) => Record<string, unknown>
+  /** Active {@link RuntimeMode}, exposed for sync plugins. */
+  readonly runtimeMode: "dev" | "prod"
+  /**
+   * Operation-log emitter — Yoga's `operationLogPlugin` calls this
+   * once per executed operation with the structured record. The
+   * implementation is wired in `yoga.ts` and applies severity-based
+   * sampling before emitting (mirrors {@link LogSampler} semantics
+   * for the sync plugin chain).
+   */
+  readonly emitOperationLog: (record: Readonly<Record<string, unknown>>) => void
 }
