@@ -1,5 +1,6 @@
 import type { AvailableSlotShape } from "@booking/core"
 import { Result, Schema } from "effect"
+import { AvailableSlotWireFields } from "../durableObjects/inputCodec.js"
 
 /**
  * HMAC-signed token over an `AvailableSlot` payload. Phase 0.7-α5
@@ -68,17 +69,16 @@ const importHmacKey = async (secretHex: string): Promise<CryptoKey> => {
 
 /**
  * Single source of truth for the JSON payload signed inside the
- * token. The `v` literal is the wire-format discriminator so a
- * future field rename (or HMAC algorithm bump) lands as a new
- * literal value rather than a silent shape drift.
+ * token. The five slot fields are taken verbatim from
+ * `AvailableSlotWireFields` (also used by the RPC inputCodec), so
+ * the token schema and the RPC input schema cannot drift; the `v`
+ * literal is the wire-format discriminator so a future field rename
+ * (or HMAC algorithm bump) lands as a new literal value rather than
+ * a silent shape change.
  */
 const SlotPayloadSchema = Schema.Struct({
   v: Schema.Literal(TOKEN_VERSION),
-  serviceId: Schema.String,
-  start: Schema.String,
-  end: Schema.String,
-  providerId: Schema.String,
-  resourceIds: Schema.Array(Schema.String),
+  ...AvailableSlotWireFields,
 })
 
 type SlotPayload = Schema.Schema.Type<typeof SlotPayloadSchema>

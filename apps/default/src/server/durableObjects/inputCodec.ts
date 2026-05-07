@@ -41,14 +41,24 @@ import { Effect, Schema } from "effect"
  * the wire format.
  */
 
-const AvailableSlotInputWireSchema = Schema.Struct({
+/**
+ * Shared field shape for an `AvailableSlot` on the wire — the same
+ * fields appear inside the HMAC-signed slot token (see
+ * `auth/slotToken.ts`) and inside every RPC method that accepts a
+ * slot. Hoisting the field record keeps both consumers locked to one
+ * declaration so a future field rename (or branded-id swap) lands in
+ * a single place.
+ */
+export const AvailableSlotWireFields = {
   serviceId: ServiceIdSchema,
   /** ISO-8601 instant — `2026-05-06T10:00:00Z`. */
   start: Schema.String,
   end: Schema.String,
   providerId: ProviderIdSchema,
   resourceIds: Schema.Array(ResourceIdSchema),
-})
+} as const
+
+export const AvailableSlotInputWireSchema = Schema.Struct(AvailableSlotWireFields)
 type AvailableSlotInputDecoded = Schema.Schema.Type<typeof AvailableSlotInputWireSchema>
 
 export const HoldSlotInputWireSchema = Schema.Struct({
