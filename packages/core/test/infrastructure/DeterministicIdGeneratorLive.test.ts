@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { IdGenerator } from "../../src/application/ports/IdGenerator.js"
 import { parseBookingCode } from "../../src/domain/value-objects/BookingCode.js"
@@ -59,7 +59,7 @@ describe("DeterministicIdGeneratorLive", () => {
     })
     const code = await Effect.runPromise(program.pipe(Effect.provide(DeterministicIdGeneratorLive)))
     expect(code).toHaveLength(7)
-    expect(Either.isRight(parseBookingCode(code))).toBe(true)
+    expect(Result.isSuccess(parseBookingCode(code))).toBe(true)
   })
 
   it("different seeds produce different starting ids", async () => {

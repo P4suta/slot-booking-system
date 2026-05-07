@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import type { Booking, BookingState } from "../../src/domain/booking/Booking.js"
@@ -43,9 +43,9 @@ import { at, baseHeld, customerCap, slot, staffCap, systemExpire } from "../_fix
 
 const ev = (): BookingEventId => newBookingEventId()
 
-const expectRight = <A, E>(e: Either.Either<A, E>): A => {
-  if (Either.isLeft(e)) throw new Error(`expected Right: ${JSON.stringify(e.left)}`)
-  return e.right
+const expectRight = <A, E>(e: Result.Result<A, E>): A => {
+  if (Result.isFailure(e)) throw new Error(`expected Right: ${JSON.stringify(e.failure)}`)
+  return e.success
 }
 
 /* -------------------------------------------------------------------------- */

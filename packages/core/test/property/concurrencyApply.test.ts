@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import type { Booking } from "../../src/domain/booking/Booking.js"
@@ -18,7 +18,7 @@ import { at, baseHeld, customerCap, slot, staffCap, systemExpire } from "../_fix
  * suite. The properties here pin the domain-level invariants that
  * survive any interleaving:
  *
- *   1. apply is total — never throws, always returns Either.
+ *   1. apply is total — never throws, always returns Result.
  *   2. apply respects terminality — once the booking enters a
  *      terminal state, every subsequent apply is rejected (the
  *      `Already*` family).
@@ -58,9 +58,9 @@ describe("apply property suite (race-aware invariants)", () => {
           let current: Booking = baseHeld()
           for (const cmd of cmds) {
             const result = apply(current, cmd, ev())
-            // Either Right or Left — both are observable, neither throws.
-            expect(Either.isRight(result) || Either.isLeft(result)).toBe(true)
-            if (Either.isRight(result)) current = result.right.booking
+            // Result Right or Left — both are observable, neither throws.
+            expect(Result.isSuccess(result) || Result.isFailure(result)).toBe(true)
+            if (Result.isSuccess(result)) current = result.success.booking
           }
           return true
         },
@@ -80,10 +80,10 @@ describe("apply property suite (race-aware invariants)", () => {
             const result = apply(current, cmd, ev())
             if (terminal) {
               // After terminality, the apply must reject.
-              expect(Either.isLeft(result)).toBe(true)
+              expect(Result.isFailure(result)).toBe(true)
             }
-            if (Either.isRight(result)) {
-              current = result.right.booking
+            if (Result.isSuccess(result)) {
+              current = result.success.booking
               if (TERMINAL.has(current.state)) terminal = true
             }
           }
@@ -99,13 +99,13 @@ describe("apply property suite (race-aware invariants)", () => {
       fc.property(fc.constantFrom(...sampleCommands), (cmd) => {
         const initial = baseHeld()
         const result = apply(initial, cmd, ev())
-        if (Either.isLeft(result)) {
+        if (Result.isFailure(result)) {
           // No transition happened; nothing observable changed at the domain layer.
           return true
         }
         // A successful apply must produce a Booking with the same id but
         // with either a different state or a different slot.
-        const next = result.right.booking
+        const next = result.success.booking
         expect(next.id).toBe(initial.id)
         const sameState = next.state === initial.state
         const sameSlot =

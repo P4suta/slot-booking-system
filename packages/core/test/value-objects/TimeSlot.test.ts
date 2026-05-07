@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either } from "effect"
+import { Result } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   containedIn,
@@ -13,14 +13,14 @@ const at = (iso: string): Temporal.Instant => Temporal.Instant.from(iso)
 
 const slot = (startIso: string, endIso: string): TimeSlot => {
   const r = makeTimeSlot(at(startIso), at(endIso))
-  if (Either.isLeft(r)) throw new Error(`bad slot: ${r.left._tag}`)
-  return r.right
+  if (Result.isFailure(r)) throw new Error(`bad slot: ${r.failure._tag}`)
+  return r.success
 }
 
 describe("TimeSlot", () => {
   it("rejects start ≥ end", () => {
     const r = makeTimeSlot(at("2026-05-05T10:00:00Z"), at("2026-05-05T10:00:00Z"))
-    expect(Either.isLeft(r)).toBe(true)
+    expect(Result.isFailure(r)).toBe(true)
   })
 
   it("computes whole-minute duration", () => {

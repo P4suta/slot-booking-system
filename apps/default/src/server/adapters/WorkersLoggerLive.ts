@@ -50,8 +50,7 @@ const decoratedEmit =
   (level: "info" | "warn" | "error") =>
   (payload: LogPayload): Effect.Effect<void> =>
     Effect.flatMap(getCurrentTraceId, (traceId) =>
-      Effect.zipRight(
-        emitSpanEvent(level)(payload),
+      Effect.flatMap(emitSpanEvent(level)(payload), () =>
         Effect.sync(() => {
           const decorated: LogPayload =
             payload.traceId !== undefined || traceId === undefined

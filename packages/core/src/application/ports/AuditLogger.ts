@@ -18,9 +18,9 @@ import type { AuditEntry } from "../../domain/errors/derivations.js"
  * audit rows extend the same shape with `outcome: "accepted"` once
  * Phase 0.12 wires the success path.
  */
-export class AuditLogger extends Context.Tag("@booking/core/AuditLogger")<
+export class AuditLogger extends Context.Service<
   AuditLogger,
   {
     readonly write: (entry: AuditEntry) => Effect.Effect<void>
   }
->() {}
+>()("@booking/core/AuditLogger") {}

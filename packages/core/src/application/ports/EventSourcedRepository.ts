@@ -82,10 +82,8 @@ export type SecondaryIndexOps<I, K> = {
  * between Cloudflare DO local SQLite and D1 (read-side mirror); tests
  * bind to an STM-backed in-memory fake.
  */
-export class BookingEventSourcedRepository extends Context.Tag(
-  "@booking/core/BookingEventSourcedRepository",
-)<
+export class BookingEventSourcedRepository extends Context.Service<
   BookingEventSourcedRepository,
   EventSourcedRepositoryOps<Booking, BookingId, BookingEvent> &
     SecondaryIndexOps<BookingId, BookingCode>
->() {}
+>()("@booking/core/BookingEventSourcedRepository") {}

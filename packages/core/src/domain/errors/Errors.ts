@@ -57,7 +57,7 @@ const metadataOf = (e: DomainError): ErrorClass => e.constructor as unknown as E
 /* Validation errors — boundary parsing failed.                                */
 /* -------------------------------------------------------------------------- */
 
-export class InvalidPhoneLast4Error extends Schema.TaggedError<InvalidPhoneLast4Error>()(
+export class InvalidPhoneLast4Error extends Schema.TaggedErrorClass<InvalidPhoneLast4Error>()(
   "InvalidPhoneLast4",
   { reason: Schema.String },
 ) {
@@ -65,7 +65,7 @@ export class InvalidPhoneLast4Error extends Schema.TaggedError<InvalidPhoneLast4
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidNameKanaError extends Schema.TaggedError<InvalidNameKanaError>()(
+export class InvalidNameKanaError extends Schema.TaggedErrorClass<InvalidNameKanaError>()(
   "InvalidNameKana",
   { reason: Schema.String },
 ) {
@@ -76,13 +76,13 @@ export class InvalidNameKanaError extends Schema.TaggedError<InvalidNameKanaErro
 /** Why a booking code failed to parse. */
 export type BookingCodeReason = "wrong-length" | "invalid-character" | "checksum-mismatch"
 
-export const BookingCodeReasonSchema: Schema.Schema<BookingCodeReason> = Schema.Literal(
+export const BookingCodeReasonSchema = Schema.Literals([
   "wrong-length",
   "invalid-character",
   "checksum-mismatch",
-)
+])
 
-export class InvalidBookingCodeError extends Schema.TaggedError<InvalidBookingCodeError>()(
+export class InvalidBookingCodeError extends Schema.TaggedErrorClass<InvalidBookingCodeError>()(
   "InvalidBookingCode",
   { reason: BookingCodeReasonSchema },
 ) {
@@ -90,7 +90,7 @@ export class InvalidBookingCodeError extends Schema.TaggedError<InvalidBookingCo
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidFreeTextError extends Schema.TaggedError<InvalidFreeTextError>()(
+export class InvalidFreeTextError extends Schema.TaggedErrorClass<InvalidFreeTextError>()(
   "InvalidFreeText",
   { reason: Schema.String },
 ) {
@@ -98,7 +98,7 @@ export class InvalidFreeTextError extends Schema.TaggedError<InvalidFreeTextErro
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidDurationError extends Schema.TaggedError<InvalidDurationError>()(
+export class InvalidDurationError extends Schema.TaggedErrorClass<InvalidDurationError>()(
   "InvalidDuration",
   { reason: Schema.String },
 ) {
@@ -106,7 +106,7 @@ export class InvalidDurationError extends Schema.TaggedError<InvalidDurationErro
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidHoldingDaysError extends Schema.TaggedError<InvalidHoldingDaysError>()(
+export class InvalidHoldingDaysError extends Schema.TaggedErrorClass<InvalidHoldingDaysError>()(
   "InvalidHoldingDays",
   { reason: Schema.String },
 ) {
@@ -114,7 +114,7 @@ export class InvalidHoldingDaysError extends Schema.TaggedError<InvalidHoldingDa
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidTimeSlotError extends Schema.TaggedError<InvalidTimeSlotError>()(
+export class InvalidTimeSlotError extends Schema.TaggedErrorClass<InvalidTimeSlotError>()(
   "InvalidTimeSlot",
   { reason: Schema.String },
 ) {
@@ -122,21 +122,27 @@ export class InvalidTimeSlotError extends Schema.TaggedError<InvalidTimeSlotErro
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidBitmapError extends Schema.TaggedError<InvalidBitmapError>()("InvalidBitmap", {
-  reason: Schema.String,
-}) {
+export class InvalidBitmapError extends Schema.TaggedErrorClass<InvalidBitmapError>()(
+  "InvalidBitmap",
+  {
+    reason: Schema.String,
+  },
+) {
   static readonly code = "E_VAL_BITMAP"
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidSkillError extends Schema.TaggedError<InvalidSkillError>()("InvalidSkill", {
-  reason: Schema.String,
-}) {
+export class InvalidSkillError extends Schema.TaggedErrorClass<InvalidSkillError>()(
+  "InvalidSkill",
+  {
+    reason: Schema.String,
+  },
+) {
   static readonly code = "E_VAL_SKILL"
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidResourceTypeError extends Schema.TaggedError<InvalidResourceTypeError>()(
+export class InvalidResourceTypeError extends Schema.TaggedErrorClass<InvalidResourceTypeError>()(
   "InvalidResourceType",
   { reason: Schema.String },
 ) {
@@ -144,7 +150,7 @@ export class InvalidResourceTypeError extends Schema.TaggedError<InvalidResource
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidWeekdayError extends Schema.TaggedError<InvalidWeekdayError>()(
+export class InvalidWeekdayError extends Schema.TaggedErrorClass<InvalidWeekdayError>()(
   "InvalidWeekday",
   { reason: Schema.String },
 ) {
@@ -152,7 +158,7 @@ export class InvalidWeekdayError extends Schema.TaggedError<InvalidWeekdayError>
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidOpenWindowError extends Schema.TaggedError<InvalidOpenWindowError>()(
+export class InvalidOpenWindowError extends Schema.TaggedErrorClass<InvalidOpenWindowError>()(
   "InvalidOpenWindow",
   { reason: Schema.String },
 ) {
@@ -160,7 +166,7 @@ export class InvalidOpenWindowError extends Schema.TaggedError<InvalidOpenWindow
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidAbsenceError extends Schema.TaggedError<InvalidAbsenceError>()(
+export class InvalidAbsenceError extends Schema.TaggedErrorClass<InvalidAbsenceError>()(
   "InvalidAbsence",
   { reason: Schema.String },
 ) {
@@ -168,7 +174,7 @@ export class InvalidAbsenceError extends Schema.TaggedError<InvalidAbsenceError>
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidBusinessTimeZoneError extends Schema.TaggedError<InvalidBusinessTimeZoneError>()(
+export class InvalidBusinessTimeZoneError extends Schema.TaggedErrorClass<InvalidBusinessTimeZoneError>()(
   "InvalidBusinessTimeZone",
   { value: Schema.String },
 ) {
@@ -176,7 +182,7 @@ export class InvalidBusinessTimeZoneError extends Schema.TaggedError<InvalidBusi
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export class InvalidEntityIdError extends Schema.TaggedError<InvalidEntityIdError>()(
+export class InvalidEntityIdError extends Schema.TaggedErrorClass<InvalidEntityIdError>()(
   "InvalidEntityId",
   {
     expectedPrefix: Schema.String,
@@ -187,9 +193,14 @@ export class InvalidEntityIdError extends Schema.TaggedError<InvalidEntityIdErro
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export const CatalogEntitySchema: Schema.Schema<
-  "service" | "provider" | "resource" | "businessHours" | "closure" | "providerAbsence"
-> = Schema.Literal("service", "provider", "resource", "businessHours", "closure", "providerAbsence")
+export const CatalogEntitySchema = Schema.Literals([
+  "service",
+  "provider",
+  "resource",
+  "businessHours",
+  "closure",
+  "providerAbsence",
+])
 export type CatalogEntity = Schema.Schema.Type<typeof CatalogEntitySchema>
 
 /**
@@ -200,7 +211,7 @@ export type CatalogEntity = Schema.Schema.Type<typeof CatalogEntitySchema>
  * carrier `entity` records which entity rejected, `reason` carries the
  * Schema parse summary.
  */
-export class InvalidCatalogInputError extends Schema.TaggedError<InvalidCatalogInputError>()(
+export class InvalidCatalogInputError extends Schema.TaggedErrorClass<InvalidCatalogInputError>()(
   "InvalidCatalogInput",
   {
     entity: CatalogEntitySchema,
@@ -211,9 +222,11 @@ export class InvalidCatalogInputError extends Schema.TaggedError<InvalidCatalogI
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export const MissingStaffCapabilityReasonSchema: Schema.Schema<
-  "absent" | "malformed" | "wrong_kind"
-> = Schema.Literal("absent", "malformed", "wrong_kind")
+export const MissingStaffCapabilityReasonSchema = Schema.Literals([
+  "absent",
+  "malformed",
+  "wrong_kind",
+])
 export type MissingStaffCapabilityReason = Schema.Schema.Type<
   typeof MissingStaffCapabilityReasonSchema
 >
@@ -226,7 +239,7 @@ export type MissingStaffCapabilityReason = Schema.Schema.Type<
  * of *scope* on an otherwise-valid `StaffCapability` is a domain rule
  * error (`InsufficientCapability`), not this one.
  */
-export class MissingStaffCapabilityError extends Schema.TaggedError<MissingStaffCapabilityError>()(
+export class MissingStaffCapabilityError extends Schema.TaggedErrorClass<MissingStaffCapabilityError>()(
   "MissingStaffCapability",
   { reason: MissingStaffCapabilityReasonSchema },
 ) {
@@ -238,7 +251,7 @@ export class MissingStaffCapabilityError extends Schema.TaggedError<MissingStaff
 /* Domain errors — business rule violations.                                   */
 /* -------------------------------------------------------------------------- */
 
-export class BookingNotFoundError extends Schema.TaggedError<BookingNotFoundError>()(
+export class BookingNotFoundError extends Schema.TaggedErrorClass<BookingNotFoundError>()(
   "BookingNotFound",
   {},
 ) {
@@ -246,7 +259,7 @@ export class BookingNotFoundError extends Schema.TaggedError<BookingNotFoundErro
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class PhoneMismatchError extends Schema.TaggedError<PhoneMismatchError>()(
+export class PhoneMismatchError extends Schema.TaggedErrorClass<PhoneMismatchError>()(
   "PhoneMismatch",
   {},
 ) {
@@ -254,7 +267,7 @@ export class PhoneMismatchError extends Schema.TaggedError<PhoneMismatchError>()
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class AlreadyCancelledError extends Schema.TaggedError<AlreadyCancelledError>()(
+export class AlreadyCancelledError extends Schema.TaggedErrorClass<AlreadyCancelledError>()(
   "AlreadyCancelled",
   {},
 ) {
@@ -262,7 +275,7 @@ export class AlreadyCancelledError extends Schema.TaggedError<AlreadyCancelledEr
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class AlreadyCompletedError extends Schema.TaggedError<AlreadyCompletedError>()(
+export class AlreadyCompletedError extends Schema.TaggedErrorClass<AlreadyCompletedError>()(
   "AlreadyCompleted",
   {},
 ) {
@@ -270,7 +283,7 @@ export class AlreadyCompletedError extends Schema.TaggedError<AlreadyCompletedEr
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class AlreadyNoShowError extends Schema.TaggedError<AlreadyNoShowError>()(
+export class AlreadyNoShowError extends Schema.TaggedErrorClass<AlreadyNoShowError>()(
   "AlreadyNoShow",
   {},
 ) {
@@ -278,12 +291,15 @@ export class AlreadyNoShowError extends Schema.TaggedError<AlreadyNoShowError>()
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class SlotExpiredError extends Schema.TaggedError<SlotExpiredError>()("SlotExpired", {}) {
+export class SlotExpiredError extends Schema.TaggedErrorClass<SlotExpiredError>()(
+  "SlotExpired",
+  {},
+) {
   static readonly code = "E_DOM_SLOT_EXPIRED"
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class SlotUnavailableError extends Schema.TaggedError<SlotUnavailableError>()(
+export class SlotUnavailableError extends Schema.TaggedErrorClass<SlotUnavailableError>()(
   "SlotUnavailable",
   {},
 ) {
@@ -291,7 +307,7 @@ export class SlotUnavailableError extends Schema.TaggedError<SlotUnavailableErro
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class OutsideBusinessHoursError extends Schema.TaggedError<OutsideBusinessHoursError>()(
+export class OutsideBusinessHoursError extends Schema.TaggedErrorClass<OutsideBusinessHoursError>()(
   "OutsideBusinessHours",
   {},
 ) {
@@ -299,7 +315,7 @@ export class OutsideBusinessHoursError extends Schema.TaggedError<OutsideBusines
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class ServiceDisabledError extends Schema.TaggedError<ServiceDisabledError>()(
+export class ServiceDisabledError extends Schema.TaggedErrorClass<ServiceDisabledError>()(
   "ServiceDisabled",
   {},
 ) {
@@ -307,7 +323,7 @@ export class ServiceDisabledError extends Schema.TaggedError<ServiceDisabledErro
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class ProviderUnavailableError extends Schema.TaggedError<ProviderUnavailableError>()(
+export class ProviderUnavailableError extends Schema.TaggedErrorClass<ProviderUnavailableError>()(
   "ProviderUnavailable",
   {},
 ) {
@@ -315,7 +331,7 @@ export class ProviderUnavailableError extends Schema.TaggedError<ProviderUnavail
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class ResourceUnavailableError extends Schema.TaggedError<ResourceUnavailableError>()(
+export class ResourceUnavailableError extends Schema.TaggedErrorClass<ResourceUnavailableError>()(
   "ResourceUnavailable",
   {},
 ) {
@@ -323,7 +339,7 @@ export class ResourceUnavailableError extends Schema.TaggedError<ResourceUnavail
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class InvalidStateTransitionError extends Schema.TaggedError<InvalidStateTransitionError>()(
+export class InvalidStateTransitionError extends Schema.TaggedErrorClass<InvalidStateTransitionError>()(
   "InvalidStateTransition",
   {
     from: Schema.String,
@@ -342,7 +358,7 @@ export class InvalidStateTransitionError extends Schema.TaggedError<InvalidState
  * the obvious cases (a Customer cannot issue `Complete`); this error
  * covers the residual scope-membership check inside `apply`.
  */
-export class InsufficientCapabilityError extends Schema.TaggedError<InsufficientCapabilityError>()(
+export class InsufficientCapabilityError extends Schema.TaggedErrorClass<InsufficientCapabilityError>()(
   "InsufficientCapability",
   {
     required: Schema.String,
@@ -364,7 +380,7 @@ export class InsufficientCapabilityError extends Schema.TaggedError<Insufficient
  * `EventSourcedRepository.load` port when the underlying storage has no
  * entry for the requested id (e.g. invalid id, purged aggregate).
  */
-export class AggregateNotFoundError extends Schema.TaggedError<AggregateNotFoundError>()(
+export class AggregateNotFoundError extends Schema.TaggedErrorClass<AggregateNotFoundError>()(
   "AggregateNotFound",
   {},
 ) {
@@ -378,7 +394,7 @@ export class AggregateNotFoundError extends Schema.TaggedError<AggregateNotFound
  * revision (another writer slipped in). Caller should re-read via
  * `load` and retry, or surface a 409 to the user.
  */
-export class ConcurrencyError extends Schema.TaggedError<ConcurrencyError>()("Concurrency", {
+export class ConcurrencyError extends Schema.TaggedErrorClass<ConcurrencyError>()("Concurrency", {
   expected: Schema.Number,
   actual: Schema.Number,
 }) {
@@ -393,9 +409,9 @@ export class ConcurrencyError extends Schema.TaggedError<ConcurrencyError>()("Co
  * carrying the underlying defect or rejected error so log sinks can
  * unfold it; it is the *only* error class with a cause field, because
  * production code only ever attaches a cause at storage / RPC boundary
- * sites (`Effect.tryPromise.catch`, `Effect.catchAllDefect`).
+ * sites (`Effect.tryPromise.catch`, `Effect.catchDefect`).
  */
-export class StorageError extends Schema.TaggedError<StorageError>()("Storage", {
+export class StorageError extends Schema.TaggedErrorClass<StorageError>()("Storage", {
   reason: Schema.String,
   cause: Schema.optional(Schema.Unknown),
 }) {

@@ -1,4 +1,4 @@
-import { Effect, Layer, STM, TMap } from "effect"
+import { Effect, HashMap, Layer, Option, Ref } from "effect"
 import { type CatalogRepository, ServiceCatalog } from "../../application/ports/ServiceCatalog.js"
 import type { BusinessHours } from "../../domain/entities/BusinessHours.js"
 import type { Closure } from "../../domain/entities/Closure.js"
@@ -17,49 +17,51 @@ import type {
 } from "../../domain/types/EntityId.js"
 
 /**
- * STM-backed in-memory {@link ServiceCatalog}. Six independent
- * `TMap<I, E>` instances, one per entity. STM gives the per-row
- * upsert / delete pair atomicity (a reader can never observe a
- * partial write); cross-entity invariants are intentionally not
- * enforced — they belong in the use case layer (see
+ * `Ref`-backed in-memory {@link ServiceCatalog}. Six independent
+ * `Ref<HashMap<I, E>>` instances, one per entity. `Ref.update` gives
+ * the per-row upsert / delete pair atomicity (a reader can never
+ * observe a partial write); cross-entity invariants are intentionally
+ * not enforced — they belong in the use case layer (see
  * `application/ports/ServiceCatalog.ts`).
  *
- * The factory returns a fresh, empty layer; each test mounts its own
- * instance so per-test fixtures stay isolated. There is no global
- * singleton — Effect runtimes that share a layer share the catalog.
+ * Effect 4 removed STM/TMap; per-entity `Ref<HashMap>` keeps the same
+ * "atomic at the row level" guarantee while collapsing the
+ * transactional dependency. Cross-entity transactions were never
+ * supported here, so nothing about the contract weakens.
  */
 
-const repositoryFromTMap = <E extends { readonly id: I }, I>(
-  map: TMap.TMap<I, E>,
+const repositoryFromRef = <E extends { readonly id: I }, I>(
+  ref: Ref.Ref<HashMap.HashMap<I, E>>,
 ): CatalogRepository<E, I> => ({
-  list: () => Effect.map(STM.commit(TMap.values(map)), (rows) => rows as readonly E[]),
+  list: () => Effect.map(Ref.get(ref), (m) => Array.from(HashMap.values(m)) as readonly E[]),
   get: (id) =>
-    STM.commit(
-      STM.flatMap(TMap.get(map, id), (opt) =>
-        opt._tag === "Some" ? STM.succeed(opt.value) : STM.fail(new AggregateNotFoundError({})),
-      ),
+    Effect.flatMap(Ref.get(ref), (m) =>
+      Option.match(HashMap.get(m, id), {
+        onNone: () => Effect.fail(new AggregateNotFoundError({})),
+        onSome: (entity) => Effect.succeed(entity),
+      }),
     ),
-  save: (entity) => STM.commit(TMap.set(map, entity.id, entity)),
-  delete: (id) => STM.commit(TMap.remove(map, id)),
+  save: (entity) => Ref.update(ref, (m) => HashMap.set(m, entity.id, entity)),
+  delete: (id) => Ref.update(ref, (m) => HashMap.remove(m, id)),
 })
 
 export const makeInMemoryServiceCatalog = (): Layer.Layer<ServiceCatalog> =>
   Layer.effect(
     ServiceCatalog,
     Effect.gen(function* () {
-      const services = yield* STM.commit(TMap.empty<ServiceId, Service>())
-      const providers = yield* STM.commit(TMap.empty<ProviderId, Provider>())
-      const resources = yield* STM.commit(TMap.empty<ResourceId, Resource>())
-      const businessHours = yield* STM.commit(TMap.empty<BusinessHoursId, BusinessHours>())
-      const closures = yield* STM.commit(TMap.empty<ClosureId, Closure>())
-      const providerAbsences = yield* STM.commit(TMap.empty<ProviderAbsenceId, ProviderAbsence>())
+      const services = yield* Ref.make(HashMap.empty<ServiceId, Service>())
+      const providers = yield* Ref.make(HashMap.empty<ProviderId, Provider>())
+      const resources = yield* Ref.make(HashMap.empty<ResourceId, Resource>())
+      const businessHours = yield* Ref.make(HashMap.empty<BusinessHoursId, BusinessHours>())
+      const closures = yield* Ref.make(HashMap.empty<ClosureId, Closure>())
+      const providerAbsences = yield* Ref.make(HashMap.empty<ProviderAbsenceId, ProviderAbsence>())
       return ServiceCatalog.of({
-        services: repositoryFromTMap(services),
-        providers: repositoryFromTMap(providers),
-        resources: repositoryFromTMap(resources),
-        businessHours: repositoryFromTMap(businessHours),
-        closures: repositoryFromTMap(closures),
-        providerAbsences: repositoryFromTMap(providerAbsences),
+        services: repositoryFromRef(services),
+        providers: repositoryFromRef(providers),
+        resources: repositoryFromRef(resources),
+        businessHours: repositoryFromRef(businessHours),
+        closures: repositoryFromRef(closures),
+        providerAbsences: repositoryFromRef(providerAbsences),
       })
     }),
   )

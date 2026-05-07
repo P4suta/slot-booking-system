@@ -44,13 +44,13 @@ import { PhoneLast4Schema } from "../value-objects/PhoneLast4.js"
  *     who own the deployment's day-to-day catalog edits; not granted
  *     to front-desk staff who only operate on bookings.
  */
-export const StaffScopeSchema = Schema.Literal(
+export const StaffScopeSchema = Schema.Literals([
   "cancel",
   "reschedule",
   "complete",
   "noshow",
   "manage_catalog",
-)
+])
 export type StaffScope = Schema.Schema.Type<typeof StaffScopeSchema>
 
 /**
@@ -58,7 +58,7 @@ export type StaffScope = Schema.Schema.Type<typeof StaffScopeSchema>
  * command must justify itself by adding a literal here, which forces an
  * ADR-style review.
  */
-export const SystemReasonSchema = Schema.Literal("expire", "purge")
+export const SystemReasonSchema = Schema.Literals(["expire", "purge"])
 export type SystemReason = Schema.Schema.Type<typeof SystemReasonSchema>
 
 export const CustomerCapabilitySchema = Schema.Struct({
@@ -86,11 +86,11 @@ export type SystemCapability = Schema.Schema.Type<typeof SystemCapabilitySchema>
  * yields a discriminated decoder + encoder + total exhaustiveness in
  * `Match.value(...)` consumers.
  */
-export const CapabilitySchema = Schema.Union(
+export const CapabilitySchema = Schema.Union([
   CustomerCapabilitySchema,
   StaffCapabilitySchema,
   SystemCapabilitySchema,
-)
+])
 export type Capability = Schema.Schema.Type<typeof CapabilitySchema>
 
 /**

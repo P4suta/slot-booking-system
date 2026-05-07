@@ -36,7 +36,7 @@ type DayScheduleRuntime = BookingEventSourcedRepository | Clock | IdGenerator | 
  *      facing {@link BookingResultSchema} shape.
  *
  * Errors flow through the RPC error channel as concrete `DomainError`
- * tagged-error instances — `@effect/rpc` round-trips them via the
+ * tagged-error instances — `effect/unstable/rpc` round-trips them via the
  * `Schema.Union(...errorClassRegistry)` defined on each `Rpc.make`.
  *
  * `tz` is captured as a value rather than resolved inside each handler

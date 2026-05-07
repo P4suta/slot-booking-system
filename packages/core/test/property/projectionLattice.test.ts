@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import type { Booking } from "../../src/domain/booking/Booking.js"
@@ -36,15 +36,15 @@ import { at, baseHeld, customerCap, slot, staffCap, systemExpire } from "../_fix
  *
  * The laws complement the write-side property suite in
  * `transitions.test.ts`; together they cover both the
- * `apply: Command → Either<Result, Error>` write face and the
+ * `apply: Command → Result<Result, Error>` write face and the
  * `applyEvent: Event → View` read face.
  */
 
 const ev = newBookingEventId
 
-const expectRight = <A, E>(e: Either.Either<A, E>): A => {
-  if (Either.isLeft(e)) throw new Error(`expected Right: ${JSON.stringify(e.left)}`)
-  return e.right
+const expectRight = <A, E>(e: Result.Result<A, E>): A => {
+  if (Result.isFailure(e)) throw new Error(`expected Right: ${JSON.stringify(e.failure)}`)
+  return e.success
 }
 
 const heldBooking = (): Booking => baseHeld()

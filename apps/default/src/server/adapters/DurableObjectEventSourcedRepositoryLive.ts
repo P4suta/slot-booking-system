@@ -50,7 +50,7 @@ export type DurableObjectStorageLike = {
 }
 
 const encodeBooking = Schema.encodeSync(BookingSchema)
-const decodeBookingEither = Schema.decodeUnknownEither(BookingSchema)
+const decodeBookingEither = Schema.decodeUnknownResult(BookingSchema)
 const encodeEvent = Schema.encodeSync(BookingEventSchema)
 
 /** Variant-aware row builder. Mirrors `D1BookingMirror.toRow`. */
@@ -135,7 +135,7 @@ const rowToBooking = (row: typeof bookings.$inferSelect): Booking | null => {
       break
   }
   const r = decodeBookingEither(candidate)
-  return r._tag === "Right" ? r.right : null
+  return r._tag === "Success" ? r.success : null
 }
 
 /**
@@ -186,7 +186,7 @@ const eventToRow = (
 const wrapStorage =
   (reason: string) =>
   <A>(eff: Effect.Effect<A>): Effect.Effect<A, StorageError> =>
-    eff.pipe(Effect.catchAllDefect((d) => Effect.fail(new StorageError({ reason, cause: d }))))
+    eff.pipe(Effect.catchDefect((d) => Effect.fail(new StorageError({ reason, cause: d }))))
 
 /** Load every booking snapshot currently in DO storage. Used by alarm()'s outbox drain. */
 export const loadAllBookings = (storage: DurableObjectStorageLike): readonly Booking[] => {

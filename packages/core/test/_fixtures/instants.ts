@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either } from "effect"
+import { Result } from "effect"
 import { makeTimeSlot, type TimeSlot } from "../../src/domain/value-objects/TimeSlot.js"
 
 /** Parse an ISO-8601 instant string. */
@@ -14,4 +14,4 @@ export const date = (iso: string): Temporal.PlainDate => Temporal.PlainDate.from
 
 /** Build a `TimeSlot` from two ISO instants; throws if `start >= end` (test-only). */
 export const slot = (startIso: string, endIso: string): TimeSlot =>
-  Either.getOrThrow(makeTimeSlot(at(startIso), at(endIso)))
+  Result.getOrThrow(makeTimeSlot(at(startIso), at(endIso)))

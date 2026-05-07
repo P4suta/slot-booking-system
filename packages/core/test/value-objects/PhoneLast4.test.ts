@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import { isPhoneLast4, parsePhoneLast4 } from "../../src/domain/value-objects/PhoneLast4.js"
@@ -28,17 +28,17 @@ describe("PhoneLast4", () => {
   describe("parsePhoneLast4", () => {
     it("returns Right with the branded value on success", () => {
       const result = parsePhoneLast4("4567")
-      expect(Either.isRight(result)).toBe(true)
-      if (Either.isRight(result)) {
-        expect(result.right).toBe("4567")
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        expect(result.success).toBe("4567")
       }
     })
 
     it("returns Left with an InvalidPhoneLast4 error on failure", () => {
       const result = parsePhoneLast4("abcd")
-      expect(Either.isLeft(result)).toBe(true)
-      if (Either.isLeft(result)) {
-        expect(result.left._tag).toBe("InvalidPhoneLast4")
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe("InvalidPhoneLast4")
       }
     })
 
@@ -47,9 +47,9 @@ describe("PhoneLast4", () => {
         fc.property(fc.string(), (s) => {
           const result = parsePhoneLast4(s)
           if (/^\d{4}$/.test(s)) {
-            return Either.isRight(result) && Either.getOrThrow(result) === s
+            return Result.isSuccess(result) && Result.getOrThrow(result) === s
           }
-          return Either.isLeft(result)
+          return Result.isFailure(result)
         }),
         { numRuns: 1000 },
       )

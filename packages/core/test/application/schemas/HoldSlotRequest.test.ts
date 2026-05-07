@@ -1,9 +1,9 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import { HoldSlotRequestSchema } from "../../../src/application/schemas/HoldSlotRequest.js"
 
-const decode = Schema.decodeUnknownEither(HoldSlotRequestSchema)
+const decode = Schema.decodeUnknownResult(HoldSlotRequestSchema)
 const encode = Schema.encodeSync(HoldSlotRequestSchema)
 
 describe("HoldSlotRequestSchema", () => {
@@ -17,7 +17,7 @@ describe("HoldSlotRequestSchema", () => {
       freeText: "first visit",
     }
     const r = decode(payload)
-    expect(Either.isRight(r)).toBe(true)
+    expect(Result.isSuccess(r)).toBe(true)
   })
 
   it("decodes a payload without the optional freeText", () => {
@@ -28,7 +28,7 @@ describe("HoldSlotRequestSchema", () => {
       nameKana: "ヤマダ",
       phoneLast4: "9999",
     }
-    expect(Either.isRight(decode(payload))).toBe(true)
+    expect(Result.isSuccess(decode(payload))).toBe(true)
   })
 
   it.each([
@@ -48,7 +48,7 @@ describe("HoldSlotRequestSchema", () => {
       phoneLast4: "1234",
       ...override,
     }
-    expect(Either.isLeft(decode(payload))).toBe(true)
+    expect(Result.isFailure(decode(payload))).toBe(true)
   })
 
   it("property: decode ∘ encode is identity for any valid request", () => {
@@ -62,8 +62,8 @@ describe("HoldSlotRequestSchema", () => {
     fc.assert(
       fc.property(validPayloadArb, (p) => {
         const decoded = decode(p)
-        if (Either.isLeft(decoded)) return false
-        const encoded = encode(decoded.right)
+        if (Result.isFailure(decoded)) return false
+        const encoded = encode(decoded.success)
         return (
           encoded.serviceId === p.serviceId &&
           encoded.date === p.date &&

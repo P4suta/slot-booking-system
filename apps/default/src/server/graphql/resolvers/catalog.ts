@@ -23,14 +23,14 @@ const runCatalog = async <A>(
 ): Promise<A> => {
   const layer = makeD1ServiceCatalog(env.DB)
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       Effect.provide(
-        Effect.flatMap(ServiceCatalog, (cat) => program(cat)),
+        Effect.flatMap(Effect.service(ServiceCatalog), (cat) => program(cat)),
         layer,
       ),
     ),
   )
-  if (result._tag === "Right") return result.right
+  if (result._tag === "Success") return result.success
   // Catalog reads can fail with `StorageError`; surface as a typed
   // BookingError so the existing client error union covers it without
   // a second arm.

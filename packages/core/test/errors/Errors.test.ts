@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   AggregateNotFoundError,
@@ -118,7 +118,7 @@ describe("toLogPayload", () => {
   })
 
   it("attaches a traceId when the call site supplies one", () => {
-    const traceId = Either.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
+    const traceId = Result.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
     const p = toLogPayload(new BookingNotFoundError({}), { traceId })
     expect(p.traceId).toBe(traceId)
   })
@@ -215,11 +215,11 @@ describe("TraceId", () => {
     "01H8XRQMKQDNFGXT7NH3AVH3X",
     "01H8XRQMKQDNFGXT7NH3AVH3XSI",
   ])("rejects %p", (s) => {
-    expect(Either.isLeft(parseTraceId(s))).toBe(true)
+    expect(Result.isFailure(parseTraceId(s))).toBe(true)
   })
 
   it("brand prevents accidental crossover (compile-time assertion)", () => {
-    const t = Either.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
+    const t = Result.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
     // t is a TraceId; passing a plain string here would not type-check.
     const echo = (id: TraceId): TraceId => id
     expect(echo(t)).toBe(t)

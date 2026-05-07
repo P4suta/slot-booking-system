@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import type { Booking, Confirmed } from "../../src/domain/booking/Booking.js"
@@ -9,19 +9,19 @@ import { at, baseHeld, customerCap, slot, staffCap, systemExpire } from "../_fix
 
 const ev = (): BookingEventId => newBookingEventId()
 
-const expectRight = <A, E>(e: Either.Either<A, E>): A => {
-  if (Either.isLeft(e)) {
-    throw new Error(`expected Right, got Left: ${JSON.stringify(e.left)}`)
+const expectRight = <A, E>(e: Result.Result<A, E>): A => {
+  if (Result.isFailure(e)) {
+    throw new Error(`expected Right, got Left: ${JSON.stringify(e.failure)}`)
   }
-  return e.right
+  return e.success
 }
 
 const expectLeftTag = <E extends { _tag: string }>(
-  e: Either.Either<unknown, E>,
+  e: Result.Result<unknown, E>,
   tag: string,
 ): void => {
-  expect(Either.isLeft(e)).toBe(true)
-  if (Either.isLeft(e)) expect(e.left._tag).toBe(tag)
+  expect(Result.isFailure(e)).toBe(true)
+  if (Result.isFailure(e)) expect(e.failure._tag).toBe(tag)
 }
 
 describe("apply (transitions)", () => {
@@ -297,12 +297,12 @@ describe("apply (transitions)", () => {
       run: (m, r) => {
         const before = r.booking
         const result = apply(before, cmd, ev())
-        if (Either.isRight(result)) {
+        if (Result.isSuccess(result)) {
           // Invariant: every event is bound to the current bookingId.
-          expect(result.right.event.bookingId).toBe(r.bookingId)
+          expect(result.success.event.bookingId).toBe(r.bookingId)
           // Invariant: a successful apply never violates terminality.
           expect(m.isTerminal).toBe(false)
-          const next = result.right.booking
+          const next = result.success.booking
           // Invariant: id is preserved across every successful transition.
           expect(next.id).toBe(r.bookingId)
           // Invariant: Reschedule preserves confirmedAt when starting from Confirmed.

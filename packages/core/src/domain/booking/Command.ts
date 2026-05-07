@@ -75,14 +75,14 @@ export const ExpireCommandSchema = Schema.Struct({
   capability: SystemCapabilitySchema,
 })
 
-export const CommandSchema = Schema.Union(
+export const CommandSchema = Schema.Union([
   ConfirmCommandSchema,
   CancelCommandSchema,
   RescheduleCommandSchema,
   CompleteCommandSchema,
   MarkNoShowCommandSchema,
   ExpireCommandSchema,
-)
+])
 
 export type Command = Schema.Schema.Type<typeof CommandSchema>
 export type CommandKind = Command["kind"]

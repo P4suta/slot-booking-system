@@ -71,7 +71,7 @@ export const recordTaggedError = (e: DomainError): Effect.Effect<void> =>
         })
       }),
     ),
-  ).pipe(Effect.ignoreLogged)
+  ).pipe(Effect.ignore)
 
 /**
  * Convenience: chain `recordTaggedError` onto an Effect's failure

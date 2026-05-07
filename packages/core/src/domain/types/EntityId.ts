@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import { typeid } from "typeid-js"
 import { type DomainError, InvalidEntityIdError } from "../errors/Errors.js"
 
@@ -12,7 +12,9 @@ import { type DomainError, InvalidEntityIdError } from "../errors/Errors.js"
  */
 
 const makeIdSchema = <const Tag extends string>(prefix: string, tag: Tag) =>
-  Schema.String.pipe(Schema.pattern(new RegExp(`^${prefix}_[0-9a-z]{26}$`)), Schema.brand(tag))
+  Schema.String.check(Schema.isPattern(new RegExp(`^${prefix}_[0-9a-z]{26}$`))).pipe(
+    Schema.brand(tag),
+  )
 
 export const BookingIdSchema = makeIdSchema("book", "BookingId")
 export const ServiceIdSchema = makeIdSchema("serv", "ServiceId")
@@ -53,10 +55,10 @@ export type EntityPrefix =
   | "staf"
 
 const makeParser =
-  <Id>(prefix: EntityPrefix, schema: Schema.Schema<Id, string>) =>
-  (s: string): Either.Either<Id, DomainError> =>
-    Either.mapLeft(
-      Schema.decodeUnknownEither(schema)(s),
+  <Id>(prefix: EntityPrefix, schema: Schema.Codec<Id, string>) =>
+  (s: string): Result.Result<Id, DomainError> =>
+    Result.mapError(
+      Schema.decodeUnknownResult(schema)(s),
       () => new InvalidEntityIdError({ expectedPrefix: `${prefix}_`, received: s }),
     )
 

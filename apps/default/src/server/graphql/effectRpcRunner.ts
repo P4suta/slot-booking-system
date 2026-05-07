@@ -1,9 +1,9 @@
 import { codeOf, type DomainError, severityOf } from "@booking/core"
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { BookingError } from "./errors.js"
 
 /**
- * Phase 2.8 / BI-4 — adapter that runs an `@effect/rpc` client program
+ * Phase 2.8 / BI-4 — adapter that runs an `effect/unstable/rpc` client program
  * inside a GraphQL resolver, narrowing the typed `DomainError` channel
  * onto the Pothos errors plugin's `BookingError` envelope.
  *
@@ -30,9 +30,9 @@ export const runRpcOrThrow = async <A>(
     DomainError | { readonly _tag: "RpcClientError"; readonly message: string }
   >,
 ): Promise<A> => {
-  const result = await Effect.runPromise(Effect.either(program))
-  if (Either.isRight(result)) return result.right
-  const err = result.left
+  const result = await Effect.runPromise(Effect.result(program))
+  if (Result.isSuccess(result)) return result.success
+  const err = result.failure
   if (err._tag === "RpcClientError") {
     throw new BookingError({
       _tag: "TransportError",

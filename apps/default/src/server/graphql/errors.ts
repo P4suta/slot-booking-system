@@ -2,7 +2,7 @@ import type { ErrorSeverity } from "@booking/core"
 
 /**
  * Phase 0.7-β4 — typed GraphQL error class. The DurableObject's RPC
- * `Either<EncodedDomainError, EncodedResult>` lifts onto this Error
+ * `Result<EncodedDomainError, EncodedResult>` lifts onto this Error
  * subclass at the resolver boundary, where the `@pothos/plugin-errors`
  * plugin renders it as a typed union arm in the GraphQL schema. Clients
  * see `__typename: "BookingError"` plus the structured payload, never

@@ -1,4 +1,4 @@
-import { Effect, Either, Exit, type Schema } from "effect"
+import { Effect, Exit, Result, type Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import { BookingEventSourcedRepository } from "../../src/application/ports/EventSourcedRepository.js"
 import type { Held } from "../../src/domain/booking/Booking.js"
@@ -162,13 +162,13 @@ describe("InMemoryEventSourcedBookingRepositoryLive", () => {
       })
       const readB = Effect.gen(function* () {
         const repo = yield* BookingEventSourcedRepository
-        return yield* Effect.either(repo.load(booking.id))
+        return yield* Effect.result(repo.load(booking.id))
       })
 
       await Effect.runPromise(writeA.pipe(Effect.provide(layerA)))
       const result = await Effect.runPromise(readB.pipe(Effect.provide(layerB)))
 
-      expect(Either.isLeft(result)).toBe(true)
+      expect(Result.isFailure(result)).toBe(true)
       // touch the fixture instant so vitest doesn't strip the import
       expect(at("2026-05-09T12:00:00Z").toString()).toMatch(/2026-05-09/)
     })

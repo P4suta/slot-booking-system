@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Effect, Either, Layer } from "effect"
+import { Effect, Layer, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { ExpireBooking } from "../../../src/application/usecases/ExpireBooking.js"
 import { HoldSlot } from "../../../src/application/usecases/HoldSlot.js"
@@ -55,10 +55,10 @@ describe("ExpireBooking", () => {
     const program = ExpireBooking({
       bookingId: "book_missing00000000000000" as ReturnType<typeof newServiceId> as never,
     })
-    const result = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER), Effect.either))
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left._tag).toBe("AggregateNotFound")
+    const result = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER), Effect.result))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe("AggregateNotFound")
     }
   })
 })

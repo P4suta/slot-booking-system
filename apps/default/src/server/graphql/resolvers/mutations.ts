@@ -11,7 +11,7 @@ import { BookingError } from "../errors.js"
  * `rescheduleBooking`. Each resolver delegates to the per-day
  * `DaySchedule` Durable Object via direct RPC method invocation
  * (ADR-0030 / 2026 mainstream). Writes serialise inside the actor
- * model; the DO returns `Either<EncodedDomainError, EncodedResult>`,
+ * model; the DO returns `Result<EncodedDomainError, EncodedResult>`,
  * the resolver narrows on `_tag` and either returns the encoded
  * success or throws a typed `BookingError`.
  *

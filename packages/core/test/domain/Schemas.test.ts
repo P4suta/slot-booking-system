@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import { BookingSchema } from "../../src/domain/booking/Booking.js"
 import { ClosureSchema } from "../../src/domain/entities/Closure.js"
@@ -14,46 +14,46 @@ import { bookingCode, holdingDays, resourceType, skill } from "../_fixtures/pars
 describe("InstantSchema", () => {
   it("round-trips an ISO string ↔ Temporal.Instant", () => {
     const iso = "2026-05-05T09:00:00Z"
-    const decoded = Schema.decodeUnknownEither(InstantSchema)(iso)
-    expect(Either.isRight(decoded)).toBe(true)
-    if (Either.isRight(decoded)) {
-      const back = Schema.encodeSync(InstantSchema)(decoded.right)
+    const decoded = Schema.decodeUnknownResult(InstantSchema)(iso)
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isSuccess(decoded)) {
+      const back = Schema.encodeSync(InstantSchema)(decoded.success)
       expect(back).toBe(iso)
     }
   })
 
   it("rejects a malformed ISO string", () => {
-    expect(Either.isLeft(Schema.decodeUnknownEither(InstantSchema)("not-a-date"))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(InstantSchema)("not-a-date"))).toBe(true)
   })
 })
 
 describe("PlainDateSchema", () => {
   it("round-trips ISO date", () => {
     const iso = "2026-05-05"
-    const decoded = Schema.decodeUnknownEither(PlainDateSchema)(iso)
-    expect(Either.isRight(decoded)).toBe(true)
-    if (Either.isRight(decoded)) {
-      expect(Schema.encodeSync(PlainDateSchema)(decoded.right)).toBe(iso)
+    const decoded = Schema.decodeUnknownResult(PlainDateSchema)(iso)
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isSuccess(decoded)) {
+      expect(Schema.encodeSync(PlainDateSchema)(decoded.success)).toBe(iso)
     }
   })
 
   it("rejects a malformed date", () => {
-    expect(Either.isLeft(Schema.decodeUnknownEither(PlainDateSchema)("nope"))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(PlainDateSchema)("nope"))).toBe(true)
   })
 })
 
 describe("PlainTimeSchema", () => {
   it("round-trips ISO time", () => {
     const iso = "09:30:00"
-    const decoded = Schema.decodeUnknownEither(PlainTimeSchema)(iso)
-    expect(Either.isRight(decoded)).toBe(true)
-    if (Either.isRight(decoded)) {
-      expect(Schema.encodeSync(PlainTimeSchema)(decoded.right)).toMatch(/^09:30/)
+    const decoded = Schema.decodeUnknownResult(PlainTimeSchema)(iso)
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isSuccess(decoded)) {
+      expect(Schema.encodeSync(PlainTimeSchema)(decoded.success)).toMatch(/^09:30/)
     }
   })
 
   it("rejects a malformed time", () => {
-    expect(Either.isLeft(Schema.decodeUnknownEither(PlainTimeSchema)("25:99"))).toBe(true)
+    expect(Result.isFailure(Schema.decodeUnknownResult(PlainTimeSchema)("25:99"))).toBe(true)
   })
 })
 

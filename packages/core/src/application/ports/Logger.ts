@@ -7,11 +7,11 @@ import type { LogPayload } from "../../domain/errors/Errors.js"
  * sinks can rely on `_tag`, `code`, `severity`, `traceId`, `data` being
  * present (ADR-0009 forbids customer PII in any field).
  */
-export class Logger extends Context.Tag("@booking/core/Logger")<
+export class Logger extends Context.Service<
   Logger,
   {
     readonly info: (payload: LogPayload) => Effect.Effect<void>
     readonly warn: (payload: LogPayload) => Effect.Effect<void>
     readonly error: (payload: LogPayload) => Effect.Effect<void>
   }
->() {}
+>()("@booking/core/Logger") {}

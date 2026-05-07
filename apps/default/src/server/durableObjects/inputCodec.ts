@@ -31,7 +31,7 @@ import { Effect, Schema } from "effect"
  * domain values inside the DO before the use case runs.
  *
  * Why a static wire schema rather than a parametric (timezone-aware)
- * codec: the `Schema.Schema.Encoded<...>` extracted on the resolver
+ * codec: the `Schema.Codec.Encoded<...>` extracted on the resolver
  * side has to be a constant, RPC-method-shape type. ZDT reconstruction
  * needs a per-deployment `BusinessTimeZone`, so the timezone is taken
  * separately and applied in {@link reconstructSlot} after Schema-level
@@ -96,7 +96,7 @@ const reconstructSlot = (tz: BusinessTimeZone, wire: AvailableSlotInputDecoded):
 
 const decodeWire = <A, I>(
   label: string,
-  schema: Schema.Schema<A, I>,
+  schema: Schema.Codec<A, I>,
   wire: unknown,
 ): Effect.Effect<A, StorageError> => {
   const decode: (input: unknown) => A = Schema.decodeUnknownSync(schema)

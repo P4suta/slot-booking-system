@@ -71,7 +71,7 @@ export const makeD1AuditLogger = (database: D1Database): Layer.Layer<AuditLogger
               },
               catch: (e) => e,
             }).pipe(
-              Effect.catchAll((cause) =>
+              Effect.catch((cause) =>
                 Effect.flatMap(getCurrentTraceId, (traceId) =>
                   logger.error({
                     _tag: "AuditWriteFailure",

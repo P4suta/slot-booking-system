@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import { BookingSchema } from "../../src/domain/booking/Booking.js"
@@ -23,7 +23,7 @@ import { baseEnv, baseQuery } from "../_fixtures/index.js"
  * Invariants pinned by this suite:
  *
  *   1. **`Schema.decodeUnknown` is total** — never throws,
- *      never enters an infinite loop, returns an Either on every
+ *      never enters an infinite loop, returns an Result on every
  *      possible JSON-shaped input. (`BookingSchema`, `CommandSchema`,
  *      `BookingEventSchema`.) `fc.jsonValue()` is the input bound:
  *      it covers null, boolean, number, string, array, and object
@@ -52,9 +52,9 @@ import { baseEnv, baseQuery } from "../_fixtures/index.js"
  * `docs/migration/effect-4.md` records the followup.
  */
 
-const decodeBookingUnknown = Schema.decodeUnknownEither(BookingSchema)
-const decodeCommandUnknown = Schema.decodeUnknownEither(CommandSchema)
-const decodeEventUnknown = Schema.decodeUnknownEither(BookingEventSchema)
+const decodeBookingUnknown = Schema.decodeUnknownResult(BookingSchema)
+const decodeCommandUnknown = Schema.decodeUnknownResult(CommandSchema)
+const decodeEventUnknown = Schema.decodeUnknownResult(BookingEventSchema)
 
 /* -------------------------------------------------------------------------- */
 /* Target 1 — Schema.decodeUnknown totality                                    */
@@ -65,7 +65,7 @@ describe("BI-6 fuzz: Schema.decodeUnknown is total on JSON-shaped inputs", () =>
     fc.assert(
       fc.property(fc.jsonValue(), (raw) => {
         const r = decodeBookingUnknown(raw)
-        expect(Either.isLeft(r) || Either.isRight(r)).toBe(true)
+        expect(Result.isFailure(r) || Result.isSuccess(r)).toBe(true)
       }),
       { numRuns: 100 },
     )
@@ -75,7 +75,7 @@ describe("BI-6 fuzz: Schema.decodeUnknown is total on JSON-shaped inputs", () =>
     fc.assert(
       fc.property(fc.jsonValue(), (raw) => {
         const r = decodeCommandUnknown(raw)
-        expect(Either.isLeft(r) || Either.isRight(r)).toBe(true)
+        expect(Result.isFailure(r) || Result.isSuccess(r)).toBe(true)
       }),
       { numRuns: 100 },
     )
@@ -85,7 +85,7 @@ describe("BI-6 fuzz: Schema.decodeUnknown is total on JSON-shaped inputs", () =>
     fc.assert(
       fc.property(fc.jsonValue(), (raw) => {
         const r = decodeEventUnknown(raw)
-        expect(Either.isLeft(r) || Either.isRight(r)).toBe(true)
+        expect(Result.isFailure(r) || Result.isSuccess(r)).toBe(true)
       }),
       { numRuns: 100 },
     )

@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { type Either, Schema } from "effect"
+import { type Result, Schema } from "effect"
 import { type DomainError, InvalidTimeSlotError } from "../errors/Errors.js"
 import { InstantSchema } from "../types/Temporal.js"
 import {
@@ -30,7 +30,7 @@ const cmpInstant: Comparator<Temporal.Instant> = (a, b) => Temporal.Instant.comp
 export const makeTimeSlot: (
   start: Temporal.Instant,
   end: Temporal.Instant,
-) => Either.Either<TimeSlot, DomainError> = intervalSmartCtor<Temporal.Instant, DomainError>(
+) => Result.Result<TimeSlot, DomainError> = intervalSmartCtor<Temporal.Instant, DomainError>(
   cmpInstant,
   () => new InvalidTimeSlotError({ reason: "start must precede end" }),
 )

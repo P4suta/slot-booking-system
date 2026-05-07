@@ -53,7 +53,7 @@ import { BookingError } from "../errors.js"
  * write; an operator's manage-catalog permission is a separate role.
  */
 
-const decodeCapability = Schema.decodeUnknownEither(CapabilitySchema)
+const decodeCapability = Schema.decodeUnknownResult(CapabilitySchema)
 
 /**
  * Lift any `DomainError` into the GraphQL `BookingError` arm. The
@@ -84,8 +84,8 @@ const requireStaffScope = (request: Request, scope: StaffScope): StaffCapability
   const header = request.headers.get("x-staff-capability")
   if (header === null) throw refuseHeader("absent")
   const decoded = decodeCapability(decodeBase64Json(header))
-  if (decoded._tag === "Left") throw refuseHeader("malformed")
-  const cap: Capability = decoded.right
+  if (decoded._tag === "Failure") throw refuseHeader("malformed")
+  const cap: Capability = decoded.success
   if (cap._tag !== "StaffCapability") throw refuseHeader("wrong_kind")
   if (!hasScope(cap, scope)) {
     throw liftDomainError(
@@ -101,15 +101,15 @@ const runCatalog = async <A>(
 ): Promise<A> => {
   const layer = makeD1ServiceCatalog(env.DB)
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       Effect.provide(
-        Effect.flatMap(ServiceCatalog, (cat) => program(cat)),
+        Effect.flatMap(Effect.service(ServiceCatalog), (cat) => program(cat)),
         layer,
       ),
     ),
   )
-  if (result._tag === "Right") return result.right
-  throw liftDomainError(result.left)
+  if (result._tag === "Success") return result.success
+  throw liftDomainError(result.failure)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -201,12 +201,12 @@ const ProviderAbsenceInput = builder.inputType("ProviderAbsenceInput", {
 
 const decodeOrRefuse = <E, R>(
   entity: InvalidCatalogInputError["entity"],
-  schema: Schema.Schema<E, R>,
+  schema: Schema.Codec<E, R>,
   raw: unknown,
 ): E => {
-  const r = Schema.decodeUnknownEither(schema)(raw)
-  if (r._tag === "Right") return r.right
-  throw liftDomainError(new InvalidCatalogInputError({ entity, reason: summarizeParse(r.left) }))
+  const r = Schema.decodeUnknownResult(schema)(raw)
+  if (r._tag === "Success") return r.success
+  throw liftDomainError(new InvalidCatalogInputError({ entity, reason: summarizeParse(r.failure) }))
 }
 
 /* -------------------------------------------------------------------------- */

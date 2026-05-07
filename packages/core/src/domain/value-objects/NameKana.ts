@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema, SchemaGetter } from "effect"
 import { type DomainError, InvalidNameKanaError } from "../errors/Errors.js"
 import { summarizeParse } from "../errors/fromParseError.js"
 
@@ -33,19 +33,19 @@ export const normalizeNameKana = (raw: string): string =>
  *
  * The PII storage policy (ADR-0009) keeps this field at most 2 years.
  */
-const NameKanaBrand = Schema.String.pipe(
-  Schema.filter((s) => s.length > 0 && s.length <= MAX_LENGTH && NAME_KANA_PATTERN.test(s)),
-  Schema.brand("NameKana"),
-)
+const NameKanaBrand = Schema.String.check(
+  Schema.makeFilter((s) => s.length > 0 && s.length <= MAX_LENGTH && NAME_KANA_PATTERN.test(s)),
+).pipe(Schema.brand("NameKana"))
 
-export const NameKanaSchema = Schema.transform(Schema.String, NameKanaBrand, {
-  strict: true,
-  decode: (raw) => normalizeNameKana(raw),
-  encode: (norm) => norm,
-})
+export const NameKanaSchema = Schema.String.pipe(
+  Schema.decodeTo(NameKanaBrand, {
+    decode: SchemaGetter.transform(normalizeNameKana),
+    encode: SchemaGetter.transform((norm: string) => norm),
+  }),
+)
 export type NameKana = Schema.Schema.Type<typeof NameKanaSchema>
 
-const decode = Schema.decodeUnknownEither(NameKanaSchema)
+const decode = Schema.decodeUnknownResult(NameKanaSchema)
 
-export const parseNameKana = (raw: string): Either.Either<NameKana, DomainError> =>
-  Either.mapLeft(decode(raw), (e) => new InvalidNameKanaError({ reason: summarizeParse(e) }))
+export const parseNameKana = (raw: string): Result.Result<NameKana, DomainError> =>
+  Result.mapError(decode(raw), (e) => new InvalidNameKanaError({ reason: summarizeParse(e) }))

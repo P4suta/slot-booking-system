@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either } from "effect"
+import { Result } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import {
@@ -22,11 +22,11 @@ import { parseHoldingDays } from "../../src/domain/value-objects/HoldingDays.js"
 import { parseResourceType } from "../../src/domain/value-objects/ResourceType.js"
 import { parseSkill, type Skill } from "../../src/domain/value-objects/Skill.js"
 
-const skill = (s: string) => Either.getOrThrow(parseSkill(s))
+const skill = (s: string) => Result.getOrThrow(parseSkill(s))
 
 describe("Skill", () => {
   it.each(["a", "general", "electric_assist", "skill_1"])("accepts %s", (s) => {
-    expect(Either.isRight(parseSkill(s))).toBe(true)
+    expect(Result.isSuccess(parseSkill(s))).toBe(true)
   })
 
   it.each([
@@ -36,27 +36,27 @@ describe("Skill", () => {
     "Has Space",
     `TooLong${"x".repeat(40)}`,
   ])("rejects %s", (s) => {
-    expect(Either.isLeft(parseSkill(s))).toBe(true)
+    expect(Result.isFailure(parseSkill(s))).toBe(true)
   })
 })
 
 describe("ResourceType", () => {
   it.each(["workspace", "storage", "chair_a"])("accepts %s", (s) => {
-    expect(Either.isRight(parseResourceType(s))).toBe(true)
+    expect(Result.isSuccess(parseResourceType(s))).toBe(true)
   })
 
   it.each(["", "1bad", "Workspace"])("rejects %s", (s) => {
-    expect(Either.isLeft(parseResourceType(s))).toBe(true)
+    expect(Result.isFailure(parseResourceType(s))).toBe(true)
   })
 })
 
 describe("Weekday", () => {
   it.each([1, 2, 3, 4, 5, 6, 7])("accepts %d", (n) => {
-    expect(Either.isRight(parseWeekday(n))).toBe(true)
+    expect(Result.isSuccess(parseWeekday(n))).toBe(true)
   })
 
   it.each([0, 8, 1.5, -1])("rejects %p", (n) => {
-    expect(Either.isLeft(parseWeekday(n))).toBe(true)
+    expect(Result.isFailure(parseWeekday(n))).toBe(true)
   })
 
   it("isWeekday narrows", () => {
@@ -69,29 +69,29 @@ describe("OpenWindow", () => {
   const t = (h: number, m = 0) => Temporal.PlainTime.from({ hour: h, minute: m })
 
   it("rejects start ≥ end", () => {
-    expect(Either.isLeft(makeOpenWindow(t(10), t(10)))).toBe(true)
-    expect(Either.isLeft(makeOpenWindow(t(11), t(10)))).toBe(true)
+    expect(Result.isFailure(makeOpenWindow(t(10), t(10)))).toBe(true)
+    expect(Result.isFailure(makeOpenWindow(t(11), t(10)))).toBe(true)
   })
 
   it("accepts strict start < end", () => {
-    expect(Either.isRight(makeOpenWindow(t(9), t(18)))).toBe(true)
+    expect(Result.isSuccess(makeOpenWindow(t(9), t(18)))).toBe(true)
   })
 
   it("windowMinutes returns the duration of the window in whole minutes", () => {
-    const w = Either.getOrThrow(makeOpenWindow(t(9), t(18)))
+    const w = Result.getOrThrow(makeOpenWindow(t(9), t(18)))
     expect(windowMinutes(w)).toBe(9 * 60)
-    const w2 = Either.getOrThrow(makeOpenWindow(t(10, 30), t(11, 15)))
+    const w2 = Result.getOrThrow(makeOpenWindow(t(10, 30), t(11, 15)))
     expect(windowMinutes(w2)).toBe(45)
   })
 
   it("canonicalize merges overlapping windows", () => {
-    const w = (a: number, b: number) => Either.getOrThrow(makeOpenWindow(t(a), t(b)))
+    const w = (a: number, b: number) => Result.getOrThrow(makeOpenWindow(t(a), t(b)))
     const merged = canonicalize([w(13, 16), w(9, 12), w(11, 14)])
     expect(merged).toEqual([{ start: t(9), end: t(16) }])
   })
 
   it("canonicalize preserves disjoint windows in sorted order", () => {
-    const w = (a: number, b: number) => Either.getOrThrow(makeOpenWindow(t(a), t(b)))
+    const w = (a: number, b: number) => Result.getOrThrow(makeOpenWindow(t(a), t(b)))
     const merged = canonicalize([w(13, 18), w(9, 12)])
     expect(merged).toEqual([
       { start: t(9), end: t(12) },
@@ -147,7 +147,7 @@ describe("Service.totalProviderMinutes", () => {
         durationMinutes: minutesUnchecked(60),
         bufferBeforeMinutes: minutesUnchecked(5),
         bufferAfterMinutes: minutesUnchecked(10),
-        holdingDays: Either.getOrThrow(parseHoldingDays(0)),
+        holdingDays: Result.getOrThrow(parseHoldingDays(0)),
         requiredSkills: new Set<Skill>(),
         requiredResourceTypes: new Set(),
         enabled: true,
@@ -202,7 +202,7 @@ describe("ProviderAbsence.makeProviderAbsence", () => {
       end: at("2026-05-05T10:00:00Z"),
       reason: "test",
     })
-    expect(Either.isLeft(r)).toBe(true)
+    expect(Result.isFailure(r)).toBe(true)
   })
 
   it("accepts strict ordering", () => {
@@ -213,6 +213,6 @@ describe("ProviderAbsence.makeProviderAbsence", () => {
       end: at("2026-05-05T11:00:00Z"),
       reason: "test",
     })
-    expect(Either.isRight(r)).toBe(true)
+    expect(Result.isSuccess(r)).toBe(true)
   })
 })

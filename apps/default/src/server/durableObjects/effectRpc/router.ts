@@ -1,6 +1,6 @@
 import { type DomainError, errorClassRegistry } from "@booking/core"
-import { Rpc, RpcGroup } from "@effect/rpc"
 import { Schema } from "effect"
+import { Rpc, RpcGroup } from "effect/unstable/rpc"
 import {
   CancelBookingInputWireSchema,
   ConfirmBookingInputWireSchema,
@@ -14,7 +14,7 @@ import { BookingResultSchema } from "./resultSchema.js"
  *
  * The four mutation entries (`HoldSlot` / `ConfirmBooking` /
  * `CancelBooking` / `RescheduleBooking`) collapse the previous
- * `Either<EncodedDomainError, EncodedResult>` ad-hoc method shape
+ * `Result<EncodedDomainError, EncodedResult>` ad-hoc method shape
  * (ADR-0030) into `Rpc.make(...)` definitions whose
  *   - `payload`  = the existing `*WireSchema` from `inputCodec.ts`
  *     (Phase 2.1 / BI-3 single source of wire shapes), and
@@ -44,36 +44,36 @@ import { BookingResultSchema } from "./resultSchema.js"
  * tuple shape from a `readonly ErrorClass[]`, hence the assertion.
  */
 const DomainErrorSchema = Schema.Union(
-  ...(errorClassRegistry as readonly unknown[] as readonly Schema.Schema.All[]),
-) as unknown as Schema.Schema<DomainError>
+  errorClassRegistry as readonly unknown[] as readonly Schema.Top[],
+) as unknown as Schema.Codec<DomainError>
 
 /* The four RPC payload schemas are the *encoded* (string-only) form of
  * the per-method input wire codecs. Cloudflare's `structuredClone`
  * envelope can carry only JSON-shaped values, so the boundary speaks
  * the encoded shape; the DO's handler re-decodes via `decode*Input`
  * back into branded domain values (Phase 2.1 / BI-3). Using
- * `Schema.encodedSchema(...)` here avoids forcing the resolver-side
+ * `Schema.toEncoded(...)` here avoids forcing the resolver-side
  * to construct branded types it does not own. */
 const HoldSlotRpc = Rpc.make("HoldSlot", {
-  payload: Schema.encodedSchema(HoldSlotInputWireSchema),
+  payload: Schema.toEncoded(HoldSlotInputWireSchema),
   success: BookingResultSchema,
   error: DomainErrorSchema,
 })
 
 const ConfirmBookingRpc = Rpc.make("ConfirmBooking", {
-  payload: Schema.encodedSchema(ConfirmBookingInputWireSchema),
+  payload: Schema.toEncoded(ConfirmBookingInputWireSchema),
   success: BookingResultSchema,
   error: DomainErrorSchema,
 })
 
 const CancelBookingRpc = Rpc.make("CancelBooking", {
-  payload: Schema.encodedSchema(CancelBookingInputWireSchema),
+  payload: Schema.toEncoded(CancelBookingInputWireSchema),
   success: BookingResultSchema,
   error: DomainErrorSchema,
 })
 
 const RescheduleBookingRpc = Rpc.make("RescheduleBooking", {
-  payload: Schema.encodedSchema(RescheduleBookingInputWireSchema),
+  payload: Schema.toEncoded(RescheduleBookingInputWireSchema),
   success: BookingResultSchema,
   error: DomainErrorSchema,
 })

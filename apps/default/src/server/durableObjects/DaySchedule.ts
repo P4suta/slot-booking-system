@@ -8,8 +8,8 @@ import {
   SystemClockLive,
   UlidIdGeneratorLive,
 } from "@booking/core"
-import { RpcServer } from "@effect/rpc"
-import { Effect, Either, Layer } from "effect"
+import { Effect, Layer, Result } from "effect"
+import { RpcServer } from "effect/unstable/rpc"
 import {
   type DurableObjectStorageLike,
   loadAllBookings,
@@ -44,11 +44,11 @@ import { ensureDurableObjectSchema } from "./schema.js"
  * `RescheduleBooking`) and returns the matching `FromServerEncoded`
  * response (`Exit` for normal flow, `Defect` for crashes). Both
  * shapes are pure JSON, so they survive Cloudflare's structured-clone
- * envelope unchanged. The typed `@effect/rpc` client on the resolver
+ * envelope unchanged. The typed `effect/unstable/rpc` client on the resolver
  * side (`makeDayScheduleClient`) hides the envelope plumbing —
  * resolvers see strongly-typed `client.HoldSlot(payload)` returning
  * `Effect<Result, DomainError>` instead of the legacy
- * `Either<EncodedResult, EncodedDomainError>` cast pattern.
+ * `Result<EncodedResult, EncodedDomainError>` cast pattern.
  *
  * **Cold start** — none required. The `(code → id)` lookup is a SQL
  * query against `bookings.code` (unique index), exact on every cold
@@ -75,7 +75,7 @@ export class DaySchedule extends DurableObject<Env> {
   }
 
   /**
-   * Phase 2.8 / BI-4 — `@effect/rpc` typed RPC entry point.
+   * Phase 2.8 / BI-4 — `effect/unstable/rpc` typed RPC entry point.
    *
    * Single multiplexed dispatch: callers send a `FromClientEncoded`
    * envelope tagged with the RPC name; the response comes back as a
@@ -121,14 +121,14 @@ export class DaySchedule extends DurableObject<Env> {
    */
   private readonly deploymentTimeZone: Effect.Effect<BusinessTimeZone, StorageError> =
     Effect.suspend(() =>
-      Either.match(parseBusinessTimeZone(this.env.DEPLOYMENT_TIMEZONE), {
-        onLeft: () =>
+      Result.match(parseBusinessTimeZone(this.env.DEPLOYMENT_TIMEZONE), {
+        onFailure: () =>
           Effect.fail(
             new StorageError({
               reason: `invalid DEPLOYMENT_TIMEZONE: ${this.env.DEPLOYMENT_TIMEZONE}`,
             }),
           ),
-        onRight: (tz) => Effect.succeed(tz),
+        onSuccess: (tz) => Effect.succeed(tz),
       }),
     )
 
@@ -169,7 +169,7 @@ export class DaySchedule extends DurableObject<Env> {
         Effect.runPromise(
           ExpireBooking({ bookingId: b.id }).pipe(
             Effect.provide(layer),
-            Effect.catchAll(() => Effect.void),
+            Effect.catch(() => Effect.void),
           ),
         ),
       ),

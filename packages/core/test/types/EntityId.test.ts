@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import { expectTypeOf } from "expect-type"
 import { describe, expect, it } from "vitest"
 import {
@@ -21,17 +21,17 @@ describe("EntityId TypeIDs", () => {
   it("round-trips parser ∘ generator", () => {
     const id = newServiceId()
     const parsed = parseServiceId(id)
-    expect(Either.isRight(parsed)).toBe(true)
+    expect(Result.isSuccess(parsed)).toBe(true)
   })
 
   it("rejects an id with the wrong prefix", () => {
     const wrong = newProviderId()
-    expect(Either.isLeft(parseBookingId(wrong))).toBe(true)
+    expect(Result.isFailure(parseBookingId(wrong))).toBe(true)
   })
 
   it("rejects malformed ids", () => {
     for (const bad of ["", "no_prefix_too_long_for_ulid", "BOOK_abc", "book_abc"]) {
-      expect(Either.isLeft(parseBookingId(bad))).toBe(true)
+      expect(Result.isFailure(parseBookingId(bad))).toBe(true)
     }
   })
 

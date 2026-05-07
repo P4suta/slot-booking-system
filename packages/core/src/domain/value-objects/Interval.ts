@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 
 /**
  * Total ordering on a point type. Returns negative when `a < b`, zero
@@ -26,16 +26,16 @@ export type Interval<T> = {
 /**
  * Build a domain-specific smart constructor for a half-open interval.
  * Each value object supplies its own comparator and error factory; the
- * resulting function is `(start, end) => Either<Interval<T>, E>`.
+ * resulting function is `(start, end) => Result<Interval<T>, E>`.
  *
  * Curried so the bound `(cmp, makeError)` form lives at module scope
  * and the call site stays a clean two-arg invocation.
  */
 export const intervalSmartCtor =
   <T, E>(cmp: Comparator<T>, makeError: () => E) =>
-  (start: T, end: T): Either.Either<Interval<T>, E> => {
-    if (cmp(start, end) >= 0) return Either.left(makeError())
-    return Either.right({ start, end })
+  (start: T, end: T): Result.Result<Interval<T>, E> => {
+    if (cmp(start, end) >= 0) return Result.fail(makeError())
+    return Result.succeed({ start, end })
   }
 
 /**

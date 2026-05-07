@@ -17,9 +17,9 @@ import { Context, type Effect } from "effect"
  * handler can emit a structured log entry (and an alert if the count
  * is unexpectedly high — possible misconfiguration).
  */
-export class PiiPurger extends Context.Tag("@booking/core/PiiPurger")<
+export class PiiPurger extends Context.Service<
   PiiPurger,
   {
     readonly purgeOlderThan: (olderThan: Duration.Duration) => Effect.Effect<number>
   }
->() {}
+>()("@booking/core/PiiPurger") {}

@@ -9,7 +9,7 @@ import { PhoneLast4Schema } from "../../domain/value-objects/PhoneLast4.js"
  * Inbound payload for the `HoldSlot` use case (Phase 1 entry point).
  *
  * The `Schema` is the single source of truth for:
- *   - the runtime decoder (`Schema.decodeUnknownEither`)
+ *   - the runtime decoder (`Schema.decodeUnknownResult`)
  *   - the static request type (`HoldSlotRequest`)
  *   - the static wire-format type (`HoldSlotRequestEncoded`)
  *   - the round-trip codec used by tests (`Schema.encodeSync` ∘ decode)
@@ -25,11 +25,11 @@ import { PhoneLast4Schema } from "../../domain/value-objects/PhoneLast4.js"
 export const HoldSlotRequestSchema = Schema.Struct({
   serviceId: ServiceIdSchema,
   date: PlainDateSchema,
-  startMinute: Schema.Int.pipe(Schema.between(0, 1439)),
+  startMinute: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1439 })),
   nameKana: NameKanaSchema,
   phoneLast4: PhoneLast4Schema,
   freeText: Schema.optional(FreeTextSchema),
 })
 
 export type HoldSlotRequest = Schema.Schema.Type<typeof HoldSlotRequestSchema>
-export type HoldSlotRequestEncoded = Schema.Schema.Encoded<typeof HoldSlotRequestSchema>
+export type HoldSlotRequestEncoded = Schema.Codec.Encoded<typeof HoldSlotRequestSchema>

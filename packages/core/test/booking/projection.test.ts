@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import { describe, expect, it } from "vitest"
 import type { Command } from "../../src/domain/booking/Command.js"
 import { apply } from "../../src/domain/booking/transitions.js"
@@ -8,11 +8,11 @@ import { at, baseHeld, customerCap, slot, staffCap } from "../_fixtures/index.js
 
 const ev = newBookingEventId
 
-const expectRight = <A, E>(e: Either.Either<A, E>): A => {
-  if (Either.isLeft(e)) {
-    throw new Error(`expected Right: ${JSON.stringify(e.left)}`)
+const expectRight = <A, E>(e: Result.Result<A, E>): A => {
+  if (Result.isFailure(e)) {
+    throw new Error(`expected Right: ${JSON.stringify(e.failure)}`)
   }
-  return e.right
+  return e.success
 }
 
 describe("applyEvent ↔ apply equivalence", () => {

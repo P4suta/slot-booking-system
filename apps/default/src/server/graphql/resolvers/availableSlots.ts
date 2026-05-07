@@ -82,13 +82,17 @@ const runQuery = async (
 ): Promise<readonly AvailableSlotShape[]> => {
   const layer = makeD1ServiceCatalog(env.DB)
   const result = await Effect.runPromise(
-    Effect.either(Effect.flatMap(ServiceCatalog, (cat) => body(cat)).pipe(Effect.provide(layer))),
+    Effect.result(
+      Effect.flatMap(Effect.service(ServiceCatalog), (cat) => body(cat)).pipe(
+        Effect.provide(layer),
+      ),
+    ),
   )
-  if (result._tag === "Right") return result.right
+  if (result._tag === "Success") return result.success
   throw new BookingError({
-    _tag: result.left._tag,
-    code: codeOf(result.left),
-    severity: severityOf(result.left),
+    _tag: result.failure._tag,
+    code: codeOf(result.failure),
+    severity: severityOf(result.failure),
   })
 }
 
@@ -148,7 +152,7 @@ builder.queryFields((t) => ({
     },
     resolve: async (_root, args, ctx) => {
       const tz = businessTimeZoneFromEnv(ctx.env.DEPLOYMENT_TIMEZONE)
-      if (tz._tag === "Left") {
+      if (tz._tag === "Failure") {
         throw new BookingError({
           _tag: "Storage",
           code: "E_INF_STORAGE",
@@ -156,7 +160,7 @@ builder.queryFields((t) => ({
         })
       }
       return runQuery(ctx.env, (cat) =>
-        slotsBody(cat, ctx.env.DB, args.serviceId, args.date, tz.right, ctx.env.SLOT_HMAC_SECRET),
+        slotsBody(cat, ctx.env.DB, args.serviceId, args.date, tz.success, ctx.env.SLOT_HMAC_SECRET),
       )
     },
   }),

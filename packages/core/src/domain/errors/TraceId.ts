@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 
 /**
  * Request-scoped correlation identifier surfaced in logs, error
@@ -6,8 +6,7 @@ import { Either, Schema } from "effect"
  * for time-ordering and high entropy. Must never be derived from
  * customer PII.
  */
-export const TraceIdSchema = Schema.String.pipe(
-  Schema.pattern(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+export const TraceIdSchema = Schema.String.check(Schema.isPattern(/^[0-9A-HJKMNP-TV-Z]{26}$/)).pipe(
   Schema.brand("TraceId"),
 )
 export type TraceId = Schema.Schema.Type<typeof TraceIdSchema>
@@ -16,12 +15,12 @@ const isTraceIdSchema = Schema.is(TraceIdSchema)
 
 export const isTraceId = (s: string): s is TraceId => isTraceIdSchema(s)
 
-const decode = Schema.decodeUnknownEither(TraceIdSchema)
+const decode = Schema.decodeUnknownResult(TraceIdSchema)
 
 export const parseTraceId = (
   s: string,
-): Either.Either<TraceId, { readonly _tag: "InvalidTraceId"; readonly value: string }> =>
-  Either.mapLeft(decode(s), () => ({ _tag: "InvalidTraceId" as const, value: s }))
+): Result.Result<TraceId, { readonly _tag: "InvalidTraceId"; readonly value: string }> =>
+  Result.mapError(decode(s), () => ({ _tag: "InvalidTraceId" as const, value: s }))
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 const HEX_RE = /^[0-9a-f]{32}$/i

@@ -1,5 +1,5 @@
 import type { AvailableSlotShape } from "@booking/core"
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 
 /**
  * HMAC-signed token over an `AvailableSlot` payload. Phase 0.7-α5
@@ -83,7 +83,7 @@ const SlotPayloadSchema = Schema.Struct({
 
 type SlotPayload = Schema.Schema.Type<typeof SlotPayloadSchema>
 
-const decodeSlotPayload = Schema.decodeUnknownEither(SlotPayloadSchema)
+const decodeSlotPayload = Schema.decodeUnknownResult(SlotPayloadSchema)
 
 const payloadOf = (shape: AvailableSlotShape): SlotPayload => ({
   v: TOKEN_VERSION,
@@ -155,8 +155,8 @@ export const verifySlotToken = async (
     return null
   }
   const decoded = decodeSlotPayload(parsed)
-  if (Either.isLeft(decoded)) return null
-  const { v: _v, ...rest } = decoded.right
+  if (Result.isFailure(decoded)) return null
+  const { v: _v, ...rest } = decoded.success
   void _v
   return {
     serviceId: rest.serviceId,

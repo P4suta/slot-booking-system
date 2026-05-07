@@ -1,4 +1,4 @@
-import { Effect, Either, Layer } from "effect"
+import { Effect, Layer, Result } from "effect"
 import { typeid } from "typeid-js"
 import { ulid } from "ulidx"
 import { IdGenerator } from "../../application/ports/IdGenerator.js"
@@ -31,7 +31,7 @@ const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 const sampleBookingCode = (): BookingCode => {
   let acc = 0n
   for (const c of ulid()) acc = (acc << 5n) | BigInt(CROCKFORD.indexOf(c))
-  return Either.getOrThrow(encodeBookingCode(acc % BOOKING_CODE_KEYSPACE))
+  return Result.getOrThrow(encodeBookingCode(acc % BOOKING_CODE_KEYSPACE))
 }
 
 const make = <Id extends string>(prefix: string): Effect.Effect<Id> =>

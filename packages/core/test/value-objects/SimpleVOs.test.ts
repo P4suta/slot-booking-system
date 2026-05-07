@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import { isMinutes, parseMinutes } from "../../src/domain/value-objects/Duration.js"
@@ -14,8 +14,8 @@ import {
   parseNameKana,
 } from "../../src/domain/value-objects/NameKana.js"
 
-const isLeft = Either.isLeft
-const isRight = Either.isRight
+const isLeft = Result.isFailure
+const isRight = Result.isSuccess
 
 describe("NameKana", () => {
   it.each([
@@ -42,7 +42,7 @@ describe("NameKana", () => {
   it("collapses whitespace and full-width spaces", () => {
     const r = parseNameKana("ヤマダ　　タロウ  ")
     expect(isRight(r)).toBe(true)
-    if (isRight(r)) expect(r.right).toBe("ヤマダ タロウ")
+    if (isRight(r)) expect(r.success).toBe("ヤマダ タロウ")
   })
 
   it("normalize is idempotent", () => {
@@ -63,7 +63,7 @@ describe("NameKana", () => {
     const r = parseNameKana("ヤマダ タロウ")
     expect(isRight(r)).toBe(true)
     if (isRight(r)) {
-      expect(Schema.encodeSync(NameKanaSchema)(r.right)).toBe("ヤマダ タロウ")
+      expect(Schema.encodeSync(NameKanaSchema)(r.success)).toBe("ヤマダ タロウ")
     }
   })
 })
@@ -91,7 +91,7 @@ describe("FreeText", () => {
     const raw = "abcdefg\thello\nworld"
     const r = parseFreeText(raw)
     expect(isRight(r)).toBe(true)
-    if (isRight(r)) expect(r.right).toBe("abcdefg\thello\nworld")
+    if (isRight(r)) expect(r.success).toBe("abcdefg\thello\nworld")
   })
 
   it("counts surrogate pairs as one code point (multi-byte safety)", () => {
@@ -112,7 +112,7 @@ describe("FreeText", () => {
     const r = parseFreeText("hello world")
     expect(isRight(r)).toBe(true)
     if (isRight(r)) {
-      expect(Schema.encodeSync(FreeTextSchema)(r.right)).toBe("hello world")
+      expect(Schema.encodeSync(FreeTextSchema)(r.success)).toBe("hello world")
     }
   })
 })

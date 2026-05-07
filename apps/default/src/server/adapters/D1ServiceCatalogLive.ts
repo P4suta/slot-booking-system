@@ -10,7 +10,7 @@ import {
   ServiceSchema,
   StorageError,
 } from "@booking/core"
-import { eq } from "drizzle-orm"
+import { eq, type InferInsertModel } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
 import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core"
 import { Effect, Layer, Schema } from "effect"
@@ -57,14 +57,14 @@ type CatalogTable = SQLiteTable & { readonly id: SQLiteColumn }
 const wrapStorage =
   (reason: string) =>
   <A, E>(eff: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> =>
-    eff.pipe(Effect.catchAllDefect((d) => Effect.fail(new StorageError({ reason, cause: d }))))
+    eff.pipe(Effect.catchDefect((d) => Effect.fail(new StorageError({ reason, cause: d }))))
 
 /**
  * One parametric repository factory. The Schema is the entity codec,
  * the table is its Drizzle handle, and the encoded form `R` is the
  * shape Drizzle round-trips through the JSON / boolean / text columns.
  *
- * `decodeUnknownEither` is used for reads so a corrupt row surfaces as
+ * `decodeUnknownResult` is used for reads so a corrupt row surfaces as
  * a `StorageError` rather than a panic. Writes use `encodeSync` — the
  * caller has already decoded the entity, so re-encoding cannot fail.
  *
@@ -75,15 +75,15 @@ const wrapStorage =
 const makeRepository = <E extends { readonly id: I }, I extends string, R>(
   db: DrizzleD1,
   table: CatalogTable,
-  schema: Schema.Schema<E, R>,
+  schema: Schema.Codec<E, R>,
 ): CatalogRepository<E, I> => {
   const encode = Schema.encodeSync(schema)
-  const decodeRow = Schema.decodeUnknownEither(schema)
+  const decodeRow = Schema.decodeUnknownResult(schema)
 
   const decodeOrThrow = (row: unknown, label: string): E => {
     const r = decodeRow(row)
-    if (r._tag === "Right") return r.right
-    throw new StorageError({ reason: `D1 catalog ${label} decode`, cause: r.left })
+    if (r._tag === "Success") return r.success
+    throw new StorageError({ reason: `D1 catalog ${label} decode`, cause: r.failure })
   }
 
   return {
@@ -119,7 +119,7 @@ const makeRepository = <E extends { readonly id: I }, I extends string, R>(
           // `$inferInsert` shape exactly; the cast records that
           // contract at the boundary so Drizzle's typed builder
           // accepts the row without per-column unpacking.
-          const row = encode(entity) as typeof table.$inferInsert
+          const row = encode(entity) as InferInsertModel<typeof table>
           await db
             .insert(table)
             .values(row)

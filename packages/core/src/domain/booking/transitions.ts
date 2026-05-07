@@ -1,5 +1,5 @@
 import type { Temporal } from "@js-temporal/polyfill"
-import { Either, Match } from "effect"
+import { Match, Result } from "effect"
 import { type Capability, hasScope, type StaffScope, subjectOf } from "../auth/Capability.js"
 import {
   AlreadyCancelledError,
@@ -48,8 +48,8 @@ const common = (b: BookingCommon): BookingCommon => ({
 /* (state, command) row. Each returns the next booking + its event in lockstep.*/
 /* -------------------------------------------------------------------------- */
 
-const ok = (booking: Booking, event: BookingEvent): Either.Either<ApplyResult, DomainError> =>
-  Either.right({ booking, event })
+const ok = (booking: Booking, event: BookingEvent): Result.Result<ApplyResult, DomainError> =>
+  Result.succeed({ booking, event })
 
 /**
  * Bitemporal base for a freshly-emitted event. `occurredAt = recordedAt`
@@ -147,24 +147,24 @@ const okNoShow = (
 const invalid = (
   from: Booking["state"],
   kind: Command["kind"],
-): Either.Either<ApplyResult, DomainError> =>
-  Either.left(new InvalidStateTransitionError({ from, command: kind }))
+): Result.Result<ApplyResult, DomainError> =>
+  Result.fail(new InvalidStateTransitionError({ from, command: kind }))
 
 /**
  * Scope-membership check for staff-issued commands. Customer and
  * System capabilities pass through (their schema-level filter at the
  * Command boundary already restricted the variants they may issue).
- * Returns `Either.left(InsufficientCapability)` only when a Staff
+ * Returns `Result.fail(InsufficientCapability)` only when a Staff
  * capability lacks the required scope.
  */
 const requireScope = (
   cap: Capability,
   scope: StaffScope,
-): Either.Either<void, InsufficientCapabilityError> => {
-  if (cap._tag !== "StaffCapability") return Either.right(undefined)
+): Result.Result<void, InsufficientCapabilityError> => {
+  if (cap._tag !== "StaffCapability") return Result.succeed(undefined)
   return hasScope(cap, scope)
-    ? Either.right(undefined)
-    : Either.left(new InsufficientCapabilityError({ required: scope, capability: cap._tag }))
+    ? Result.succeed(undefined)
+    : Result.fail(new InsufficientCapabilityError({ required: scope, capability: cap._tag }))
 }
 
 /* -------------------------------------------------------------------------- */
@@ -175,7 +175,7 @@ const dispatchHeld = (held: Held, eventId: BookingEventId) =>
   Match.type<Command>().pipe(
     Match.discriminator("kind")("Confirm", (cmd) => okConfirm(held, cmd.at, eventId)),
     Match.discriminator("kind")("Cancel", (cmd) =>
-      Either.flatMap(requireScope(cmd.capability, "cancel"), () =>
+      Result.flatMap(requireScope(cmd.capability, "cancel"), () =>
         okCancel(held, cmd.at, cmd.reason, subjectOf(cmd.capability), eventId),
       ),
     ),
@@ -191,22 +191,22 @@ const dispatchHeld = (held: Held, eventId: BookingEventId) =>
 const dispatchConfirmed = (confirmed: Confirmed, eventId: BookingEventId) =>
   Match.type<Command>().pipe(
     Match.discriminator("kind")("Cancel", (cmd) =>
-      Either.flatMap(requireScope(cmd.capability, "cancel"), () =>
+      Result.flatMap(requireScope(cmd.capability, "cancel"), () =>
         okCancel(confirmed, cmd.at, cmd.reason, subjectOf(cmd.capability), eventId),
       ),
     ),
     Match.discriminator("kind")("Reschedule", (cmd) =>
-      Either.flatMap(requireScope(cmd.capability, "reschedule"), () =>
+      Result.flatMap(requireScope(cmd.capability, "reschedule"), () =>
         okReschedule(confirmed, cmd.at, cmd.newSlot, eventId),
       ),
     ),
     Match.discriminator("kind")("Complete", (cmd) =>
-      Either.flatMap(requireScope(cmd.capability, "complete"), () =>
+      Result.flatMap(requireScope(cmd.capability, "complete"), () =>
         okComplete(confirmed, cmd.at, eventId),
       ),
     ),
     Match.discriminator("kind")("MarkNoShow", (cmd) =>
-      Either.flatMap(requireScope(cmd.capability, "noshow"), () =>
+      Result.flatMap(requireScope(cmd.capability, "noshow"), () =>
         okNoShow(confirmed, cmd.at, subjectOf(cmd.capability), eventId),
       ),
     ),
@@ -244,13 +244,13 @@ export const apply = (
   booking: Booking,
   command: Command,
   newEventId: BookingEventId,
-): Either.Either<ApplyResult, DomainError> =>
+): Result.Result<ApplyResult, DomainError> =>
   Match.value(booking).pipe(
     Match.discriminator("state")("Held", (b) => dispatchHeld(b, newEventId)(command)),
     Match.discriminator("state")("Confirmed", (b) => dispatchConfirmed(b, newEventId)(command)),
-    Match.discriminator("state")("Cancelled", () => Either.left(new AlreadyCancelledError({}))),
-    Match.discriminator("state")("Completed", () => Either.left(new AlreadyCompletedError({}))),
-    Match.discriminator("state")("NoShow", () => Either.left(new AlreadyNoShowError({}))),
+    Match.discriminator("state")("Cancelled", () => Result.fail(new AlreadyCancelledError({}))),
+    Match.discriminator("state")("Completed", () => Result.fail(new AlreadyCompletedError({}))),
+    Match.discriminator("state")("NoShow", () => Result.fail(new AlreadyNoShowError({}))),
     Match.exhaustive,
   )
 
@@ -296,8 +296,8 @@ export const applyTyped = <S extends BookingMachineState, K extends AllowedComma
   booking: BookingT<S>,
   command: Command & { kind: K },
   newEventId: BookingEventId,
-): Either.Either<TypedApplyResult<S, K>, DomainError> =>
-  apply(booking, command, newEventId) as Either.Either<TypedApplyResult<S, K>, DomainError>
+): Result.Result<TypedApplyResult<S, K>, DomainError> =>
+  apply(booking, command, newEventId) as Result.Result<TypedApplyResult<S, K>, DomainError>
 
 /**
  * Type-level alias preserved for documentation: the set of

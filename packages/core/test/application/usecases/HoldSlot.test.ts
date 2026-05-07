@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Effect, Either, Layer } from "effect"
+import { Effect, Layer, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { BookingEventSourcedRepository } from "../../../src/application/ports/EventSourcedRepository.js"
 import { HoldSlot } from "../../../src/application/usecases/HoldSlot.js"
@@ -119,7 +119,7 @@ describe("HoldSlot", () => {
     expect(r.event.providerId).toBe(r.booking.providerId)
   })
 
-  it("does not leak Either internals into the use case result", async () => {
+  it("does not leak Result internals into the use case result", async () => {
     const program = HoldSlot({
       slot: sampleSlot(),
       nameKana: kana("ヤマダ"),
@@ -128,11 +128,11 @@ describe("HoldSlot", () => {
       source: "online",
     })
     const result = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER)))
-    expect(Either.isEither(result as unknown)).toBe(false)
+    expect(Result.isResult(result as unknown)).toBe(false)
   })
 
   it("threads a TraceId from the input through the structured log payload", async () => {
-    const traceId = Either.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
+    const traceId = Result.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
     const program = Effect.gen(function* () {
       const handle = yield* makeSilentLogger()
       const traceLayer = Layer.mergeAll(

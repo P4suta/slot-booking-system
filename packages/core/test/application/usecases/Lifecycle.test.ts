@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Effect, Either, Layer } from "effect"
+import { Effect, Layer, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { CancelBooking } from "../../../src/application/usecases/CancelBooking.js"
 import { ConfirmBooking } from "../../../src/application/usecases/ConfirmBooking.js"
@@ -66,7 +66,7 @@ describe("ConfirmBooking", () => {
       const fakeCode = `${held.booking.code.slice(0, 6)}${held.booking.code[6] === "9" ? "8" : "9"}`
       // The fake might still pass bloom mayContain (false positive); test the
       // repository miss path either way.
-      return yield* Effect.either(
+      return yield* Effect.result(
         ConfirmBooking({
           code: fakeCode as typeof held.booking.code,
           phoneLast4: held.booking.phoneLast4,
@@ -74,16 +74,16 @@ describe("ConfirmBooking", () => {
       )
     })
     const result = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER)))
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(["AggregateNotFound", "InvalidBookingCode"]).toContain(result.left._tag)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(["AggregateNotFound", "InvalidBookingCode"]).toContain(result.failure._tag)
     }
   })
 
   it("rejects a phone mismatch with PhoneMismatch", async () => {
     const program = Effect.gen(function* () {
       const held = yield* heldFixture("1111")
-      return yield* Effect.either(
+      return yield* Effect.result(
         ConfirmBooking({
           code: held.booking.code,
           phoneLast4: phone("9999"),
@@ -91,8 +91,8 @@ describe("ConfirmBooking", () => {
       )
     })
     const result = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER)))
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) expect(result.left._tag).toBe("PhoneMismatch")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure._tag).toBe("PhoneMismatch")
   })
 })
 
@@ -163,7 +163,7 @@ describe("RescheduleBooking", () => {
     const newSlot = sampleSlot("2026-05-10T05:00:00Z", "2026-05-10T06:00:00Z")
     const program = Effect.gen(function* () {
       const held = yield* heldFixture("5555")
-      return yield* Effect.either(
+      return yield* Effect.result(
         RescheduleBooking({
           code: held.booking.code,
           phoneLast4: held.booking.phoneLast4,
@@ -172,7 +172,7 @@ describe("RescheduleBooking", () => {
       )
     })
     const result = await Effect.runPromise(program.pipe(Effect.provide(TEST_LAYER)))
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) expect(result.left._tag).toBe("InvalidStateTransition")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure._tag).toBe("InvalidStateTransition")
   })
 })

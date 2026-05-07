@@ -8,9 +8,9 @@ import { Context, type Effect } from "effect"
  * (`SystemClockLive`); tests wire a deterministic, advanceable clock to
  * remove timing nondeterminism (ADR-0008).
  */
-export class Clock extends Context.Tag("@booking/core/Clock")<
+export class Clock extends Context.Service<
   Clock,
   {
     readonly nowInstant: Effect.Effect<Temporal.Instant>
   }
->() {}
+>()("@booking/core/Clock") {}

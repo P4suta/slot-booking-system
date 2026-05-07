@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import {
@@ -11,14 +11,14 @@ import {
   parseBookingCode,
 } from "../../src/domain/value-objects/BookingCode.js"
 
-const expectRight = <A, E>(e: Either.Either<A, E>): A => {
-  expect(Either.isRight(e), `expected Right, got Left: ${JSON.stringify(e)}`).toBe(true)
-  return Either.getOrThrow(e)
+const expectRight = <A, E>(e: Result.Result<A, E>): A => {
+  expect(Result.isSuccess(e), `expected Right, got Left: ${JSON.stringify(e)}`).toBe(true)
+  return Result.getOrThrow(e)
 }
 
-const expectLeft = <A, E>(e: Either.Either<A, E>): E => {
-  expect(Either.isLeft(e), "expected Left").toBe(true)
-  if (Either.isLeft(e)) return e.left
+const expectLeft = <A, E>(e: Result.Result<A, E>): E => {
+  expect(Result.isFailure(e), "expected Left").toBe(true)
+  if (Result.isFailure(e)) return e.failure
   throw new Error("unreachable")
 }
 
@@ -34,8 +34,8 @@ describe("BookingCode", () => {
 
   describe("encodeBookingCode", () => {
     it("rejects values out of keyspace", () => {
-      expect(Either.isLeft(encodeBookingCode(-1n))).toBe(true)
-      expect(Either.isLeft(encodeBookingCode(BOOKING_CODE_KEYSPACE))).toBe(true)
+      expect(Result.isFailure(encodeBookingCode(-1n))).toBe(true)
+      expect(Result.isFailure(encodeBookingCode(BOOKING_CODE_KEYSPACE))).toBe(true)
     })
 
     it("zero encodes as the canonical zero code", () => {
@@ -69,7 +69,7 @@ describe("BookingCode", () => {
 
     it("folds confusables: O→0, I→1, L→1, lowercase→upper", () => {
       const code = expectRight(encodeBookingCode(0n))
-      expect(parseBookingCode(code.toLowerCase())._tag).toBe("Right")
+      expect(parseBookingCode(code.toLowerCase())._tag).toBe("Success")
     })
 
     it("rejects wrong length", () => {
@@ -118,7 +118,7 @@ describe("BookingCode", () => {
       fc.assert(
         fc.property(fc.stringMatching(/^[0-9A-Z*~$=U]{7}$/), (s) => {
           total++
-          if (Either.isRight(parseBookingCode(s))) accepted++
+          if (Result.isSuccess(parseBookingCode(s))) accepted++
           return true
         }),
         { numRuns: 1000 },
@@ -151,9 +151,9 @@ describe("BookingCode", () => {
       // first, producing a leaf message that is not one of our three reason
       // tags — exercise the defensive fallback in classifyBookingCodeReason.
       const r = parseBookingCode(123 as unknown as string)
-      expect(Either.isLeft(r)).toBe(true)
-      if (Either.isLeft(r)) {
-        const err = r.left
+      expect(Result.isFailure(r)).toBe(true)
+      if (Result.isFailure(r)) {
+        const err = r.failure
         expect(err._tag).toBe("InvalidBookingCode")
         if (err._tag === "InvalidBookingCode") expect(err.reason).toBe("invalid-character")
       }
@@ -170,9 +170,9 @@ describe("BookingCode", () => {
             if (code[idx] === replacement) return true
             const tampered = `${code.slice(0, idx)}${replacement}${code.slice(idx + 1)}`
             const result = parseBookingCode(tampered)
-            if (Either.isRight(result)) return false
-            const tag = result.left._tag
-            const reason = tag === "InvalidBookingCode" ? result.left.reason : "other"
+            if (Result.isSuccess(result)) return false
+            const tag = result.failure._tag
+            const reason = tag === "InvalidBookingCode" ? result.failure.reason : "other"
             return reason === "checksum-mismatch" || reason === "invalid-character"
           },
         ),

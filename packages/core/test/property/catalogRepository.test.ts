@@ -52,7 +52,7 @@ import { makeInMemoryServiceCatalog } from "../../src/infrastructure/serviceCata
 
 const propertyTriad = <E extends { readonly id: I }, I, R>(
   label: string,
-  schema: Schema.Schema<E, R>,
+  schema: Schema.Codec<E, R>,
   pickRepo: (cat: ServiceCatalogOps) => CatalogRepository<E, I>,
 ): void => {
   const arbEntity = schemaToArbitrary(schema)
@@ -62,7 +62,7 @@ const propertyTriad = <E extends { readonly id: I }, I, R>(
       await fc.assert(
         fc.asyncProperty(arbEntity, async (entity) => {
           const result = await Effect.runPromise(
-            Effect.flatMap(ServiceCatalog, (cat) => {
+            Effect.flatMap(Effect.service(ServiceCatalog), (cat) => {
               const repo = pickRepo(cat)
               return Effect.gen(function* () {
                 yield* repo.save(entity)
@@ -80,7 +80,7 @@ const propertyTriad = <E extends { readonly id: I }, I, R>(
       await fc.assert(
         fc.asyncProperty(arbEntity, async (entity) => {
           const exit = await Effect.runPromiseExit(
-            Effect.flatMap(ServiceCatalog, (cat) => {
+            Effect.flatMap(Effect.service(ServiceCatalog), (cat) => {
               const repo = pickRepo(cat)
               return Effect.gen(function* () {
                 yield* repo.save(entity)
@@ -102,7 +102,7 @@ const propertyTriad = <E extends { readonly id: I }, I, R>(
       await fc.assert(
         fc.asyncProperty(arbEntity, async (entity) => {
           const list = await Effect.runPromise(
-            Effect.flatMap(ServiceCatalog, (cat) => {
+            Effect.flatMap(Effect.service(ServiceCatalog), (cat) => {
               const repo = pickRepo(cat)
               return Effect.gen(function* () {
                 yield* repo.save(entity)
@@ -134,7 +134,7 @@ describe("catalog property suite", () => {
         schemaToArbitrary(ProviderSchema),
         async (svc, prov) => {
           const counts = await Effect.runPromise(
-            Effect.flatMap(ServiceCatalog, (cat) =>
+            Effect.flatMap(Effect.service(ServiceCatalog), (cat) =>
               Effect.gen(function* () {
                 yield* cat.services.save(svc)
                 yield* cat.providers.save(prov)

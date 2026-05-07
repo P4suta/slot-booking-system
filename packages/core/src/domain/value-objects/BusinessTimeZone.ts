@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import { type DomainError, InvalidBusinessTimeZoneError } from "../errors/Errors.js"
 
 const isValidIanaTimeZone = (s: string): boolean => {
@@ -17,13 +17,12 @@ const isValidIanaTimeZone = (s: string): boolean => {
  * through `Temporal.Now.zonedDateTimeISO`, which throws on unknown
  * zones.
  */
-export const BusinessTimeZoneSchema = Schema.String.pipe(
-  Schema.filter(isValidIanaTimeZone),
-  Schema.brand("BusinessTimeZone"),
-)
+export const BusinessTimeZoneSchema = Schema.String.check(
+  Schema.makeFilter(isValidIanaTimeZone),
+).pipe(Schema.brand("BusinessTimeZone"))
 export type BusinessTimeZone = Schema.Schema.Type<typeof BusinessTimeZoneSchema>
 
-const decode = Schema.decodeUnknownEither(BusinessTimeZoneSchema)
+const decode = Schema.decodeUnknownResult(BusinessTimeZoneSchema)
 
-export const parseBusinessTimeZone = (raw: string): Either.Either<BusinessTimeZone, DomainError> =>
-  Either.mapLeft(decode(raw), () => new InvalidBusinessTimeZoneError({ value: raw }))
+export const parseBusinessTimeZone = (raw: string): Result.Result<BusinessTimeZone, DomainError> =>
+  Result.mapError(decode(raw), () => new InvalidBusinessTimeZoneError({ value: raw }))

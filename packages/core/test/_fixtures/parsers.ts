@@ -1,10 +1,10 @@
 /**
- * `Either.getOrThrow`-wrapped parsers, intended exclusively for test
+ * `Result.getOrThrow`-wrapped parsers, intended exclusively for test
  * fixtures where invalid inputs are programmer errors rather than
  * runtime conditions to handle. Production code uses the underlying
- * `parseX` directly and threads the `Either` through.
+ * `parseX` directly and threads the `Result` through.
  */
-import { Either } from "effect"
+import { Result } from "effect"
 import { makeOpenWindow, type OpenWindow } from "../../src/domain/entities/OpenWindow.js"
 import { parseWeekday, type Weekday } from "../../src/domain/entities/Weekday.js"
 import { type BookingCode, encodeBookingCode } from "../../src/domain/value-objects/BookingCode.js"
@@ -23,15 +23,15 @@ import {
 import { parseSkill, type Skill } from "../../src/domain/value-objects/Skill.js"
 import { t } from "./instants.js"
 
-export const kana = (s: string): NameKana => Either.getOrThrow(parseNameKana(s))
-export const phone = (s: string): PhoneLast4 => Either.getOrThrow(parsePhoneLast4(s))
-export const freeText = (s: string): FreeText => Either.getOrThrow(parseFreeText(s))
-export const bookingCode = (v: bigint): BookingCode => Either.getOrThrow(encodeBookingCode(v))
-export const skill = (s: string): Skill => Either.getOrThrow(parseSkill(s))
-export const resourceType = (s: string): ResourceType => Either.getOrThrow(parseResourceType(s))
+export const kana = (s: string): NameKana => Result.getOrThrow(parseNameKana(s))
+export const phone = (s: string): PhoneLast4 => Result.getOrThrow(parsePhoneLast4(s))
+export const freeText = (s: string): FreeText => Result.getOrThrow(parseFreeText(s))
+export const bookingCode = (v: bigint): BookingCode => Result.getOrThrow(encodeBookingCode(v))
+export const skill = (s: string): Skill => Result.getOrThrow(parseSkill(s))
+export const resourceType = (s: string): ResourceType => Result.getOrThrow(parseResourceType(s))
 export const businessTimeZone = (s: string): BusinessTimeZone =>
-  Either.getOrThrow(parseBusinessTimeZone(s))
-export const weekday = (n: number): Weekday => Either.getOrThrow(parseWeekday(n))
-export const holdingDays = (n: number): HoldingDays => Either.getOrThrow(parseHoldingDays(n))
+  Result.getOrThrow(parseBusinessTimeZone(s))
+export const weekday = (n: number): Weekday => Result.getOrThrow(parseWeekday(n))
+export const holdingDays = (n: number): HoldingDays => Result.getOrThrow(parseHoldingDays(n))
 export const openWindow = (a: number, b: number): OpenWindow =>
-  Either.getOrThrow(makeOpenWindow(t(a), t(b)))
+  Result.getOrThrow(makeOpenWindow(t(a), t(b)))

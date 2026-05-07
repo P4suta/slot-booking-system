@@ -23,7 +23,7 @@ import type { BookingCode } from "../../domain/value-objects/BookingCode.js"
  * deterministic generator exhausts its keyspace) without callers crafting
  * try / catch.
  */
-export class IdGenerator extends Context.Tag("@booking/core/IdGenerator")<
+export class IdGenerator extends Context.Service<
   IdGenerator,
   {
     readonly newBookingId: Effect.Effect<BookingId>
@@ -38,4 +38,4 @@ export class IdGenerator extends Context.Tag("@booking/core/IdGenerator")<
     readonly newIdempotencyKeyId: Effect.Effect<IdempotencyKeyId>
     readonly newBookingCode: Effect.Effect<BookingCode>
   }
->() {}
+>()("@booking/core/IdGenerator") {}

@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import { describe, expect, expectTypeOf, it } from "vitest"
 import {
   type Active,
@@ -85,10 +85,10 @@ describe("applyTyped", () => {
     const b = baseHeld()
     const cmd: Command & { kind: "Confirm" } = { kind: "Confirm", at: b.heldAt }
     const r = applyTyped(b, cmd, newBookingEventId())
-    expect(Either.isRight(r)).toBe(true)
-    if (Either.isRight(r)) {
-      expectTypeOf(r.right.booking.state).toEqualTypeOf<"Confirmed">()
-      expect(r.right.booking.state).toBe("Confirmed")
+    expect(Result.isSuccess(r)).toBe(true)
+    if (Result.isSuccess(r)) {
+      expectTypeOf(r.success.booking.state).toEqualTypeOf<"Confirmed">()
+      expect(r.success.booking.state).toBe("Confirmed")
     }
   })
 
@@ -96,9 +96,9 @@ describe("applyTyped", () => {
     const b = baseHeld()
     const cmd: Command & { kind: "Confirm" } = { kind: "Confirm", at: b.heldAt }
     const r = applyTyped(b, cmd, newBookingEventId())
-    expect(Either.isRight(r)).toBe(true)
-    if (Either.isRight(r)) {
-      const evt: BookingEvent = r.right.event
+    expect(Result.isSuccess(r)).toBe(true)
+    if (Result.isSuccess(r)) {
+      const evt: BookingEvent = r.success.event
       expect(evt.type).toBe("Confirmed")
     }
   })

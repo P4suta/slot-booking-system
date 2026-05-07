@@ -1,4 +1,4 @@
-import { Either, ParseResult, Schema } from "effect"
+import { Effect, Option, Result, Schema, SchemaGetter, SchemaIssue } from "effect"
 import {
   type BookingCodeReason,
   type DomainError,
@@ -105,10 +105,9 @@ const verifyNormalized = (s: string): BookingCodeReason | null => {
  * Branded predicate over already-normalised, well-formed strings. This is
  * the "internal" representation used by both codecs as their decoded side.
  */
-const BookingCodeBrand = Schema.String.pipe(
-  Schema.filter((s) => verifyNormalized(s) === null),
-  Schema.brand("BookingCode"),
-)
+const BookingCodeBrand = Schema.String.check(
+  Schema.makeFilter((s) => verifyNormalized(s) === null),
+).pipe(Schema.brand("BookingCode"))
 
 /**
  * Public-facing reservation identifier. Crockford Base32 body of length
@@ -125,14 +124,16 @@ export type BookingCode = Schema.Schema.Type<typeof BookingCodeBrand>
  * `decode(v)` produces the 7-char string for the keyspace value `v`;
  * `encode(c)` recovers the original `bigint` from the body.
  */
-export const BookingCodeSchema = Schema.transformOrFail(Schema.BigIntFromSelf, BookingCodeBrand, {
-  strict: true,
-  decode: (v, _opts, ast) =>
-    v < 0n || v >= BOOKING_CODE_KEYSPACE
-      ? ParseResult.fail(new ParseResult.Type(ast, v, "out of keyspace"))
-      : ParseResult.succeed(`${encodeBody(v)}${checksumChar(v)}` as BookingCode),
-  encode: (s) => ParseResult.succeed(decodeBody(s.slice(0, BODY_LENGTH))),
-})
+export const BookingCodeSchema = Schema.BigInt.pipe(
+  Schema.decodeTo(BookingCodeBrand, {
+    decode: SchemaGetter.transformOrFail<string, bigint>((v) =>
+      v < 0n || v >= BOOKING_CODE_KEYSPACE
+        ? Effect.fail(new SchemaIssue.InvalidValue(Option.some(v), { message: "out of keyspace" }))
+        : Effect.succeed(`${encodeBody(v)}${checksumChar(v)}`),
+    ),
+    encode: SchemaGetter.transform<bigint, string>((s) => decodeBody(s.slice(0, BODY_LENGTH))),
+  }),
+)
 
 /**
  * `string` ↔ `BookingCode` codec — the user-input pathway. Decode performs
@@ -140,24 +141,21 @@ export const BookingCodeSchema = Schema.transformOrFail(Schema.BigIntFromSelf, B
  * alphabet, and checksum. The custom failure message is a
  * {@link BookingCodeReason} tag, recoverable through {@link summarizeParse}.
  */
-export const BookingCodeFromUserInputSchema = Schema.transformOrFail(
-  Schema.String,
-  BookingCodeBrand,
-  {
-    strict: false,
-    decode: (raw, _opts, ast) => {
+export const BookingCodeFromUserInputSchema = Schema.String.pipe(
+  Schema.decodeTo(BookingCodeBrand, {
+    decode: SchemaGetter.transformOrFail<string, string>((raw) => {
       const normalized = normalizeBookingCode(raw)
       const reason = verifyNormalized(normalized)
       return reason === null
-        ? ParseResult.succeed(normalized as BookingCode)
-        : ParseResult.fail(new ParseResult.Type(ast, raw, reason))
-    },
-    encode: (s) => ParseResult.succeed(s),
-  },
+        ? Effect.succeed(normalized)
+        : Effect.fail(new SchemaIssue.InvalidValue(Option.some(raw), { message: reason }))
+    }),
+    encode: SchemaGetter.transform<string, string>((s) => s),
+  }),
 )
 
 /* -------------------------------------------------------------------------- */
-/* Public API (Either-flavoured wrappers around the codecs)                    */
+/* Public API (Result-flavoured wrappers around the codecs)                    */
 /* -------------------------------------------------------------------------- */
 
 const BOOKING_CODE_REASONS: ReadonlySet<string> = new Set<BookingCodeReason>([
@@ -169,15 +167,15 @@ const BOOKING_CODE_REASONS: ReadonlySet<string> = new Set<BookingCodeReason>([
 const classifyBookingCodeReason = (raw: string): BookingCodeReason =>
   BOOKING_CODE_REASONS.has(raw) ? (raw as BookingCodeReason) : "invalid-character"
 
-const decodeFromUserInput = Schema.decodeUnknownEither(BookingCodeFromUserInputSchema)
-const decodeFromBigint = Schema.decodeUnknownEither(BookingCodeSchema)
+const decodeFromUserInput = Schema.decodeUnknownResult(BookingCodeFromUserInputSchema)
+const decodeFromBigint = Schema.decodeUnknownResult(BookingCodeSchema)
 
 /**
  * Encode a numeric body value into the canonical 7-char `BookingCode`.
  * Used by the `IdGenerator` port; pure function, no randomness inside.
  */
-export const encodeBookingCode = (value: bigint): Either.Either<BookingCode, DomainError> =>
-  Either.mapLeft(
+export const encodeBookingCode = (value: bigint): Result.Result<BookingCode, DomainError> =>
+  Result.mapError(
     decodeFromBigint(value),
     () => new InvalidBookingCodeError({ reason: "invalid-character" }),
   )
@@ -192,8 +190,8 @@ export const encodeBookingCode = (value: bigint): Either.Either<BookingCode, Dom
  * Steps 1–4 happen **before** any database lookup (ADR-0014). 99 % of
  * typos terminate here.
  */
-export const parseBookingCode = (raw: string): Either.Either<BookingCode, DomainError> =>
-  Either.mapLeft(
+export const parseBookingCode = (raw: string): Result.Result<BookingCode, DomainError> =>
+  Result.mapError(
     decodeFromUserInput(raw),
     (e) => new InvalidBookingCodeError({ reason: classifyBookingCodeReason(summarizeParse(e)) }),
   )

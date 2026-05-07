@@ -1,4 +1,4 @@
-import { Effect, Either, Layer, Ref } from "effect"
+import { Effect, Layer, Ref, Result } from "effect"
 import { IdGenerator } from "../../application/ports/IdGenerator.js"
 import type {
   AuditLogId,
@@ -65,7 +65,7 @@ export const makeDeterministicIdGenerator = (seed = 0n): Layer.Layer<IdGenerator
         newBookingCode: Effect.map(
           next,
           (n): BookingCode =>
-            Either.getOrThrow(
+            Result.getOrThrow(
               encodeBookingCode(
                 ((n % BOOKING_CODE_KEYSPACE) + BOOKING_CODE_KEYSPACE) % BOOKING_CODE_KEYSPACE,
               ),

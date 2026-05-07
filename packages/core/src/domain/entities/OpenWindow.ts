@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { type Either, Schema } from "effect"
+import { type Result, Schema } from "effect"
 import { type DomainError, InvalidOpenWindowError } from "../errors/Errors.js"
 import { PlainTimeSchema } from "../types/Temporal.js"
 import { type Comparator, type Interval, intervalSmartCtor } from "../value-objects/Interval.js"
@@ -23,7 +23,7 @@ const cmpPlainTime: Comparator<Temporal.PlainTime> = (a, b) => Temporal.PlainTim
 export const makeOpenWindow: (
   start: Temporal.PlainTime,
   end: Temporal.PlainTime,
-) => Either.Either<OpenWindow, DomainError> = intervalSmartCtor<Temporal.PlainTime, DomainError>(
+) => Result.Result<OpenWindow, DomainError> = intervalSmartCtor<Temporal.PlainTime, DomainError>(
   cmpPlainTime,
   () => new InvalidOpenWindowError({ reason: "start must precede end (same-day, no wrap)" }),
 )

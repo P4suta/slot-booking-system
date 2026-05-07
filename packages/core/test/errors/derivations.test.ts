@@ -61,13 +61,13 @@ describe("errorToAuditEntry", () => {
 
   it("includes traceId when provided in the context", () => {
     const traceId = parseTraceId("01JBFB7NZPMKCR8JJTDRCKF2QM")
-    if (traceId._tag !== "Right") throw new Error("ulid-shaped trace id should parse")
+    if (traceId._tag !== "Success") throw new Error("ulid-shaped trace id should parse")
     const entry = errorToAuditEntry(new AggregateNotFoundError({}), {
       now: "2026-05-09T12:00:00Z",
       actor: "system",
-      traceId: traceId.right,
+      traceId: traceId.success,
     })
     expect("traceId" in entry).toBe(true)
-    expect(entry.traceId).toBe(traceId.right)
+    expect(entry.traceId).toBe(traceId.success)
   })
 })

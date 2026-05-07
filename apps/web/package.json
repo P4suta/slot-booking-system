@@ -17,16 +17,16 @@
     "@booking/core": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260504.0",
-    "@inlang/paraglide-js": "^2.4.0",
-    "@sveltejs/adapter-cloudflare": "^7.2.8",
-    "@sveltejs/kit": "^2.59.1",
-    "@sveltejs/vite-plugin-svelte": "^6.2.2",
-    "@types/node": "^25.6.0",
-    "graphql": "^16.13.2",
-    "svelte": "^5.55.5",
-    "svelte-check": "^4.4.5",
-    "typescript": "^6.0.3",
-    "vite": "^7.1.16"
+    "@cloudflare/workers-types": "latest",
+    "@inlang/paraglide-js": "latest",
+    "@sveltejs/adapter-cloudflare": "latest",
+    "@sveltejs/kit": "latest",
+    "@sveltejs/vite-plugin-svelte": "latest",
+    "@types/node": "latest",
+    "graphql": "latest",
+    "svelte": "latest",
+    "svelte-check": "latest",
+    "typescript": "latest",
+    "vite": "latest"
   }
 }

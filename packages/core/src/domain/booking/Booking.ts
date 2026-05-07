@@ -17,11 +17,11 @@ import { TimeSlotSchema } from "../value-objects/TimeSlot.js"
 /* -------------------------------------------------------------------------- */
 
 /** Where the reservation came from. */
-export const BookingSourceSchema = Schema.Literal("online", "walkin", "phone", "staff")
+export const BookingSourceSchema = Schema.Literals(["online", "walkin", "phone", "staff"])
 export type BookingSource = Schema.Schema.Type<typeof BookingSourceSchema>
 
 /** Who initiated a state-changing action. */
-export const ActorSchema = Schema.Literal("customer", "staff", "system")
+export const ActorSchema = Schema.Literals(["customer", "staff", "system"])
 export type Actor = Schema.Schema.Type<typeof ActorSchema>
 
 /* -------------------------------------------------------------------------- */
@@ -88,13 +88,13 @@ export type NoShow = Schema.Schema.Type<typeof NoShowSchema>
 /* Aggregate union                                                             */
 /* -------------------------------------------------------------------------- */
 
-export const BookingSchema = Schema.Union(
+export const BookingSchema = Schema.Union([
   HeldSchema,
   ConfirmedSchema,
   CancelledSchema,
   CompletedSchema,
   NoShowSchema,
-)
+])
 export type Booking = Schema.Schema.Type<typeof BookingSchema>
 
 export type BookingState = Booking["state"]

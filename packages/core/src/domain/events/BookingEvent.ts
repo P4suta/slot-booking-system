@@ -88,14 +88,14 @@ export const NoShowEventSchema = Schema.Struct({
  * `freeText`) by design: they participate in the long-retention audit
  * trail (ADR-0009) and must outlive PII purge (5y vs 2y).
  */
-export const BookingEventSchema = Schema.Union(
+export const BookingEventSchema = Schema.Union([
   HeldEventSchema,
   ConfirmedEventSchema,
   CancelledEventSchema,
   RescheduledEventSchema,
   CompletedEventSchema,
   NoShowEventSchema,
-)
+])
 export type BookingEvent = Schema.Schema.Type<typeof BookingEventSchema>
 
 /** Common-fields helper for projections. */

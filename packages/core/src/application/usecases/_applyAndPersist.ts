@@ -55,12 +55,17 @@ export const applyAndPersist = (
 
     const eventId = yield* idgen.newBookingEventId
     const result = apply(loaded.state, command, eventId)
-    if (result._tag === "Left") return yield* Effect.fail(result.left)
+    if (result._tag === "Failure") return yield* Effect.fail(result.failure)
 
-    const saved = yield* repo.save(id, loaded.revision, [result.right.event], result.right.booking)
+    const saved = yield* repo.save(
+      id,
+      loaded.revision,
+      [result.success.event],
+      result.success.booking,
+    )
     return {
-      booking: result.right.booking,
-      event: result.right.event,
+      booking: result.success.booking,
+      event: result.success.event,
       revision: saved.revision,
     }
   })

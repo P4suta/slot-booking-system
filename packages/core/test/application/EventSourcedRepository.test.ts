@@ -31,7 +31,7 @@ describe("BookingEventSourcedRepository (Context.Tag)", () => {
   })
 
   it("is a Context.Tag — usable as the second argument of Layer.succeed", () => {
-    const stub: Context.Tag.Service<typeof BookingEventSourcedRepository> = {
+    const stub: Context.Service.Shape<typeof BookingEventSourcedRepository> = {
       load: () =>
         Effect.fail(
           // We never actually run this — we're proving the shape compiles.
@@ -89,7 +89,7 @@ describe("NonEmptyReadonlyArray<T>", () => {
 
 describe("Tag.Service<…> structural intersection", () => {
   it("includes both EventSourcedRepositoryOps and SecondaryIndexOps members", () => {
-    type Service = Context.Tag.Service<typeof BookingEventSourcedRepository>
+    type Service = Context.Service.Shape<typeof BookingEventSourcedRepository>
     expectTypeOf<Service>().toExtend<
       EventSourcedRepositoryOps<Booking, BookingId, BookingEvent> &
         SecondaryIndexOps<BookingId, BookingCode>
@@ -99,14 +99,14 @@ describe("Tag.Service<…> structural intersection", () => {
       // `Awaited` is a no-op for Effect.Effect (it's not a Promise) — the
       // assertion is on the Effect's success channel via .toEqualTypeOf below.
       .toExtend<unknown>()
-    type LoadSuccess = Effect.Effect.Success<ReturnType<Service["load"]>>
+    type LoadSuccess = Effect.Success<ReturnType<Service["load"]>>
     expectTypeOf<LoadSuccess>().toEqualTypeOf<LoadedAggregate<Booking>>()
     expectTypeOf<LoadSuccess["state"]>().toEqualTypeOf<Booking>()
   })
 
   it("exposes Held as a narrowable subtype of state via discriminated union", () => {
-    type Service = Context.Tag.Service<typeof BookingEventSourcedRepository>
-    type LoadSuccess = Effect.Effect.Success<ReturnType<Service["load"]>>
+    type Service = Context.Service.Shape<typeof BookingEventSourcedRepository>
+    type LoadSuccess = Effect.Success<ReturnType<Service["load"]>>
     // Held is one variant of Booking; the union assignability proves the
     // load surface preserves the full discriminated union.
     expectTypeOf<Held>().toExtend<LoadSuccess["state"]>()

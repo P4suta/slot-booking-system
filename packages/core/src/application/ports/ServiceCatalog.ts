@@ -67,7 +67,6 @@ export type ServiceCatalogOps = {
   readonly providerAbsences: CatalogRepository<ProviderAbsence, ProviderAbsenceId>
 }
 
-export class ServiceCatalog extends Context.Tag("@booking/core/ServiceCatalog")<
-  ServiceCatalog,
-  ServiceCatalogOps
->() {}
+export class ServiceCatalog extends Context.Service<ServiceCatalog, ServiceCatalogOps>()(
+  "@booking/core/ServiceCatalog",
+) {}

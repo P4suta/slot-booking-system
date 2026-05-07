@@ -17,7 +17,7 @@ import {
   ServiceSchema,
 } from "@booking/core"
 import { Temporal } from "@js-temporal/polyfill"
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 
 /**
  * Catalog seed for `wrangler dev --local`.
@@ -64,8 +64,8 @@ const fail = (reason: string): never => {
   process.exit(1)
 }
 
-const expectRight = <A, E>(e: Either.Either<A, E>, reason: string): A =>
-  Either.match(e, { onLeft: () => fail(`${reason}: ${JSON.stringify(e)}`), onRight: (v) => v })
+const expectRight = <A, E>(e: Result.Result<A, E>, reason: string): A =>
+  Result.match(e, { onFailure: () => fail(`${reason}: ${JSON.stringify(e)}`), onSuccess: (v) => v })
 
 /* -------------------------------------------------------------------------- */
 /* Domain entities                                                             */
@@ -189,7 +189,7 @@ const renderValue = (value: unknown): string => {
   return sqlEscape(JSON.stringify(value))
 }
 
-const upsertOne = <E, R>(table: string, schema: Schema.Schema<E, R>, entity: E): string => {
+const upsertOne = <E, R>(table: string, schema: Schema.Codec<E, R>, entity: E): string => {
   const row = Schema.encodeSync(schema)(entity) as Record<string, unknown>
   const camelToSnake = (k: string): string => k.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)
   const cols = Object.keys(row).map(camelToSnake)

@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema, SchemaGetter } from "effect"
 import { type DomainError, InvalidFreeTextError } from "../errors/Errors.js"
 import { summarizeParse } from "../errors/fromParseError.js"
 
@@ -46,19 +46,19 @@ const codePointCount = (s: string): number => {
  * Control characters other than `\n` (U+000A) and `\t` (U+0009) are
  * stripped during decode.
  */
-const FreeTextBrand = Schema.String.pipe(
-  Schema.filter((s) => codePointCount(s) <= MAX_LENGTH),
-  Schema.brand("FreeText"),
-)
+const FreeTextBrand = Schema.String.check(
+  Schema.makeFilter((s) => codePointCount(s) <= MAX_LENGTH),
+).pipe(Schema.brand("FreeText"))
 
-export const FreeTextSchema = Schema.transform(Schema.String, FreeTextBrand, {
-  strict: true,
-  decode: (raw) => normalizeFreeText(raw),
-  encode: (norm) => norm,
-})
+export const FreeTextSchema = Schema.String.pipe(
+  Schema.decodeTo(FreeTextBrand, {
+    decode: SchemaGetter.transform(normalizeFreeText),
+    encode: SchemaGetter.transform((norm: string) => norm),
+  }),
+)
 export type FreeText = Schema.Schema.Type<typeof FreeTextSchema>
 
-const decode = Schema.decodeUnknownEither(FreeTextSchema)
+const decode = Schema.decodeUnknownResult(FreeTextSchema)
 
-export const parseFreeText = (raw: string): Either.Either<FreeText, DomainError> =>
-  Either.mapLeft(decode(raw), (e) => new InvalidFreeTextError({ reason: summarizeParse(e) }))
+export const parseFreeText = (raw: string): Result.Result<FreeText, DomainError> =>
+  Result.mapError(decode(raw), (e) => new InvalidFreeTextError({ reason: summarizeParse(e) }))

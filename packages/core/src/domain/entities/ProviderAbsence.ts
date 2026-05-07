@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import { type DomainError, InvalidAbsenceError } from "../errors/Errors.js"
 import { ProviderAbsenceIdSchema, ProviderIdSchema } from "../types/EntityId.js"
 import { InstantSchema } from "../types/Temporal.js"
@@ -29,8 +29,8 @@ export const makeProviderAbsence = (params: {
   readonly start: Temporal.Instant
   readonly end: Temporal.Instant
   readonly reason: string
-}): Either.Either<ProviderAbsence, DomainError> =>
-  Either.map(makeAbsenceInterval(params.start, params.end), (interval) => ({
+}): Result.Result<ProviderAbsence, DomainError> =>
+  Result.map(makeAbsenceInterval(params.start, params.end), (interval) => ({
     id: params.id,
     providerId: params.providerId,
     start: interval.start,

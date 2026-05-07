@@ -14,23 +14,22 @@
   },
   "dependencies": {
     "@booking/core": "workspace:*",
-    "@effect/rpc": "~0.75.1",
-    "@js-temporal/polyfill": "^0.5.1",
-    "@microlabs/otel-cf-workers": "1.0.0-rc.52",
-    "@opentelemetry/api": "^1.9.1",
-    "@pothos/core": "^4.12.0",
-    "@pothos/plugin-errors": "^4.9.0",
-    "drizzle-orm": "^0.45.0",
-    "effect": "^3.21.2",
-    "graphql": "^16.13.2",
-    "graphql-yoga": "^5.21.0"
+    "@js-temporal/polyfill": "latest",
+    "@microlabs/otel-cf-workers": "latest",
+    "@opentelemetry/api": "latest",
+    "@pothos/core": "latest",
+    "@pothos/plugin-errors": "latest",
+    "drizzle-orm": "rc",
+    "effect": "beta",
+    "graphql": "latest",
+    "graphql-yoga": "latest"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260504.0",
-    "@types/node": "^25.6.0",
-    "cloudflare": "^6.0.0",
-    "drizzle-kit": "^0.31.0",
-    "tsx": "^4.21.0",
-    "wrangler": "^4.87.0"
+    "@cloudflare/workers-types": "latest",
+    "@types/node": "latest",
+    "cloudflare": "latest",
+    "drizzle-kit": "rc",
+    "tsx": "latest",
+    "wrangler": "latest"
   }
 }

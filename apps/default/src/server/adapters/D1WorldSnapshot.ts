@@ -10,7 +10,7 @@ import {
 import type { Temporal } from "@js-temporal/polyfill"
 import { and, gte, lt } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
-import { Effect, Either, Schema } from "effect"
+import { Effect, Result, Schema } from "effect"
 import { bookings } from "../schema/index.js"
 
 /**
@@ -32,7 +32,7 @@ import { bookings } from "../schema/index.js"
  * `StorageError`; the resolver maps that to `BookingError("Storage")`.
  */
 
-const decodeBookingRow = Schema.decodeUnknownEither(BookingFromRow)
+const decodeBookingRow = Schema.decodeUnknownResult(BookingFromRow)
 
 const dayBoundsUtc = (
   date: Temporal.PlainDate,
@@ -79,7 +79,7 @@ export const readWorldSnapshot = (
       // is the operator-facing trail of the purge.
       return rows.flatMap((row) => {
         const decoded = decodeBookingRow(row)
-        return decoded._tag === "Right" ? [decoded.right] : []
+        return decoded._tag === "Success" ? [decoded.success] : []
       })
     },
     catch: (e) => new StorageError({ reason: "D1 world bookings", cause: e }),
@@ -124,8 +124,8 @@ export const readWorldSnapshot = (
  */
 export const businessTimeZoneFromEnv = (
   raw: string,
-): Either.Either<BusinessTimeZone, StorageError> =>
-  Either.mapLeft(
+): Result.Result<BusinessTimeZone, StorageError> =>
+  Result.mapError(
     parseBusinessTimeZone(raw),
     () => new StorageError({ reason: `invalid DEPLOYMENT_TIMEZONE: ${raw}` }),
   )

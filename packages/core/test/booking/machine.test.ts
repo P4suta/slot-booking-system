@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import { describe, expect, it } from "vitest"
 import type { Command } from "../../src/domain/booking/Command.js"
 import {
@@ -61,11 +61,11 @@ const buildBookingInState = (state: BookingMachineState): ReturnType<typeof base
   // Build a Confirmed by walking Held → Confirmed.
   const ev = newBookingEventId
   const r1 = apply(baseHeld(), { kind: "Confirm", at: at("2026-05-09T12:01:00Z") }, ev())
-  if (Either.isLeft(r1)) return null
-  if (state === "Confirmed") return r1.right.booking as ReturnType<typeof baseHeld>
+  if (Result.isFailure(r1)) return null
+  if (state === "Confirmed") return r1.success.booking as ReturnType<typeof baseHeld>
   if (state === "Cancelled") {
     const r2 = apply(
-      r1.right.booking,
+      r1.success.booking,
       {
         kind: "Cancel",
         at: at("2026-05-09T13:00:00Z"),
@@ -74,23 +74,23 @@ const buildBookingInState = (state: BookingMachineState): ReturnType<typeof base
       },
       ev(),
     )
-    return Either.isRight(r2) ? (r2.right.booking as ReturnType<typeof baseHeld>) : null
+    return Result.isSuccess(r2) ? (r2.success.booking as ReturnType<typeof baseHeld>) : null
   }
   if (state === "Completed") {
     const r2 = apply(
-      r1.right.booking,
+      r1.success.booking,
       { kind: "Complete", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
       ev(),
     )
-    return Either.isRight(r2) ? (r2.right.booking as ReturnType<typeof baseHeld>) : null
+    return Result.isSuccess(r2) ? (r2.success.booking as ReturnType<typeof baseHeld>) : null
   }
   // NoShow
   const r2 = apply(
-    r1.right.booking,
+    r1.success.booking,
     { kind: "MarkNoShow", at: at("2026-05-10T03:00:00Z"), capability: staffCap() },
     newBookingEventId(),
   )
-  return Either.isRight(r2) ? (r2.right.booking as ReturnType<typeof baseHeld>) : null
+  return Result.isSuccess(r2) ? (r2.success.booking as ReturnType<typeof baseHeld>) : null
 }
 
 describe("TRANSITIONS spec vs apply (cross-validation)", () => {
@@ -128,12 +128,12 @@ describe("TRANSITIONS spec vs apply (cross-validation)", () => {
       }
       for (const eventType of EVENTS) {
         const result = apply(booking, commandFor(eventType), newBookingEventId())
-        const applyAccepts = Either.isRight(result)
+        const applyAccepts = Result.isSuccess(result)
         const machineAccepts = machineAllows(state, eventType)
         expect(applyAccepts, `(${state}, ${eventType}) drift`).toBe(machineAccepts)
-        if (applyAccepts && Either.isRight(result)) {
+        if (applyAccepts && Result.isSuccess(result)) {
           const expected = machineNext(state, eventType)
-          expect(result.right.booking.state).toBe(expected)
+          expect(result.success.booking.state).toBe(expected)
         }
       }
     }

@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   type Capability,
@@ -20,14 +20,14 @@ import {
   formatBookingCode,
 } from "../../../src/domain/value-objects/BookingCode.js"
 
-const decodeCustomer = Schema.decodeUnknownEither(CustomerCapabilitySchema)
-const decodeStaff = Schema.decodeUnknownEither(StaffCapabilitySchema)
-const decodeSystem = Schema.decodeUnknownEither(SystemCapabilitySchema)
-const decodeAny = Schema.decodeUnknownEither(CapabilitySchema)
+const decodeCustomer = Schema.decodeUnknownResult(CustomerCapabilitySchema)
+const decodeStaff = Schema.decodeUnknownResult(StaffCapabilitySchema)
+const decodeSystem = Schema.decodeUnknownResult(SystemCapabilitySchema)
+const decodeAny = Schema.decodeUnknownResult(CapabilitySchema)
 
 /** Valid booking-code samples generated through the bigint codec (no hand-rolled checksum). */
-const validCode = formatBookingCode(Either.getOrThrow(encodeBookingCode(123n)))
-const otherCode = formatBookingCode(Either.getOrThrow(encodeBookingCode(456n)))
+const validCode = formatBookingCode(Result.getOrThrow(encodeBookingCode(123n)))
+const otherCode = formatBookingCode(Result.getOrThrow(encodeBookingCode(456n)))
 
 describe("CapabilitySchema (discriminated union)", () => {
   it("decodes a valid CustomerCapability with a Crockford-32 booking code + last4", () => {
@@ -36,12 +36,12 @@ describe("CapabilitySchema (discriminated union)", () => {
       bookingCode: validCode,
       phoneLast4: "1234",
     })
-    expect(Either.isRight(decoded)).toBe(true)
-    if (Either.isRight(decoded)) {
-      expect(decoded.right._tag).toBe("CustomerCapability")
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isSuccess(decoded)) {
+      expect(decoded.success._tag).toBe("CustomerCapability")
       // Confirm the discriminant narrows the type — these accesses
       // only compile inside the `CustomerCapability` branch.
-      const customer: CustomerCapability = decoded.right as CustomerCapability
+      const customer: CustomerCapability = decoded.success as CustomerCapability
       expect(customer.phoneLast4).toBe("1234")
     }
   })
@@ -53,7 +53,7 @@ describe("CapabilitySchema (discriminated union)", () => {
       staffId,
       scopes: ["cancel", "complete"],
     })
-    expect(Either.isRight(decoded)).toBe(true)
+    expect(Result.isSuccess(decoded)).toBe(true)
   })
 
   it("rejects a StaffCapability with an empty scope list (NonEmptyArray)", () => {
@@ -62,7 +62,7 @@ describe("CapabilitySchema (discriminated union)", () => {
       staffId: newStaffId(),
       scopes: [],
     })
-    expect(Either.isLeft(decoded)).toBe(true)
+    expect(Result.isFailure(decoded)).toBe(true)
   })
 
   it("rejects a StaffCapability with an unknown scope literal", () => {
@@ -71,19 +71,19 @@ describe("CapabilitySchema (discriminated union)", () => {
       staffId: newStaffId(),
       scopes: ["delete"],
     })
-    expect(Either.isLeft(decoded)).toBe(true)
+    expect(Result.isFailure(decoded)).toBe(true)
   })
 
   it("decodes a valid SystemCapability with a closed-set reason", () => {
     const decoded = decodeSystem({ _tag: "SystemCapability", reason: "expire" })
-    expect(Either.isRight(decoded)).toBe(true)
+    expect(Result.isSuccess(decoded)).toBe(true)
     const decoded2 = decodeSystem({ _tag: "SystemCapability", reason: "purge" })
-    expect(Either.isRight(decoded2)).toBe(true)
+    expect(Result.isSuccess(decoded2)).toBe(true)
   })
 
   it("rejects a SystemCapability with an unknown reason", () => {
     const decoded = decodeSystem({ _tag: "SystemCapability", reason: "bogus" })
-    expect(Either.isLeft(decoded)).toBe(true)
+    expect(Result.isFailure(decoded)).toBe(true)
   })
 
   it("rejects a CustomerCapability with a malformed phone last4", () => {
@@ -92,7 +92,7 @@ describe("CapabilitySchema (discriminated union)", () => {
       bookingCode: validCode,
       phoneLast4: "12",
     })
-    expect(Either.isLeft(decoded)).toBe(true)
+    expect(Result.isFailure(decoded)).toBe(true)
   })
 
   it("rejects a CustomerCapability with a booking code failing checksum", () => {
@@ -101,18 +101,18 @@ describe("CapabilitySchema (discriminated union)", () => {
       bookingCode: "ZZZZ-ZZZ",
       phoneLast4: "1234",
     })
-    expect(Either.isLeft(decoded)).toBe(true)
+    expect(Result.isFailure(decoded)).toBe(true)
   })
 
   it("rejects values lacking the _tag discriminator", () => {
     const decoded = decodeAny({ bookingCode: validCode, phoneLast4: "1234" })
-    expect(Either.isLeft(decoded)).toBe(true)
+    expect(Result.isFailure(decoded)).toBe(true)
   })
 })
 
 describe("subjectOf", () => {
   it("returns 'customer' / 'staff' / 'system' per discriminator", () => {
-    const cust: Capability = Either.getOrThrow(
+    const cust: Capability = Result.getOrThrow(
       decodeCustomer({
         _tag: "CustomerCapability",
         bookingCode: validCode,
@@ -121,7 +121,7 @@ describe("subjectOf", () => {
     )
     expect(subjectOf(cust)).toBe("customer")
 
-    const staff: StaffCapability = Either.getOrThrow(
+    const staff: StaffCapability = Result.getOrThrow(
       decodeStaff({
         _tag: "StaffCapability",
         staffId: newStaffId(),
@@ -130,21 +130,21 @@ describe("subjectOf", () => {
     )
     expect(subjectOf(staff)).toBe("staff")
 
-    const system: SystemCapability = Either.getOrThrow(
+    const system: SystemCapability = Result.getOrThrow(
       decodeSystem({ _tag: "SystemCapability", reason: "expire" }),
     )
     expect(subjectOf(system)).toBe("system")
   })
 
   it("distinguishes two customer capabilities by their booking-code credential", () => {
-    const a = Either.getOrThrow(
+    const a = Result.getOrThrow(
       decodeCustomer({
         _tag: "CustomerCapability",
         bookingCode: validCode,
         phoneLast4: "1111",
       }),
     )
-    const b = Either.getOrThrow(
+    const b = Result.getOrThrow(
       decodeCustomer({
         _tag: "CustomerCapability",
         bookingCode: otherCode,
@@ -157,7 +157,7 @@ describe("subjectOf", () => {
 
 describe("hasScope", () => {
   it("returns true iff the scope appears in the staff capability's scope list", () => {
-    const cap = Either.getOrThrow(
+    const cap = Result.getOrThrow(
       decodeStaff({
         _tag: "StaffCapability",
         staffId: newStaffId(),

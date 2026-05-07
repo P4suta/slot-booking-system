@@ -1,6 +1,6 @@
-import { RpcClient, type RpcGroup } from "@effect/rpc"
-import { RpcClientError } from "@effect/rpc/RpcClientError"
 import { Deferred, Effect, type Scope } from "effect"
+import { RpcClient, type RpcGroup } from "effect/unstable/rpc"
+import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError"
 import type { DaySchedule } from "../DaySchedule.js"
 import { DayScheduleRouter } from "./router.js"
 
@@ -10,7 +10,7 @@ type DayScheduleClient = RpcClient.RpcClient<DayScheduleRpcs, RpcClientError>
 type WriteFn = (msg: never) => Effect.Effect<void>
 
 /**
- * Phase 2.8 / BI-4 — typed `@effect/rpc` client over Cloudflare DO RPC.
+ * Phase 2.8 / BI-4 — typed `effect/unstable/rpc` client over Cloudflare DO RPC.
  *
  * The DO surface (`stub.dispatch(envelope)`) is the only transport
  * channel; both the inbound `FromClientEncoded` request envelope and
@@ -60,9 +60,10 @@ export const makeDayScheduleClient = (
             try: () => Promise.resolve<unknown>(stub.dispatch(message)),
             catch: (cause) =>
               new RpcClientError({
-                reason: "Unknown",
-                message: cause instanceof Error ? cause.message : "DO RPC dispatch failed",
-                cause,
+                reason: new RpcClientDefect({
+                  message: cause instanceof Error ? cause.message : "DO RPC dispatch failed",
+                  cause,
+                }),
               }),
           })
           if (typeof reply === "object" && reply !== null) {

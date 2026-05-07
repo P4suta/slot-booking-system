@@ -1,90 +1,97 @@
-import { Arbitrary, type Schema, SchemaAST } from "effect"
+import { Schema } from "effect"
+import type { AST, Check } from "effect/SchemaAST"
 import type { Arbitrary as FCArbitrary } from "fast-check"
 
 /**
  * Phase 0.7-β3 derive helpers — Effect Schema as the single source of
  * truth for the project's secondary surfaces.
  *
- * `schemaToArbitrary` is a thin alias over Effect's `Arbitrary.make`
- * (effect 3.10+). The helper exists so call sites import the
- * project's vocabulary rather than the Effect submodule path; if a
- * future Effect release renames or restructures the API, the swap
- * happens in this one file.
+ * `schemaToArbitrary` lifts a Schema into a fast-check `Arbitrary`,
+ * threading through Effect 4's native `Schema.toArbitrary`. Call sites
+ * import this project alias rather than the upstream symbol so a
+ * future Effect rename is one-line away.
  *
- * `schemaToCheckConstraint` extracts a branded string Schema's regex
- * pattern (when present) and renders a SQLite-compatible CHECK
- * clause via the `regexp` virtual function. Schemas without a
- * pattern annotation return `null`; the caller decides whether to
- * fall back to a column-level NOT NULL only.
+ * `schemaToCheckConstraint` projects a regex `isPattern` annotation
+ * onto a SQLite `REGEXP` CHECK clause. The walk is a one-pass
+ * traversal over `ast.checks` (Effect 4 stores filters as a flat
+ * `Checks` tuple at the node, not as nested `Refinement` AST nodes).
+ * Schemas without an `isPattern` annotation surface `null`; the
+ * caller decides whether to fall back to a column-level NOT NULL.
  *
- * Pothos `objectRef` derivation (the third planned helper in this
- * module) lives in `apps/default/src/server/graphql/derive.ts`
- * (Phase 0.7-β4) because Pothos is an adapter-layer dependency, not a
- * domain dependency — pulling it into `@booking/core` would violate
- * ADR-0036's "Schema as source of truth, codec adapters at the
- * boundary" rule.
+ * Pothos `objectRef` derivation (the third planned helper) lives in
+ * `apps/default/src/server/graphql/derive.ts` because Pothos is an
+ * adapter-layer dependency, not a domain dependency — pulling it
+ * into `@booking/core` would violate ADR-0036's "Schema as source of
+ * truth, codec adapters at the boundary" rule.
  */
 
 /**
- * Lift an Effect Schema into a fast-check `Arbitrary`. Used by tests
- * and the property-test suite to derive sample generators from the
- * boundary schema instead of hand-rolling fixtures.
+ * Lift a Schema into a fast-check `Arbitrary`. Used by tests and the
+ * property-test suite to derive sample generators from the boundary
+ * schema instead of hand-rolling fixtures.
  *
- * Note (2026-05): `effect` 3.21 still pins `fast-check@^3` while this
- * project tracks `fast-check@^4` (the runtime APIs we use are stable
- * across the major bump — `fc.assert`, `fc.property`, `fc.constant`).
- * The `unknown` cast bridges the two declaration files; both
- * runtimes accept the produced `Arbitrary` because the underlying
- * shape is unchanged. The cast lives in this single helper so the
- * day Effect upgrades, the cast disappears in one place.
+ * The `unknown` cast bridges the upstream `FastCheck.Arbitrary` (the
+ * version Effect re-exports) and the project's own pinned
+ * `fast-check` major. Both runtimes accept the produced value because
+ * the surface API (`fc.assert` / `fc.property`) is stable across the
+ * bump; the cast lives in this single helper so the day Effect's
+ * pinning matches ours, the cast disappears in one place.
  */
-export const schemaToArbitrary = <A, I, R>(s: Schema.Schema<A, I, R>): FCArbitrary<A> =>
-  Arbitrary.make(s) as unknown as FCArbitrary<A>
+export const schemaToArbitrary = <S extends Schema.Top>(s: S): FCArbitrary<S["Type"]> =>
+  Schema.toArbitrary(s)
 
 /**
- * Walk a Schema AST to extract the first regex pattern annotation
- * found on a `Refinement`/`Filter` node. Returns `null` when no
- * pattern is present — the schema is then responsible for its own
- * validation through `decode` and the SQL layer can omit the CHECK.
+ * Internal shape of `isPattern`'s annotation `meta`. Effect 4 attaches
+ * `{ _tag: "isPattern", regExp: RegExp }` to the `Filter` produced by
+ * `Schema.isPattern(re)`. Schemas without that annotation expose no
+ * regex, and the SQL projection is a no-op.
  */
-const hasStringPattern = (raw: unknown): raw is { readonly pattern: string } =>
-  typeof raw === "object" &&
-  raw !== null &&
-  "pattern" in raw &&
-  typeof (raw as { readonly pattern: unknown }).pattern === "string"
+type IsPatternMeta = {
+  readonly _tag: "isPattern"
+  readonly regExp: RegExp
+}
 
-const extractPattern = (ast: SchemaAST.AST): string | null => {
-  const visit = (node: SchemaAST.AST): string | null => {
-    if (node._tag === "Refinement") {
-      const ann = SchemaAST.getJSONSchemaAnnotation(node)
-      if (ann._tag === "Some" && hasStringPattern(ann.value)) {
-        return ann.value.pattern
-      }
-      return visit(node.from)
-    }
-    if (node._tag === "Transformation") return visit(node.from)
-    return null
+const isIsPatternMeta = (meta: unknown): meta is IsPatternMeta =>
+  typeof meta === "object" &&
+  meta !== null &&
+  "_tag" in meta &&
+  (meta as { readonly _tag: unknown })._tag === "isPattern" &&
+  "regExp" in meta &&
+  (meta as { readonly regExp: unknown }).regExp instanceof RegExp
+
+const patternFromCheck = (check: Check<unknown>): RegExp | null => {
+  const meta = check.annotations?.meta
+  return isIsPatternMeta(meta) ? meta.regExp : null
+}
+
+/**
+ * Extract the first `isPattern` regex declared on a schema's check
+ * tuple. The walk is shallow — Effect 4's `Checks` is a flat array
+ * attached to the AST node itself, not a chain of nested AST kinds.
+ */
+const extractPattern = (ast: AST): RegExp | null => {
+  if (ast.checks === undefined) return null
+  for (const check of ast.checks) {
+    const re = patternFromCheck(check as Check<unknown>)
+    if (re !== null) return re
   }
-  return visit(ast)
+  return null
 }
 
 /**
  * Render a SQLite CHECK constraint clause from a Schema, suitable for
- * appending to a Drizzle column definition or a hand-written DDL.
- * Returns `null` when the schema does not advertise a regex pattern
- * — the column then relies on application-level decode for shape
+ * appending to a Drizzle column definition or hand-written DDL.
+ * Returns `null` when the schema does not advertise a regex pattern —
+ * the column then relies on application-level decode for shape
  * validation.
  *
  * The emitted clause uses SQLite's `regexp` operator, which the
  * Cloudflare DO SQLite build supports out of the box. Single quotes
  * inside the pattern are doubled to keep the SQL well-formed.
  */
-export const schemaToCheckConstraint = <A, I, R>(
-  schema: Schema.Schema<A, I, R>,
-  columnName: string,
-): string | null => {
-  const pattern = extractPattern(schema.ast)
-  if (pattern === null) return null
-  const escaped = pattern.replace(/'/g, "''")
+export const schemaToCheckConstraint = (schema: Schema.Top, columnName: string): string | null => {
+  const re = extractPattern(schema.ast)
+  if (re === null) return null
+  const escaped = re.source.replace(/'/g, "''")
   return `${columnName} REGEXP '${escaped}'`
 }

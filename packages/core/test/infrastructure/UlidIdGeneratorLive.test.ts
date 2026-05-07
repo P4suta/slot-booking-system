@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { IdGenerator } from "../../src/application/ports/IdGenerator.js"
 import { parseBookingCode } from "../../src/domain/value-objects/BookingCode.js"
@@ -45,7 +45,7 @@ describe("UlidIdGeneratorLive", () => {
     const code = await provide(program)
     expect(code).toHaveLength(7)
     const parsed = parseBookingCode(code)
-    expect(Either.isRight(parsed)).toBe(true)
+    expect(Result.isSuccess(parsed)).toBe(true)
   })
 
   it("emits 100 distinct booking codes (uniform sampling, no collisions in a small batch)", async () => {

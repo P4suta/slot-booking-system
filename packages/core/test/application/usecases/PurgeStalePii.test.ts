@@ -1,4 +1,4 @@
-import { Effect, Either, Layer } from "effect"
+import { Effect, Layer, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { PiiPurger } from "../../../src/application/ports/PiiPurger.js"
 import { PII_RETENTION, PurgeStalePii } from "../../../src/application/usecases/PurgeStalePii.js"
@@ -42,7 +42,7 @@ describe("PurgeStalePii", () => {
   })
 
   it("threads a TraceId through to the log payload when supplied", async () => {
-    const traceId = Either.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
+    const traceId = Result.getOrThrow(parseTraceId("01H8XRQMKQDNFGXT7NH3AVH3XS"))
     const program = Effect.gen(function* () {
       const log = yield* makeSilentLogger()
       yield* PurgeStalePii({ traceId }).pipe(Effect.provide(Layer.merge(fakePurger(0), log.layer)))

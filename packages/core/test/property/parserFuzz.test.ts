@@ -1,4 +1,4 @@
-import { Either } from "effect"
+import { Result } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import { parseBookingCode } from "../../src/domain/value-objects/BookingCode.js"
@@ -10,7 +10,7 @@ import { parsePhoneLast4 } from "../../src/domain/value-objects/PhoneLast4.js"
  * application's outer surface (BookingCode, NameKana, PhoneLast4)
  * must accept *any* `string` (or `unknown` for the wide-input
  * variant) without throwing. Adversarial inputs that fail
- * validation come back as `Either.left(DomainError)`; the parsers
+ * validation come back as `Result.fail(DomainError)`; the parsers
  * never `throw`, never crash on malformed UTF-8, never enter an
  * unbounded loop.
  *
@@ -21,7 +21,10 @@ import { parsePhoneLast4 } from "../../src/domain/value-objects/PhoneLast4.js"
  */
 
 const isEither = (r: unknown): boolean =>
-  typeof r === "object" && r !== null && "_tag" in r && (r._tag === "Right" || r._tag === "Left")
+  typeof r === "object" &&
+  r !== null &&
+  "_tag" in r &&
+  (r._tag === "Success" || r._tag === "Failure")
 
 describe("boundary parser fuzz (parseBookingCode)", () => {
   it("never throws on a random unicode string", () => {
@@ -48,8 +51,8 @@ describe("boundary parser fuzz (parseBookingCode)", () => {
     fc.assert(
       fc.property(fc.string({ unit: "grapheme" }), (raw) => {
         const result = parseBookingCode(raw)
-        if (Either.isRight(result)) {
-          expect(result.right).toMatch(/^[0-9A-Z*~$=U]{7}$/)
+        if (Result.isSuccess(result)) {
+          expect(result.success).toMatch(/^[0-9A-Z*~$=U]{7}$/)
         }
         return true
       }),
