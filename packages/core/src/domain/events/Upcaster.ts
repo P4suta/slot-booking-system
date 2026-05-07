@@ -2,28 +2,74 @@ import { Schema } from "effect"
 import { type BookingEvent, BookingEventSchema } from "./BookingEvent.js"
 
 /**
- * Event upcasting registry. Phase 0.7-α5 lays the rails: every event
- * variant is currently `version: 1`, so the upcaster chain is empty
- * and `upcastToLatest` is structurally an identity wrapped in
- * `Schema.decodeUnknownSync(BookingEventSchema)`.
+ * Event upcasting as Kleisli composition. Each `Upcaster<From, To>`
+ * is a morphism in the category of versioned event shapes; an
+ * "upcaster chain" is the composite morphism `v0 → v1 → … → vN`
+ * obtained by left-to-right composition.
  *
- * When a v2 variant lands, register an `Upcaster<V1, V2>` here and
- * the read-path replay (`domain/read/projection.ts` callers) folds
- * old events through it transparently. The decoder check at the end
- * keeps the boundary contract — the latest schema is the only shape
- * that ever reaches `applyEvent`.
+ * The chain is empty today (every variant is `version: 1`), but the
+ * algebra is in place so a future v2 lands as
+ * {@link composeUpcaster}(existingChain, v1ToV2) — no surgery in
+ * `applyEvent`, no surgery in the read path.
  *
- * Generic over `From` / `To` keeps each registered upcaster locally
- * type-safe at its registration site; the chain widens to `unknown`
- * inside the registry because the decoder is the single arbiter of
- * the final shape.
+ * The decode at the end (`Schema.decodeUnknownSync(BookingEventSchema)`)
+ * is the single arbiter of the final shape: unparsable events block
+ * replay rather than silently producing malformed views.
+ *
+ * References — ADR-0032 (bitemporal events + version literal), the
+ * natural extension of row-codec composition to event-codec
+ * composition.
  */
 export type Upcaster<From, To> = (event: From) => To
 
 /**
+ * Identity upcaster — the neutral element for {@link composeUpcaster}.
+ * Applying an identity to a chain is a no-op, which matches the empty
+ * chain's semantics on `upcastToLatest`.
+ */
+export const identityUpcaster =
+  <A>(): Upcaster<A, A> =>
+  (a) =>
+    a
+
+/**
+ * Compose two upcasters left-to-right (`v_n → v_{n+1} → v_{n+2}`).
+ * Associativity follows from function composition; identity is
+ * {@link identityUpcaster}; the pair forms a category.
+ */
+export const composeUpcaster =
+  <A, B, C>(f: Upcaster<A, B>, g: Upcaster<B, C>): Upcaster<A, C> =>
+  (a) =>
+    g(f(a))
+
+/**
+ * Versioned codec — the event payload schema paired with its
+ * version literal. Reserved for the v2 landing: a registered chain
+ * `[v1ToV2: Upcaster<V1, V2>]` is paired with a sequence of
+ * `VersionedCodec` rows so the read path can dispatch on `version`,
+ * decode against `Codec_v`, then walk the suffix of upcasters that
+ * lifts to the latest.
+ */
+export type VersionedCodec<V extends number, A> = {
+  readonly version: V
+  readonly schema: Schema.Schema<A>
+}
+
+/**
+ * Collapse an ordered chain of upcasters into one composite morphism
+ * via {@link composeUpcaster}. The empty chain folds to
+ * {@link identityUpcaster}, which is the categorical neutral element
+ * — exactly the right semantics for "no version migration needed".
+ */
+export const upcastChain = (
+  chain: readonly Upcaster<unknown, unknown>[],
+): Upcaster<unknown, unknown> =>
+  chain.reduce<Upcaster<unknown, unknown>>(composeUpcaster, identityUpcaster<unknown>())
+
+/**
  * Ordered chain of `version N → version N+1` upcasters. Empty today;
- * extending it requires only appending a new entry — no `applyEvent`
- * change.
+ * extending it requires only appending a new entry — `upcastChain`
+ * folds the addition automatically and `upcastToLatest` picks it up.
  */
 const upcasterChain: readonly Upcaster<unknown, unknown>[] = []
 
@@ -40,13 +86,7 @@ const decodeBookingEvent = Schema.decodeUnknownSync(BookingEventSchema)
 export const upcastWith = (
   chain: readonly Upcaster<unknown, unknown>[],
   raw: unknown,
-): BookingEvent => {
-  let upgraded: unknown = raw
-  for (const up of chain) {
-    upgraded = up(upgraded)
-  }
-  return decodeBookingEvent(upgraded)
-}
+): BookingEvent => decodeBookingEvent(upcastChain(chain)(raw))
 
 /**
  * Fold an unknown event payload through the registered upcaster
