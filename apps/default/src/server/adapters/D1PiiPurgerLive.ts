@@ -1,5 +1,5 @@
 import { PiiPurger } from "@booking/core"
-import { and, inArray, isNotNull, lt, or, sql } from "drizzle-orm"
+import { and, inArray, isNotNull, lt, or } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
 import { Duration, Effect, Layer } from "effect"
 import { bookings } from "../schema/bookings.js"
@@ -30,9 +30,9 @@ export const makeD1PiiPurger = (db: D1Database): Layer.Layer<PiiPurger> =>
           const result = await orm
             .update(bookings)
             .set({
-              nameKana: sql`NULL`,
-              phoneLast4: sql`NULL`,
-              freeText: sql`NULL`,
+              nameKana: null,
+              phoneLast4: null,
+              freeText: null,
             })
             .where(
               and(
