@@ -193,3 +193,26 @@ aligned.
   resolver field factories
 - `apps/default/test/graphql/{derive,errorEnvelope,sdlByteEqual}.test.ts`
   — verification
+
+## Phase 3 PR#8 retrospective (2026-05-08)
+
+The `sdlByteEqual.test.ts` invariant — schema → `printSchema` →
+`lexicographicSortSchema` → byte-equal compare against
+`apps/default/schema.graphql` — held throughout PR#8's observability
+extensions (resolver-side `useDomainErrorTrace` plugin, the GraphQL
+Yoga plugin chain widening for the operation-log sampler, the
+`error.*` attribute projection on the resolver span, and the
+commit-12 semconv supplement on the use-case span). No SDL drift
+even after the BookingError extensions were widened to carry the
+i18n key on the wire.
+
+The functor's separation of "type generation" from "runtime
+concerns" is what made this possible: the new observability paths
+are wired purely on the resolver side and never touch the type
+derivation, so the SDL emitted is unchanged by construction. This
+validates the original Phase 3 design choice over the alternative
+of weaving observability hooks into the type functor — the
+byte-equal lock acted as the carrying invariant through eight
+weeks of orthogonal refinements. ADR-0038's PR#8 retrospective is
+the sister write-up; it covers the parallel invariant on the OTel
+attribute projection.

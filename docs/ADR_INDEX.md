@@ -43,6 +43,10 @@ back.
 | [0038](./adr/0038-otel-semconv-unification.md)      | OpenTelemetry semconv unification of Trace · Audit · Log     | accepted |
 | [0039](./adr/0039-effect-4-drizzle-1-migration.md)  | Effect 4 + drizzle-orm 1 migration retrospective (Phase 2.2) | accepted |
 | [0040](./adr/0040-bipartite-slot-matching.md)       | Bipartite matching for slot resource assignment              | accepted |
+| [0041](./adr/0041-graphql-functor-migration.md)     | GraphQL functor migration (Pothos → derive/graphql.ts)       | accepted |
+| [0042](./adr/0042-runtime-mode-port.md)             | RuntimeMode port — env-indexed Layer dispatcher              | accepted |
+| [0043](./adr/0043-error-redaction-port.md)          | ErrorRedaction port — cause redaction at the GraphQL boundary | accepted |
+| [0044](./adr/0044-do-rpc-envelope-serialization.md) | DO RPC envelope sanitiser — cross-realm structured-clone fix | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).
