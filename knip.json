@@ -6,12 +6,7 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/default": {
-      "entry": [
-        "test/**/*.test.ts",
-        "test/integration/**/*.ts",
-        "scripts/**/*.ts",
-        "seed/**/*.ts"
-      ],
+      "entry": ["test/**/*.test.ts", "test/integration/**/*.ts", "scripts/**/*.ts", "seed/**/*.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "seed/**/*.ts"],
       "ignore": ["src/server/rest/openapiSpec.ts"],
       "wrangler": {

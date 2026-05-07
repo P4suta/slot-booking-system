@@ -48,6 +48,9 @@ export const RescheduleBooking = (
   withSpan(
     "usecase.RescheduleBooking",
     {
+      "graphql.operation.type": "mutation",
+      "graphql.operation.name": "RescheduleBooking",
+      "usecase.invocation.kind": "graphql",
       "usecase.input.bookingCode": input.code,
       "usecase.input.newSlot.serviceId": input.newSlot.serviceId,
       "usecase.input.newSlot.providerId": input.newSlot.providerId,

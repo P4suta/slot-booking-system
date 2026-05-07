@@ -45,7 +45,12 @@ export const ConfirmBooking = (
 > =>
   withSpan(
     "usecase.ConfirmBooking",
-    { "usecase.input.bookingCode": input.code },
+    {
+      "graphql.operation.type": "mutation",
+      "graphql.operation.name": "ConfirmBooking",
+      "usecase.invocation.kind": "graphql",
+      "usecase.input.bookingCode": input.code,
+    },
     tapTaggedError(confirmBookingBody(input)),
   )
 

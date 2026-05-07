@@ -92,3 +92,35 @@ export const sanitiseForStructuredClone = <T>(message: T): T =>
  */
 export const desanitiseFromStructuredClone = <T>(message: T): T =>
   transform(message, false, new WeakSet()) as T
+
+/**
+ * Project a `FromClientEncoded` request envelope onto OpenTelemetry
+ * messaging + RPC semantic-convention attributes (commit 12).
+ *
+ * The envelope shape (`{ _tag: "Request", id, tag, payload, headers }`)
+ * is the only structural input, so the projection is total: any
+ * envelope without a recognisable `tag` falls back to `"unknown"`
+ * rather than risking a missing-attribute span. Pure / deterministic /
+ * no allocation beyond the result record.
+ *
+ * Why same-file as the sanitiser: both functions read the envelope's
+ * topology (the sanitiser walks every field; this helper inspects the
+ * `tag` field), so co-locating them keeps the envelope-shape knowledge
+ * in one module instead of two coordinated ones.
+ */
+export const messagingAttributesFor = (
+  envelope: unknown,
+  destination: string,
+): Readonly<Record<string, string>> => {
+  const rpcMethod =
+    typeof envelope === "object" && envelope !== null && "tag" in envelope
+      ? String(envelope.tag)
+      : "unknown"
+  return {
+    "messaging.system": "cloudflare.do",
+    "messaging.operation.type": "send",
+    "messaging.destination.name": destination,
+    "rpc.system": "effect.unstable.rpc",
+    "rpc.method": rpcMethod,
+  }
+}

@@ -27,7 +27,11 @@ export type PurgeStalePiiInput = {
 export const PurgeStalePii = (
   input: PurgeStalePiiInput = {},
 ): Effect.Effect<{ readonly purged: number }, never, Logger | PiiPurger> =>
-  withSpan("usecase.PurgeStalePii", {}, purgeStalePiiBody(input))
+  withSpan(
+    "usecase.PurgeStalePii",
+    { "usecase.invocation.kind": "scheduled" },
+    purgeStalePiiBody(input),
+  )
 
 const purgeStalePiiBody = (
   input: PurgeStalePiiInput,

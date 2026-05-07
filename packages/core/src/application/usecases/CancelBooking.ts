@@ -47,7 +47,12 @@ export const CancelBooking = (
 > =>
   withSpan(
     "usecase.CancelBooking",
-    { "usecase.input.bookingCode": input.code },
+    {
+      "graphql.operation.type": "mutation",
+      "graphql.operation.name": "CancelBooking",
+      "usecase.invocation.kind": "graphql",
+      "usecase.input.bookingCode": input.code,
+    },
     tapTaggedError(cancelBookingBody(input)),
   )
 

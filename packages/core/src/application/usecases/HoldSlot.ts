@@ -61,6 +61,9 @@ export const HoldSlot = (
   withSpan(
     "usecase.HoldSlot",
     {
+      "graphql.operation.type": "mutation",
+      "graphql.operation.name": "HoldSlot",
+      "usecase.invocation.kind": "graphql",
       "usecase.input.serviceId": input.slot.serviceId,
       "usecase.input.providerId": input.slot.providerId,
       "usecase.input.source": input.source,

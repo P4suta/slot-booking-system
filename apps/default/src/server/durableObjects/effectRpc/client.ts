@@ -3,7 +3,11 @@ import { RpcClient, type RpcGroup } from "effect/unstable/rpc"
 import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError"
 import type { DaySchedule } from "../DaySchedule.js"
 import { DayScheduleRouter } from "./router.js"
-import { desanitiseFromStructuredClone, sanitiseForStructuredClone } from "./transport.js"
+import {
+  desanitiseFromStructuredClone,
+  messagingAttributesFor,
+  sanitiseForStructuredClone,
+} from "./transport.js"
 
 type DayScheduleRpcs = typeof DayScheduleRouter extends RpcGroup.RpcGroup<infer R> ? R : never
 type DayScheduleClient = RpcClient.RpcClient<DayScheduleRpcs, RpcClientError>
@@ -32,11 +36,19 @@ type WriteFn = (msg: never) => Effect.Effect<void>
  * race because the deferred is fulfilled synchronously after
  * `makeNoSerialization` returns.
  *
+ * Phase 3 PR#8 / commit 12 — every dispatch hop is wrapped in an
+ * OpenTelemetry messaging-semconv span (`messaging.system =
+ * "cloudflare.do"`, `rpc.method = <envelope.tag>`,
+ * `messaging.destination.name = <day-key>`). The span is opened
+ * inside `onFromClient` so the trace tree is `graphql.<Verb>` →
+ * `messaging.cloudflare.do.dispatch` → DO-side `usecase.<Verb>` —
+ * three layers, each with its own attribute namespace.
+ *
  * Usage from a resolver:
  *   ```ts
  *   const stub = dayDoFor(env, date)
  *   const program = Effect.gen(function* () {
- *     const client = yield* makeDayScheduleClient(stub)
+ *     const client = yield* makeDayScheduleClient(stub, `DaySchedule:${date}`)
  *     return yield* client.HoldSlot(payload)
  *   })
  *   const result = await runRpcOrThrow(Effect.scoped(program))
@@ -49,6 +61,7 @@ type WriteFn = (msg: never) => Effect.Effect<void>
  */
 export const makeDayScheduleClient = (
   stub: DurableObjectStub<DaySchedule>,
+  destination: string,
 ): Effect.Effect<DayScheduleClient, never, Scope.Scope> =>
   Effect.gen(function* () {
     const writeReady = yield* Deferred.make<WriteFn>()
@@ -66,7 +79,11 @@ export const makeDayScheduleClient = (
                   cause,
                 }),
               }),
-          })
+          }).pipe(
+            Effect.withSpan("messaging.cloudflare.do.dispatch", {
+              attributes: messagingAttributesFor(message, destination),
+            }),
+          )
           const reply = desanitiseFromStructuredClone(sanitisedReply)
           if (typeof reply === "object" && reply !== null) {
             const w = yield* Deferred.await(writeReady)

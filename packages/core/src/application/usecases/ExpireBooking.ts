@@ -43,7 +43,10 @@ export const ExpireBooking = (
 > =>
   withSpan(
     "usecase.ExpireBooking",
-    { "usecase.input.bookingId": input.bookingId },
+    {
+      "usecase.invocation.kind": "scheduled",
+      "usecase.input.bookingId": input.bookingId,
+    },
     tapTaggedError(expireBookingBody(input)),
   )
 

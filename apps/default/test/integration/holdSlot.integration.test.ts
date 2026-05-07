@@ -56,7 +56,7 @@ describe("DO RPC HoldSlot end-to-end (sanitiser, ADR-0044)", () => {
     const stub = env.DAY_SCHEDULE.get(id)
 
     const program = Effect.gen(function* () {
-      const client = yield* makeDayScheduleClient(stub)
+      const client = yield* makeDayScheduleClient(stub, `DaySchedule:${date}`)
       return yield* client.HoldSlot(holdSlotInput(date))
     })
 

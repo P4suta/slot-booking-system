@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { sanitiseForStructuredClone } from "../../src/server/durableObjects/effectRpc/transport.js"
+import {
+  messagingAttributesFor,
+  sanitiseForStructuredClone,
+} from "../../src/server/durableObjects/effectRpc/transport.js"
 
 /**
  * `sanitiseForStructuredClone` — pin the targeted shallow transform
@@ -69,5 +72,41 @@ describe("sanitiseForStructuredClone", () => {
   it("returns non-object inputs as-is", () => {
     expect(sanitiseForStructuredClone(null as unknown as { headers: unknown })).toBe(null)
     expect(sanitiseForStructuredClone(undefined as unknown as { headers: unknown })).toBe(undefined)
+  })
+})
+
+describe("messagingAttributesFor (commit 12 — OTel messaging semconv)", () => {
+  it("projects a HoldSlot request envelope onto messaging.* + rpc.* keys", () => {
+    const envelope = { _tag: "Request", id: 0n, tag: "HoldSlot", headers: {}, payload: {} }
+    expect(messagingAttributesFor(envelope, "DaySchedule:2026-05-09")).toEqual({
+      "messaging.system": "cloudflare.do",
+      "messaging.operation.type": "send",
+      "messaging.destination.name": "DaySchedule:2026-05-09",
+      "rpc.system": "effect.unstable.rpc",
+      "rpc.method": "HoldSlot",
+    })
+  })
+
+  it("falls back to rpc.method='unknown' for envelopes without a tag field", () => {
+    expect(messagingAttributesFor({ _tag: "Eof" }, "DaySchedule:2026-05-09")).toMatchObject({
+      "rpc.method": "unknown",
+    })
+  })
+
+  it("coerces non-string tag values to string for the rpc.method key", () => {
+    const envelope = { _tag: "Request", id: 0n, tag: 42 as unknown }
+    expect(messagingAttributesFor(envelope, "any")).toMatchObject({ "rpc.method": "42" })
+  })
+
+  it("returns the same destination string verbatim (no normalisation)", () => {
+    expect(messagingAttributesFor({ tag: "X" }, "ANY/Subdomain.value")).toMatchObject({
+      "messaging.destination.name": "ANY/Subdomain.value",
+    })
+  })
+
+  it("returns 'unknown' for non-object envelopes (defensive)", () => {
+    expect(messagingAttributesFor(null, "d")).toMatchObject({ "rpc.method": "unknown" })
+    expect(messagingAttributesFor(undefined, "d")).toMatchObject({ "rpc.method": "unknown" })
+    expect(messagingAttributesFor("string", "d")).toMatchObject({ "rpc.method": "unknown" })
   })
 })

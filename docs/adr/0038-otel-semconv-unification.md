@@ -176,6 +176,49 @@ brand stays as the audit surface concept.
   smoke for OTel context propagation across DO restarts. Same
   carry-over batch.
 
+### Phase 3 PR#8 retrospective (2026-05-08)
+
+The original Phase 2.6 / BI-9 scope unified `error.*` semantic
+conventions on use-case-bound spans. Phase 3 PR#8 / commit 12
+extends the projection to the remaining two surfaces the trace
+tree crosses: the **D1 audit-write** and the **Cloudflare Durable
+Object RPC dispatch** hops.
+
+| Surface | Span name | New semconv keys |
+|---|---|---|
+| D1 audit insert | `audit_write` | `db.system.name="d1"` / `db.operation.name="INSERT"` / `db.collection.name="audit_log"` / `db.query.text` (template, PII-free) |
+| DO RPC dispatch | `messaging.cloudflare.do.dispatch` | `messaging.system="cloudflare.do"` / `messaging.operation.type="send"` / `messaging.destination.name=DaySchedule:<day>` / `rpc.system="effect.unstable.rpc"` / `rpc.method=<envelope.tag>` |
+| Use cases | `usecase.<Verb>` | `usecase.invocation.kind` ∈ `{"graphql","scheduled"}`, plus `graphql.operation.{type,name}` for the four customer mutations |
+
+The existing application-private keys (`usecase.input.*` /
+`audit.*`) survive untouched — semconv supplements rather than
+replaces them, so dashboards keyed off either namespace continue to
+work and ad-hoc domain queries (e.g. "audits for actor X") need no
+rewrite. ADR-0044 (DO RPC envelope sanitiser) is the adjacent piece
+of the same trace-tree: the sanitiser fixes the cross-realm
+structured-clone failure that was previously masking the dispatch
+hop's existence in operator dashboards.
+
+The OTel database semantic-convention version pinned here is the
+stable 1.27 surface (`db.system.name`, not the legacy `db.system`).
+The messaging convention is the post-1.27 stable surface
+(`messaging.operation.type` rather than the legacy `messaging.operation`).
+
+Test plan:
+
+- `apps/default/test/usecase/Telemetry.semconv.test.ts` — pin the
+  use-case attribute table (literal-key assertion per use case via a
+  recording `Tracer.Tracer`; lives in `apps/default` because the OTel
+  SDK is an apps-tier dep, the use cases under test ride the
+  `@booking/core` package surface).
+- `apps/default/test/effectRpc/transport.test.ts` —
+  `messagingAttributesFor` projection table.
+- `just dev-up` Jaeger UI shows the four-layer
+  `graphql.<Verb>` → `messaging.cloudflare.do.dispatch` →
+  `usecase.<Verb>` → `audit_write` tree on every booking mutation
+  (the integration `holdSlot.integration.test.ts` round-trips the
+  full chain under Miniflare).
+
 ## References
 
 - Plan: `~/.claude/plans/cosmic-conjuring-milner.md` Phase 2.6.

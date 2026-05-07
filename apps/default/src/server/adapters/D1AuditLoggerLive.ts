@@ -47,6 +47,11 @@ export const makeD1AuditLogger = (database: D1Database): Layer.Layer<AuditLogger
         write: (entry: AuditEntry) =>
           Effect.withSpan("audit_write", {
             attributes: {
+              "db.system.name": "d1",
+              "db.operation.name": "INSERT",
+              "db.collection.name": "audit_log",
+              "db.query.text":
+                "INSERT INTO audit_log (id, at, actor, action, booking_id, trace_id, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
               "audit.actor": entry.actor,
               "audit.action": entry.errorTag,
               "audit.outcome": entry.outcome,

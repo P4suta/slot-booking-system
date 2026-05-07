@@ -149,7 +149,7 @@ export const bookingMutationFields = (
       return runRpcOrThrow(
         Effect.scoped(
           Effect.gen(function* () {
-            const client = yield* makeDayScheduleClient(stub)
+            const client = yield* makeDayScheduleClient(stub, `DaySchedule:${args.date}`)
             return yield* client.HoldSlot({
               slot: {
                 serviceId: slot.serviceId,
@@ -183,7 +183,7 @@ export const bookingMutationFields = (
       return runRpcOrThrow(
         Effect.scoped(
           Effect.gen(function* () {
-            const client = yield* makeDayScheduleClient(stub)
+            const client = yield* makeDayScheduleClient(stub, `DaySchedule:${args.date}`)
             return yield* client.ConfirmBooking({
               code: args.code,
               phoneLast4: args.phoneLast4,
@@ -208,7 +208,7 @@ export const bookingMutationFields = (
       return runRpcOrThrow(
         Effect.scoped(
           Effect.gen(function* () {
-            const client = yield* makeDayScheduleClient(stub)
+            const client = yield* makeDayScheduleClient(stub, `DaySchedule:${args.date}`)
             return yield* client.CancelBooking({
               code: args.code,
               phoneLast4: args.phoneLast4,
@@ -236,7 +236,7 @@ export const bookingMutationFields = (
       return runRpcOrThrow(
         Effect.scoped(
           Effect.gen(function* () {
-            const client = yield* makeDayScheduleClient(stub)
+            const client = yield* makeDayScheduleClient(stub, `DaySchedule:${args.date}`)
             return yield* client.RescheduleBooking({
               code: args.code,
               phoneLast4: args.phoneLast4,
