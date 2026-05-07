@@ -1,3 +1,4 @@
+import type { Brand } from "effect"
 import { dual } from "effect/Function"
 
 /**
@@ -23,6 +24,33 @@ export type Bitmap = {
   readonly value: bigint
   readonly length: number
 }
+
+/**
+ * Branded availability set parameterised by granularity (`G` minutes
+ * per cell) and day length (`D` cells). The brand exists at the type
+ * level only — the runtime value is a {@link Bitmap}, so the
+ * combinators above accept it without conversion. Using
+ * `IntervalSet<1, 1440>` everywhere a "minute-of-day mask" is meant
+ * keeps the per-day, per-minute invariant out of the comments and
+ * into the type signature; AND-ing a 1-minute mask with a 5-minute
+ * mask becomes a compile error rather than a silent corruption.
+ *
+ * Phase 3 / ADR-0040 background — the bipartite matching primitive
+ * sits on top of this lattice. The semilattice operations (∧ = AND,
+ * ⊤ = full, ⊥ = empty) are the {@link and} / {@link full} /
+ * {@link empty} below; brand witnesses prevent cross-shape mixing.
+ */
+export type IntervalSet<G extends number, D extends number> = Bitmap &
+  Brand.Brand<`IntervalSet<${G},${D}>`>
+
+/**
+ * Witness a {@link Bitmap} as an {@link IntervalSet} at a specific
+ * (granularity, day-length) pair. The cast is compile-time only —
+ * `Brand` carries no runtime data — so this is a free abstraction
+ * usable at the boundary where a raw Bitmap enters the slot algebra.
+ */
+export const asIntervalSet = <G extends number, D extends number>(bm: Bitmap): IntervalSet<G, D> =>
+  bm as IntervalSet<G, D>
 
 const ZERO = 0n
 const ONE = 1n
