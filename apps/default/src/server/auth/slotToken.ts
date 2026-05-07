@@ -128,7 +128,24 @@ export type DecodedSlot = {
  * (Phase 2.1 / BI-11) — every shape failure (missing field, wrong
  * type, version mismatch) collapses into the same `null` outcome
  * without the original `typeof field !== "string"` ladder.
+ *
+ * Threat-model notes:
+ *
+ *   - The cryptographically sensitive comparison (signature equality)
+ *     is delegated to `crypto.subtle.verify`, which is constant-time
+ *     by WebCrypto contract — the only operation an attacker could
+ *     time-distinguish is dropped at the platform level.
+ *   - Pre-verify shape checks (token splits in two, base64 decodes,
+ *     signature length matches the HMAC-SHA-256 32-byte output) are
+ *     intentionally early-exit. They reveal only structural facts
+ *     about the submitted token, never anything derived from the
+ *     server-side secret.
+ *   - A signature with the wrong byte length would cause
+ *     `crypto.subtle.verify` to throw on some runtimes; we coerce that
+ *     into the same `null` rejection so the failure mode is uniform.
  */
+const HMAC_SHA256_BYTES = 32
+
 export const verifySlotToken = async (
   secretHex: string,
   token: string,
@@ -145,8 +162,14 @@ export const verifySlotToken = async (
   } catch {
     return null
   }
+  if (sigBytes.byteLength !== HMAC_SHA256_BYTES) return null
   const key = await importHmacKey(secretHex)
-  const ok = await crypto.subtle.verify("HMAC", key, sigBytes, payloadBytes)
+  let ok: boolean
+  try {
+    ok = await crypto.subtle.verify("HMAC", key, sigBytes, payloadBytes)
+  } catch {
+    return null
+  }
   if (!ok) return null
   let parsed: unknown
   try {
