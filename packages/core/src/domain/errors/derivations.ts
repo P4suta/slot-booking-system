@@ -57,6 +57,42 @@ export const errorToGraphQLPayload = (e: DomainError): GraphQLErrorPayload => ({
   i18nKey: errorToI18nKey(e),
 })
 
+/**
+ * Companion to {@link errorToGraphQLPayload} that drives the
+ * `extensions` channel of a GraphQL error response. The byte-equal
+ * SDL invariant of ADR-0041 is preserved by construction: extensions
+ * are wire-only metadata and never appear in the schema's syntactic
+ * surface, so widening this function does not change the SDL byte
+ * sequence.
+ *
+ * The redactor is supplied by the caller (in production via the
+ * {@link ErrorRedaction} port resolved through {@link RuntimeMode});
+ * the function itself is pure so it can be exercised under any
+ * fixture without spinning up the Effect runtime. The two-arm
+ * structure mirrors `runRpcOrThrow`'s splitter:
+ *
+ *   1. The originating cause is an `Error` instance — the redactor
+ *      decides what (if anything) to propagate to the wire.
+ *   2. The originating cause is a `DomainError` — the canonical tag
+ *      is propagated under `originalTag`, no cause preview because
+ *      the field surface (`code` / `severity` / `i18nKey`) already
+ *      carries the operator-relevant data.
+ */
+export const errorToGraphQLExtensions = (
+  cause: unknown,
+  redact: (cause: unknown) => Record<string, unknown>,
+): Record<string, unknown> => {
+  if (cause === undefined || cause === null) return {}
+  const tagged = cause as { readonly _tag?: unknown }
+  const originalTag = typeof tagged._tag === "string" ? tagged._tag : undefined
+  const causeFields = redact(cause)
+  const hasCause = Object.keys(causeFields).length > 0
+  return {
+    ...(hasCause ? { cause: causeFields } : {}),
+    ...(originalTag !== undefined ? { originalTag } : {}),
+  }
+}
+
 export type AuditActor = "customer" | "staff" | "system"
 
 export type AuditContext = {

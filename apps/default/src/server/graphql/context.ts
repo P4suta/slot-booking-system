@@ -27,4 +27,12 @@ export type GraphQLContext = {
     readonly SLOT_HMAC_SECRET: string
   }
   readonly request: Request
+  /**
+   * Pre-resolved cause redactor for the active {@link RuntimeMode}.
+   * Yoga's `useDevErrorExtensions` plugin spreads its return value
+   * into `result.errors[].extensions`. The pre-resolution happens
+   * once per request inside the context factory so the plugin stays
+   * synchronous (no `Effect.runSync` inside `onExecuteDone`).
+   */
+  readonly redactCause: (cause: unknown) => Record<string, unknown>
 }

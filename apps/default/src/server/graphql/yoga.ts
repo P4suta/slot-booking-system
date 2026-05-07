@@ -1,3 +1,4 @@
+import { devRedactCause, errorToGraphQLExtensions, prodRedactCause } from "@booking/core"
 import { trace } from "@opentelemetry/api"
 import { GraphQLError } from "graphql"
 import { createYoga, type Plugin } from "graphql-yoga"
@@ -10,7 +11,20 @@ type Env = {
   readonly DAY_SCHEDULE: DurableObjectNamespace<DaySchedule>
   readonly DEPLOYMENT_TIMEZONE: string
   readonly SLOT_HMAC_SECRET: string
+  readonly IS_DEV?: string
 }
+
+/**
+ * Resolve the per-request cause redactor from the worker `env`. We
+ * read `env.IS_DEV` directly instead of routing through the
+ * {@link ErrorRedaction} port + Effect runtime — yoga's plugin chain
+ * is synchronous and the env-indexed cleavage is an evaluation of the
+ * exact same boolean. The two redactor implementations are imported
+ * from `@booking/core` so the dev/prod variants stay pinned to the
+ * categorical port (ADR-0043) rather than diverging here.
+ */
+const redactorFor = (env: Env): GraphQLContext["redactCause"] =>
+  env.IS_DEV === "1" ? devRedactCause : prodRedactCause
 
 type DomainErrorExtensions = {
   readonly __typename?: unknown
@@ -73,6 +87,49 @@ const useDomainErrorTrace: Plugin = {
 }
 
 /**
+ * Phase 3 PR#8 — Yoga plugin that decorates `result.errors[].extensions`
+ * with the `errorToGraphQLExtensions` derivation: in dev mode the
+ * originating cause's `{ name, message, stack[0..3], originalTag? }`
+ * preview shows up alongside `code` / `severity` / `i18nKey`; in prod
+ * mode the redactor is identity-zero so the wire payload is unchanged.
+ *
+ * The plugin reconstructs each error via `new GraphQLError(...)` so
+ * the `extensions` write is observed by yoga's serialiser (mutating
+ * the existing instance is allowed but `setResult` requires a fresh
+ * `ExecutionResult`, and the new errors slot in cleanly).
+ *
+ * The OTel side-effect plugin (`useDomainErrorTrace` below) is left
+ * unchanged — it is purely additive on the span surface and ignores
+ * the wire shape.
+ */
+const useDevErrorExtensions: Plugin<GraphQLContext> = {
+  onExecute() {
+    return {
+      onExecuteDone({ result, setResult, args }) {
+        if (typeof result !== "object" || !("errors" in result)) return
+        if (!isGraphQLErrorList(result.errors)) return
+        if (result.errors.length === 0) return
+        const ctx = args.contextValue
+        const decorated = result.errors.map((err) => {
+          const cause = err.originalError ?? err
+          const extras = errorToGraphQLExtensions(cause, ctx.redactCause)
+          if (Object.keys(extras).length === 0) return err
+          return new GraphQLError(err.message, {
+            ...(err.nodes !== undefined ? { nodes: err.nodes } : {}),
+            ...(err.source !== undefined ? { source: err.source } : {}),
+            ...(err.positions !== undefined ? { positions: err.positions } : {}),
+            ...(err.path !== undefined ? { path: err.path } : {}),
+            originalError: err.originalError ?? err,
+            extensions: { ...err.extensions, ...extras },
+          })
+        })
+        setResult({ ...result, errors: decorated })
+      },
+    }
+  },
+}
+
+/**
  * GraphQL Yoga adapter for Cloudflare Workers. The per-request
  * `context` factory carries the Cloudflare bindings (D1, the
  * `DaySchedule` DO namespace) so each resolver can route reads to D1
@@ -88,7 +145,7 @@ export const yoga = createYoga<Env, GraphQLContext>({
   graphqlEndpoint: "/graphql",
   landingPage: false,
   graphiql: { defaultQuery: "{ __schema { types { name } } }" },
-  plugins: [useDomainErrorTrace],
+  plugins: [useDevErrorExtensions, useDomainErrorTrace],
   context: (initial): GraphQLContext => ({
     env: {
       DB: initial.DB,
@@ -97,5 +154,6 @@ export const yoga = createYoga<Env, GraphQLContext>({
       SLOT_HMAC_SECRET: initial.SLOT_HMAC_SECRET,
     },
     request: initial.request,
+    redactCause: redactorFor(initial),
   }),
 })
