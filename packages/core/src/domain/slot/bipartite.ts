@@ -1,3 +1,5 @@
+import { Option } from "effect"
+
 /**
  * Bipartite maximum-cardinality matching via Kuhn's algorithm
  * (augmenting-path search).
@@ -40,13 +42,18 @@
 export type Adjacency = readonly (readonly number[])[]
 
 /**
- * Result of {@link matchBipartite}. `assignment[L] = R` when left
- * node L is matched to right node R; `null` when L is unmatched.
- * `cardinality` is the number of matched pairs; the matching is
- * perfect on the left side iff `cardinality === assignment.length`.
+ * Result of {@link matchBipartite}. `assignment[L]` is
+ * `Option.some(R)` when left node L is matched to right node R, and
+ * `Option.none()` when L is unmatched. `cardinality` is the number
+ * of matched pairs; the matching is perfect on the left side iff
+ * `cardinality === assignment.length`.
+ *
+ * `Option<number>` over the bare `number | null` lets callers use
+ * `Option.match` / `Option.isSome` and removes the off-by-one risk
+ * from `assignment[i] === null` boundaries.
  */
 export type Matching = {
-  readonly assignment: readonly (number | null)[]
+  readonly assignment: readonly Option.Option<number>[]
   readonly cardinality: number
 }
 
@@ -87,10 +94,11 @@ export const matchBipartite = (adj: Adjacency, rightSize: number): Matching => {
     const visited: boolean[] = new Array<boolean>(rightSize).fill(false)
     if (tryAugment(left, adj, matchR, visited)) cardinality++
   }
-  const assignment: (number | null)[] = new Array<number | null>(adj.length).fill(null)
+  const raw: (number | null)[] = new Array<number | null>(adj.length).fill(null)
   for (let right = 0; right < rightSize; right++) {
     const left = matchR[right]
-    if (left !== null && left !== undefined) assignment[left] = right
+    if (left !== null && left !== undefined) raw[left] = right
   }
+  const assignment: readonly Option.Option<number>[] = raw.map((r) => Option.fromNullOr(r))
   return { assignment, cardinality }
 }

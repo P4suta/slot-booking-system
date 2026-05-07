@@ -1,5 +1,5 @@
 import { Temporal } from "@js-temporal/polyfill"
-import type { Brand } from "effect"
+import { type Brand, Option } from "effect"
 import { type Booking, isActive } from "../booking/Booking.js"
 import type { BusinessHours } from "../entities/BusinessHours.js"
 import type { Closure } from "../entities/Closure.js"
@@ -277,9 +277,9 @@ const pickResources = (
   const { assignment, cardinality } = matchBipartite(adj, candidates.length)
   if (cardinality !== types.length) return undefined
   const out: ResourceId[] = []
-  for (const r of assignment) {
-    if (r === null) return undefined
-    const c = candidates[r]
+  for (const opt of assignment) {
+    if (Option.isNone(opt)) return undefined
+    const c = candidates[opt.value]
     if (c === undefined) return undefined
     out.push(c.id)
   }
