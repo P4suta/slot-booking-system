@@ -306,6 +306,11 @@ schema-drift-check:
 test-integration:
     {{DEV}} bash -c "cd apps/default && corepack pnpm run test:integration"
 
+# Regenerate `docs/error-codes.md` from `errorClassRegistry`. Drift
+# gate runs as part of `just check`; editing this file by hand fails.
+gen-error-docs:
+    {{DEV}} bash -c "cd apps/default && corepack pnpm exec tsx scripts/gen-error-docs.ts" > docs/error-codes.md
+
 # ---------------------------------------------------------------------------
 # Aggregate gates
 # ---------------------------------------------------------------------------
@@ -315,7 +320,15 @@ test-integration:
 # binary is mise-managed and faster to invoke directly), plus the
 # core library size-limit gate. Skip mutation testing (heavy) and
 # bench (informational).
-check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage size-limit-core
+check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage size-limit-core schema-drift-check error-docs-drift-check
+
+# Drift gate for `docs/error-codes.md`. Re-runs `gen-error-docs`
+# and fails if the working tree disagrees — adding a new error
+# class to `errorClassRegistry` (or renaming one) without
+# refreshing the docs is rejected.
+error-docs-drift-check:
+    just gen-error-docs
+    git diff --exit-code -- docs/error-codes.md
 
 # Full CI gate: check + build (and the apps/default dev smoke happens
 # externally on demand via `just dev-default`).
