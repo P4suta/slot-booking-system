@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import type { Capability, StaffCapability, SystemCapability } from "../auth/Capability.js"
 import {
   CapabilitySchema,
   StaffCapabilitySchema,
@@ -86,3 +87,35 @@ export const CommandSchema = Schema.Union([
 
 export type Command = Schema.Schema.Type<typeof CommandSchema>
 export type CommandKind = Command["kind"]
+
+/**
+ * Indexed view: `CommandOf<"Cancel">` is the `CancelCommand` variant,
+ * `CommandOf<"Complete">` is the `CompleteCommand` variant, etc. The
+ * indexed family exists so use-case call sites and `applyTyped` narrow
+ * to a single command shape at the type level rather than carrying the
+ * full `Command` union.
+ */
+export type CommandOf<K extends CommandKind> = Extract<Command, { kind: K }>
+
+/**
+ * Type-level capability narrowing — the issuer category each command
+ * kind admits. Mirrors the per-variant `capability` field's Schema:
+ *
+ *   - `Confirm`                       → `never`
+ *     (no capability field; auth happens via `authenticateCustomer`)
+ *   - `Cancel` | `Reschedule`         → `Capability` (any of three tags)
+ *   - `Complete` | `MarkNoShow`       → `StaffCapability`
+ *   - `Expire`                        → `SystemCapability`
+ *
+ * Encodes the schema-level constraint at the type system. Cross-validated
+ * at compile time by `test/type/CommandCapability.test.ts`.
+ */
+export type CapabilityFor<K extends CommandKind> = K extends "Confirm"
+  ? never
+  : K extends "Cancel" | "Reschedule"
+    ? Capability
+    : K extends "Complete" | "MarkNoShow"
+      ? StaffCapability
+      : K extends "Expire"
+        ? SystemCapability
+        : never

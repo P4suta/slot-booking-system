@@ -22,7 +22,7 @@ import type {
   Held,
   NoShow,
 } from "./Booking.js"
-import type { Command } from "./Command.js"
+import type { Command, CommandOf } from "./Command.js"
 import type { AllowedCommandKinds, BookingMachineState, NextState } from "./machine.js"
 
 export type ApplyResult = {
@@ -294,7 +294,7 @@ export type TypedApplyResult<S extends BookingMachineState, K extends AllowedCom
  */
 export const applyTyped = <S extends BookingMachineState, K extends AllowedCommandKinds<S>>(
   booking: BookingT<S>,
-  command: Command & { kind: K },
+  command: CommandOf<K>,
   newEventId: BookingEventId,
 ): Result.Result<TypedApplyResult<S, K>, DomainError> =>
   apply(booking, command, newEventId) as Result.Result<TypedApplyResult<S, K>, DomainError>
