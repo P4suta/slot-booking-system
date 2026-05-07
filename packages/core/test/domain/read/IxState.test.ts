@@ -1,6 +1,6 @@
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
-import { asView } from "../../../src/domain/read/BookingView.js"
+import { asView, type BookingView } from "../../../src/domain/read/BookingView.js"
 import * as IxState from "../../../src/domain/read/IxState.js"
 import { baseHeld } from "../../_fixtures/index.js"
 
@@ -11,7 +11,8 @@ import { baseHeld } from "../../_fixtures/index.js"
  * (so flatMap composition is well-typed at the top level).
  */
 
-const seedView = (): IxState.ViewT<"Held"> => IxState.indexView(asView(baseHeld()))
+const seedView = (): IxState.ViewT<"Held"> =>
+  IxState.indexView<"Held">(asView(baseHeld()) as BookingView & { readonly state: "Held" })
 
 const arbValue = fc.integer()
 
@@ -33,7 +34,7 @@ describe("IxState — Atkey indexed state monad", () => {
     fc.assert(
       fc.property(arbValue, (a) => {
         const m = IxState.pure<"Held", number>(a)
-        const lhs = IxState.flatMap(m, IxState.pure)
+        const lhs = IxState.flatMap(m, (x) => IxState.pure<"Held", number>(x))
         const view = seedView()
         return JSON.stringify(IxState.run(lhs, view)) === JSON.stringify(IxState.run(m, view))
       }),

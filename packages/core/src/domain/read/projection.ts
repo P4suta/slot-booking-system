@@ -1,5 +1,6 @@
 import { Match } from "effect"
 import type { BookingCommon, Cancelled, Completed, Confirmed, NoShow } from "../booking/Booking.js"
+import { confirmedSlotLens } from "../booking/optics.js"
 import type { BookingEvent } from "../events/BookingEvent.js"
 import { asView, type BookingView } from "./BookingView.js"
 
@@ -65,13 +66,7 @@ export const applyEvent = (view: BookingView, event: BookingEvent): BookingView 
     }),
     Match.discriminator("type")("Rescheduled", (ev): BookingView => {
       if (view.state !== "Confirmed") return view
-      const next: Confirmed = {
-        ...common(view),
-        slot: ev.to,
-        state: "Confirmed",
-        confirmedAt: view.confirmedAt,
-      }
-      return asView(next)
+      return asView(confirmedSlotLens.replace(ev.to, view))
     }),
     Match.discriminator("type")("Completed", (ev): BookingView => {
       if (view.state !== "Confirmed") return view

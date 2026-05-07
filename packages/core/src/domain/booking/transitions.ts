@@ -24,6 +24,7 @@ import type {
 } from "./Booking.js"
 import type { Command, CommandOf } from "./Command.js"
 import type { AllowedCommandKinds, BookingMachineState, NextState } from "./machine.js"
+import { confirmedSlotLens } from "./optics.js"
 
 export type ApplyResult = {
   readonly booking: Booking
@@ -105,12 +106,7 @@ const okReschedule = (
   newSlot: Confirmed["slot"],
   eventId: BookingEventId,
 ) => {
-  const next: Confirmed = {
-    ...common(confirmed),
-    slot: newSlot,
-    state: "Confirmed",
-    confirmedAt: confirmed.confirmedAt,
-  }
+  const next = confirmedSlotLens.replace(newSlot, confirmed)
   const event: BookingEvent = {
     ...baseEvent(eventId, confirmed.id, at),
     type: "Rescheduled",
