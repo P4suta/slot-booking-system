@@ -12,7 +12,8 @@
     "test:coverage": "vitest run --coverage",
     "migrate:local": "wrangler d1 migrations apply DB --local",
     "seed:render": "tsx seed/seed.ts",
-    "print-schema": "tsx scripts/print-schema.ts"
+    "print-schema": "tsx scripts/print-schema.ts",
+    "gen:api-spec": "tsx scripts/gen-api-spec.ts"
   },
   "dependencies": {
     "@booking/core": "workspace:*",
