@@ -30,9 +30,13 @@ no exception.
 ## Decision
 
 Replace the greedy ID-ascending first-match with bipartite
-maximum-cardinality matching via Kuhn's augmenting-path algorithm
-(`packages/core/src/domain/slot/bipartite.ts`). The matching is
-applied per slot:
+maximum-cardinality matching via Hopcroft-Karp's BFS-layered
+augmenting-path algorithm (`packages/core/src/domain/slot/bipartite.ts`).
+The original land of this ADR (Phase 2) used Kuhn's single-phase
+augmenting-path predecessor; Phase 3 (PR#4 M11) upgrades the
+implementation to Hopcroft-Karp for the production-grade `O(E·√V)`
+asymptotic with the same `Adjacency → Matching` signature and tie-
+break ordering. The matching is applied per slot:
 
 - Left nodes are the requirement slots in the order
   `requiredTypes.values()` produces them.
@@ -66,11 +70,12 @@ ADR-0034 is superseded.
   would have admitted. Under the current single-type model this
   difference is zero, but the algorithm choice no longer carries the
   precondition that resources have one type.
-- **Cost.** O(V·E) per slot on V ≤ |requiredTypes| (typically ≤ 4)
+- **Cost.** `O(E·√V)` per slot on V ≤ |requiredTypes| (typically ≤ 4)
   and E ≤ |required resources| (a few dozen) is operationally
   indistinguishable from greedy. The previous bench baseline
   (`computeAvailableSlots.bench.ts`) is unchanged within run-to-run
-  noise.
+  noise. Hopcroft-Karp gives the algorithm an upper-bound advantage
+  if the bipartite scale ever grows materially.
 
 ## Consequences
 

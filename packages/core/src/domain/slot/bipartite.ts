@@ -1,8 +1,7 @@
 import { Option } from "effect"
 
 /**
- * Bipartite maximum-cardinality matching via Kuhn's algorithm
- * (augmenting-path search).
+ * Bipartite maximum-cardinality matching via Hopcroft-Karp's algorithm.
  *
  * Per-slot resource assignment in `computeAvailableSlots` matches
  * required resource types to available resource instances. The
@@ -16,21 +15,26 @@ import { Option } from "effect"
  * capacities, weighted preferences) would replay the algorithm
  * design from scratch.
  *
- * Determinism — the matching tries augmenting paths in left-input
- * order and visits right-side candidates in their input order. Two
- * inputs that are sorted ID-ascending (the rest of `computeAvailableSlots`
- * already is) produce a deterministic matching across calls. Tie-breaks
- * therefore stay readable to operators who manually walk a day's
- * schedule.
+ * Determinism — left nodes are enumerated in input order, BFS
+ * dequeues in FIFO order, and DFS visits right-side candidates in
+ * input order. Two inputs that are sorted ID-ascending (the rest of
+ * `computeAvailableSlots` already is) produce a deterministic
+ * matching across calls. Tie-breaks therefore stay readable to
+ * operators who manually walk a day's schedule.
  *
- * Complexity — O(V · E) for V left nodes and E edges, which on the
- * small instance sizes here (≤ 4 left nodes, ≤ a few dozen right
- * candidates) is operationally indistinguishable from the previous
- * greedy.
+ * Complexity — `O(E·√V)` for V left nodes and E edges (Hopcroft-Karp
+ * 1973). On the small instance sizes the booking domain produces
+ * (≤ 4 left, ~dozens right) the asymptotic improvement is
+ * imperceptible, but the algorithm gives the codebase a
+ * production-grade matching primitive should the bipartite scale
+ * grow (resources multi-tagged, batch optimisation across a day,
+ * etc.).
  *
- * References — Kuhn 1955 (Hungarian-method augmenting-path
- * formulation); Hopcroft-Karp's faster O(E√V) variant is overkill
- * for the per-slot bipartite sizes the booking domain produces.
+ * References — Hopcroft & Karp, "An n^{5/2} Algorithm for Maximum
+ * Matchings in Bipartite Graphs" (1973). The Kuhn (1955)
+ * augmenting-path predecessor that previously inhabited this file
+ * is structurally a single-phase HK; this rewrite keeps the same
+ * `Adjacency → Matching` signature and tie-break ordering.
  */
 
 /**
@@ -57,21 +61,79 @@ export type Matching = {
   readonly cardinality: number
 }
 
-const tryAugment = (
-  left: number,
+const NIL = -1
+const INF = Number.POSITIVE_INFINITY
+
+/**
+ * BFS phase. Builds a level graph from currently-unmatched left
+ * nodes outward, recording at `dist[u]` the distance from any free
+ * left source to `u`. Returns `true` iff at least one augmenting
+ * path of finite length exists from an unmatched left to an
+ * unmatched right.
+ */
+const hopcroftKarpBfs = (
   adj: Adjacency,
-  matchR: (number | null)[],
-  visited: boolean[],
+  pairU: readonly number[],
+  pairV: readonly number[],
+  dist: number[],
 ): boolean => {
-  for (const right of adj[left] ?? []) {
-    if (visited[right] === true) continue
-    visited[right] = true
-    const owner = matchR[right]
-    if (owner === null || owner === undefined || tryAugment(owner, adj, matchR, visited)) {
-      matchR[right] = left
+  const queue: number[] = []
+  for (let u = 0; u < adj.length; u++) {
+    if (pairU[u] === NIL) {
+      dist[u] = 0
+      queue.push(u)
+    } else {
+      dist[u] = INF
+    }
+  }
+  let foundAugmenting = false
+  let head = 0
+  while (head < queue.length) {
+    const u = queue[head]
+    head++
+    if (u === undefined) continue
+    const du = dist[u] ?? INF
+    for (const v of adj[u] ?? []) {
+      const owner = pairV[v]
+      if (owner === undefined || owner === NIL) {
+        foundAugmenting = true
+        continue
+      }
+      if ((dist[owner] ?? INF) === INF) {
+        dist[owner] = du + 1
+        queue.push(owner)
+      }
+    }
+  }
+  return foundAugmenting
+}
+
+/**
+ * DFS phase. Walks an augmenting path from `u` through layers of
+ * strictly-increasing `dist` and flips the matched edges along the
+ * way. Right-side neighbours are visited in input order, preserving
+ * deterministic tie-breaking.
+ */
+const hopcroftKarpDfs = (
+  u: number,
+  adj: Adjacency,
+  pairU: number[],
+  pairV: number[],
+  dist: number[],
+): boolean => {
+  const du = dist[u] ?? INF
+  for (const v of adj[u] ?? []) {
+    const owner = pairV[v]
+    const isFree = owner === undefined || owner === NIL
+    const ownerDist = isFree ? du + 1 : (dist[owner] ?? INF)
+    if (ownerDist !== du + 1) continue
+    if (isFree || hopcroftKarpDfs(owner, adj, pairU, pairV, dist)) {
+      pairU[u] = v
+      pairV[v] = u
       return true
     }
   }
+  dist[u] = INF
   return false
 }
 
@@ -81,24 +143,24 @@ const tryAugment = (
  * right-side nodes (caller decides their meaning); the algorithm
  * makes no other assumption about right indices.
  *
- * Iteration order on left and right is preserved exactly: try left
- * node 0 first, walk its `adj[0]` neighbours in order, augment via
- * Kuhn's recursion. The matching is therefore a function of the
- * input order, which gives the determinism the slot-search
- * customer-facing flow relies on.
+ * Iteration order on left and right is preserved exactly: BFS
+ * dequeues in FIFO order, DFS visits each `adj[u]` in input order.
+ * The matching is therefore a function of the input order, which
+ * gives the determinism the slot-search customer-facing flow
+ * relies on.
  */
 export const matchBipartite = (adj: Adjacency, rightSize: number): Matching => {
-  const matchR: (number | null)[] = new Array<number | null>(rightSize).fill(null)
+  const pairU: number[] = new Array<number>(adj.length).fill(NIL)
+  const pairV: number[] = new Array<number>(rightSize).fill(NIL)
+  const dist: number[] = new Array<number>(adj.length).fill(INF)
   let cardinality = 0
-  for (let left = 0; left < adj.length; left++) {
-    const visited: boolean[] = new Array<boolean>(rightSize).fill(false)
-    if (tryAugment(left, adj, matchR, visited)) cardinality++
+  while (hopcroftKarpBfs(adj, pairU, pairV, dist)) {
+    for (let u = 0; u < adj.length; u++) {
+      if (pairU[u] === NIL && hopcroftKarpDfs(u, adj, pairU, pairV, dist)) cardinality++
+    }
   }
-  const raw: (number | null)[] = new Array<number | null>(adj.length).fill(null)
-  for (let right = 0; right < rightSize; right++) {
-    const left = matchR[right]
-    if (left !== null && left !== undefined) raw[left] = right
-  }
-  const assignment: readonly Option.Option<number>[] = raw.map((r) => Option.fromNullOr(r))
+  const assignment: readonly Option.Option<number>[] = pairU.map((v) =>
+    v === NIL ? Option.none() : Option.some(v),
+  )
   return { assignment, cardinality }
 }
