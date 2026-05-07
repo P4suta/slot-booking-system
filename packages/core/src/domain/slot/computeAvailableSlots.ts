@@ -5,7 +5,7 @@ import type { BusinessHours } from "../entities/BusinessHours.js"
 import type { Closure } from "../entities/Closure.js"
 import { type Provider, providerIdentifiable, providerSatisfies } from "../entities/Provider.js"
 import type { ProviderAbsence } from "../entities/ProviderAbsence.js"
-import { type Resource, resourceIdentifiable } from "../entities/Resource.js"
+import { type Resource, resourceIdentifiable, resourceTypeSatisfier } from "../entities/Resource.js"
 import type { Service } from "../entities/Service.js"
 import type { Weekday } from "../entities/Weekday.js"
 import * as Identifiable from "../typeclass/Identifiable.js"
@@ -217,7 +217,7 @@ const computeResourceAvailabilities = (
   duration: number,
 ): readonly ResourceAvailability[] =>
   resources
-    .filter((r) => r.enabled && service.requiredResourceTypes.has(r.type))
+    .filter((r) => r.enabled && resourceTypeSatisfier.satisfies(r, service.requiredResourceTypes))
     .toSorted(resourceIdAsc)
     .map((r) => {
       const relevant = bookings.filter(({ booking }) => booking.resourceIds.includes(r.id))

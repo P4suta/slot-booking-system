@@ -1,6 +1,8 @@
 import { Schema } from "effect"
 import * as Identifiable from "../typeclass/Identifiable.js"
+import * as Satisfier from "../typeclass/Satisfier.js"
 import { ResourceIdSchema } from "../types/EntityId.js"
+import type { ResourceType } from "../value-objects/ResourceType.js"
 import { ResourceTypeSchema } from "../value-objects/ResourceType.js"
 
 /**
@@ -20,3 +22,9 @@ export type Resource = Schema.Schema.Type<typeof ResourceSchema>
 export const resourceIdentifiable: Identifiable.Identifiable<Resource> = Identifiable.make(
   (r) => r.id,
 )
+
+/** Set-membership satisfier: the Resource's `type` ∈ the requested set. */
+export const resourceTypeSatisfier: Satisfier.Satisfier<
+  Resource,
+  ReadonlySet<ResourceType>
+> = Satisfier.make((r, requiredTypes) => requiredTypes.has(r.type))
