@@ -226,9 +226,10 @@ smoke-available-slots:
 
 # End-to-end smoke for the customer flow:
 # `availableSlots` → `holdSlot`. Same preconditions as above.
-# Until the Miniflare integration suite lands (ADR-0036 carry-over),
-# this is the operator-facing E2E signal that every layer (resolver,
-# token verify, DO RPC, SQL, outbox, audit) is wired up.
+# The Miniflare integration suite (`just test-integration`) is the
+# in-process counterpart; this recipe is the host-level signal that
+# every layer (resolver, token verify, DO RPC, SQL, outbox, audit)
+# is wired up against `wrangler dev --local`.
 smoke-booking-flow:
     bash apps/default/scripts/smoke-booking-flow.sh
 
@@ -242,6 +243,55 @@ seed:
       {{PNPM}} exec tsx seed/seed.ts > .seed.generated.sql && \
       {{PNPM}} exec wrangler d1 execute DB --local --file=.seed.generated.sql && \
       rm -f .seed.generated.sql'
+
+# ---------------------------------------------------------------------------
+# Observability stack (Phase 3 PR#8)
+# ---------------------------------------------------------------------------
+
+# Bring up the full local-dev stack: OTel collector + Jaeger UI under
+# the `observability` docker-compose profile (`docker-compose.yml`),
+# then `wrangler dev -e dev` in the foreground. Exit Ctrl-C closes
+# wrangler; collector + jaeger keep running until `just dev-down`.
+# The dev env wires `OTEL_EXPORTER_URL = http://otel-collector:4318/v1/traces`,
+# so usecase / graphql spans land in Jaeger at http://localhost:16686.
+dev-up:
+    docker compose --profile observability up -d otel-collector jaeger
+    {{DEVP}} {{PNPM}} -F default run dev
+
+# Tear down the observability profile services brought up by `dev-up`.
+dev-down:
+    docker compose --profile observability down
+
+# Manually trigger the `scheduled()` handler on a running
+# `dev-default` / `dev-up`. Wrangler dev exposes the cron entrypoint
+# at `/__scheduled` when `compatibility_date` is recent enough; the
+# call wakes `PurgeStalePii()` so the operator can verify the path
+# without waiting for a real cron firing.
+trigger-scheduled:
+    curl -fsS -X POST http://localhost:8787/__scheduled -H "content-type: application/json" -d '{}' || \
+      echo "trigger-scheduled: ensure 'just dev-up' (or 'just dev-default') is running"
+
+# Run an arbitrary SQL statement against the local D1 fixture.
+# Usage: `just d1-shell SQL='SELECT count(*) FROM services'`
+d1-shell SQL:
+    {{DEV}} {{PNPM}} -F default exec wrangler d1 execute DB --local --command="{{SQL}}"
+
+# Tail the structured-log stream from a running `wrangler dev`. The
+# pipe filters JSON lines that look like `LogPayload` records (i.e.
+# carry a `code` field) and drops the wrangler banner / OTLP noise,
+# so `just log-tail` is what an operator follows during a smoke run.
+log-tail:
+    docker compose logs -f --no-log-prefix dev 2>/dev/null | jq -Rc 'fromjson? | select(.code != null)'
+
+# Apply migrations + seed + run both smoke scripts in sequence. Stops
+# at the first failure (set -e); each step prints its own status so
+# the failure mode is immediately visible. Pre-condition: a running
+# `just dev-up` (or `just dev-default`).
+smoke-all:
+    just migrate-local
+    just seed
+    just smoke-available-slots
+    just smoke-booking-flow
 
 # ---------------------------------------------------------------------------
 # Aggregate gates
