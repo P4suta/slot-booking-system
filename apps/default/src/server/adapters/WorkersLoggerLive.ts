@@ -29,41 +29,35 @@ import { Effect, Layer, Option } from "effect"
  * active (e.g. tests, scheduled handlers without OTel wiring); the
  * inner effect short-circuits via `Effect.option` so the span event
  * is genuinely additive — Workers Logs ingestion is unaffected.
+ *
+ * The JSON line carries `otel.span.active` (boolean) so operators
+ * can filter for log entries that ran outside a trace (typically a
+ * misconfigured scheduled handler or a test path) without inferring
+ * it from the absence of `traceId`.
  */
-const emitSpanEvent =
-  (level: "info" | "warn" | "error") =>
-  (payload: LogPayload): Effect.Effect<void> =>
-    Effect.flatMap(Effect.option(Effect.currentSpan), (maybeSpan) =>
-      Effect.sync(() => {
-        if (Option.isSome(maybeSpan)) {
-          maybeSpan.value.event(`log.${level}`, BigInt(Date.now()) * 1_000_000n, {
-            "log.severity": payload.severity,
-            "log.code": payload.code,
-            "error.type": payload._tag,
-            ...payload.data,
-          })
-        }
-      }),
-    )
-
 const decoratedEmit =
   (level: "info" | "warn" | "error") =>
   (payload: LogPayload): Effect.Effect<void> =>
-    Effect.flatMap(getCurrentTraceId, (traceId) =>
-      Effect.flatMap(emitSpanEvent(level)(payload), () =>
-        Effect.sync(() => {
-          const decorated: LogPayload =
-            payload.traceId !== undefined || traceId === undefined
-              ? payload
-              : { ...payload, traceId }
-          const line = JSON.stringify(decorated)
-          // biome-ignore lint/suspicious/noConsole: workers log sink
-          if (level === "info") console.info(line)
-          else if (level === "warn") console.warn(line)
-          else console.error(line)
-        }),
-      ),
-    )
+    Effect.gen(function* () {
+      const traceId = yield* getCurrentTraceId
+      const maybeSpan = yield* Effect.option(Effect.currentSpan)
+      const spanActive = Option.isSome(maybeSpan)
+      if (Option.isSome(maybeSpan)) {
+        maybeSpan.value.event(`log.${level}`, BigInt(Date.now()) * 1_000_000n, {
+          "log.severity": payload.severity,
+          "log.code": payload.code,
+          "error.type": payload._tag,
+          ...payload.data,
+        })
+      }
+      const withTrace: LogPayload =
+        payload.traceId !== undefined || traceId === undefined ? payload : { ...payload, traceId }
+      const line = JSON.stringify({ ...withTrace, "otel.span.active": spanActive })
+      // biome-ignore lint/suspicious/noConsole: workers log sink
+      if (level === "info") console.info(line)
+      else if (level === "warn") console.warn(line)
+      else console.error(line)
+    })
 
 export const WorkersLoggerLive: Layer.Layer<Logger> = Layer.succeed(
   Logger,
