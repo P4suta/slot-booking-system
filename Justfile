@@ -239,8 +239,8 @@ smoke-booking-flow:
 seed:
     {{DEV}} bash -c '\
       cd apps/default && \
-      ../../node_modules/.bin/pnpm exec tsx seed/seed.ts > .seed.generated.sql && \
-      ../../node_modules/.bin/pnpm exec wrangler d1 execute DB --local --file=.seed.generated.sql && \
+      {{PNPM}} exec tsx seed/seed.ts > .seed.generated.sql && \
+      {{PNPM}} exec wrangler d1 execute DB --local --file=.seed.generated.sql && \
       rm -f .seed.generated.sql'
 
 # ---------------------------------------------------------------------------

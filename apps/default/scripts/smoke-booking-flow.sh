@@ -60,17 +60,17 @@ echo "token: ${token:0:40}..."
 
 echo "== holdSlot =="
 hold_response=$(post "{
-  \"query\": \"mutation(\$date: PlainDate!, \$slotToken: String!, \$nameKana: String!, \$phoneLast4: PhoneLast4!, \$source: String!) { holdSlot(date: \$date, slotToken: \$slotToken, nameKana: \$nameKana, phoneLast4: \$phoneLast4, source: \$source) { __typename ... on BookingResult { bookingId state eventType } ... on BookingError { tag code i18nKey } } }\",
+  \"query\": \"mutation(\$date: PlainDate!, \$slotToken: String!, \$nameKana: String!, \$phoneLast4: PhoneLast4!, \$source: BookingSource!) { holdSlot(date: \$date, slotToken: \$slotToken, nameKana: \$nameKana, phoneLast4: \$phoneLast4, source: \$source) { __typename ... on MutationHoldSlotSuccess { data { bookingId state eventType } } ... on BookingError { tag code i18nKey } } }\",
   \"variables\": { \"date\": \"${DATE}\", \"slotToken\": \"${token}\", \"nameKana\": \"テスト\", \"phoneLast4\": \"${PHONE}\", \"source\": \"online\" }
 }")
 echo "${hold_response}"
 
 held=$(echo "${hold_response}" | extract_field "data.holdSlot.__typename")
-if [ "${held}" != "BookingResult" ]; then
-  echo "smoke: expected BookingResult after holdSlot, got ${held}" >&2
+if [ "${held}" != "MutationHoldSlotSuccess" ]; then
+  echo "smoke: expected MutationHoldSlotSuccess after holdSlot, got ${held}" >&2
   exit 1
 fi
-booking_id=$(echo "${hold_response}" | extract_field "data.holdSlot.bookingId")
+booking_id=$(echo "${hold_response}" | extract_field "data.holdSlot.data.bookingId")
 echo "booking: ${booking_id}"
 
 # We need the booking code from the seed flow; for now skip
