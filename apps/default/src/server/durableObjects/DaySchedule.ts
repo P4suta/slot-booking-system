@@ -140,15 +140,19 @@ export class DaySchedule extends DurableObject<Env> {
   /**
    * Effect view of the cached deployment timezone. The parse happened
    * once in the constructor; subsequent reads short-circuit to the
-   * pre-resolved value or its parse failure.
+   * pre-resolved value or its parse failure. The `timeZone === null`
+   * branch is unreachable in practice — `blockConcurrencyWhile` sets
+   * one of `timeZone` / `timeZoneError` before any dispatch runs —
+   * but keeping it as an explicit StorageError avoids a non-null
+   * assertion at the read site.
    */
   private readonly deploymentTimeZone: Effect.Effect<BusinessTimeZone, StorageError> =
-    Effect.suspend(() =>
-      this.timeZoneError !== null
-        ? Effect.fail(this.timeZoneError)
-        : // biome-ignore lint/style/noNonNullAssertion: blockConcurrencyWhile sets one of the two before any dispatch runs
-          Effect.succeed(this.timeZone!),
-    )
+    Effect.suspend(() => {
+      if (this.timeZoneError !== null) return Effect.fail(this.timeZoneError)
+      if (this.timeZone === null)
+        return Effect.fail(new StorageError({ reason: "DaySchedule timezone not initialized" }))
+      return Effect.succeed(this.timeZone)
+    })
 
   /* -------------------------------------------------------------------- */
   /* System handlers                                                      */
