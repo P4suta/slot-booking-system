@@ -2,6 +2,7 @@ import { Duration, Effect } from "effect"
 import type { TraceId } from "../../domain/errors/TraceId.js"
 import { Logger } from "../ports/Logger.js"
 import { PiiPurger } from "../ports/PiiPurger.js"
+import { withSpan } from "../runtime/Telemetry.js"
 import { infoPayload } from "./_log.js"
 
 /**
@@ -25,6 +26,11 @@ export type PurgeStalePiiInput = {
 
 export const PurgeStalePii = (
   input: PurgeStalePiiInput = {},
+): Effect.Effect<{ readonly purged: number }, never, Logger | PiiPurger> =>
+  withSpan("usecase.PurgeStalePii", {}, purgeStalePiiBody(input))
+
+const purgeStalePiiBody = (
+  input: PurgeStalePiiInput,
 ): Effect.Effect<{ readonly purged: number }, never, Logger | PiiPurger> =>
   Effect.gen(function* () {
     const purger = yield* PiiPurger

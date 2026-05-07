@@ -8,6 +8,7 @@ import type { Clock } from "../ports/Clock.js"
 import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../ports/IdGenerator.js"
 import type { Logger } from "../ports/Logger.js"
+import { tapTaggedError, withSpan } from "../runtime/Telemetry.js"
 import { applyAndPersist } from "./_applyAndPersist.js"
 import { infoPayload } from "./_log.js"
 import { useCaseEnv } from "./_withUseCaseEnv.js"
@@ -34,6 +35,19 @@ export type ExpireBookingResult = {
 }
 
 export const ExpireBooking = (
+  input: ExpireBookingInput,
+): Effect.Effect<
+  ExpireBookingResult,
+  DomainError | ConcurrencyError | StorageError,
+  Clock | IdGenerator | BookingEventSourcedRepository | Logger
+> =>
+  withSpan(
+    "usecase.ExpireBooking",
+    { "usecase.input.bookingId": input.bookingId },
+    tapTaggedError(expireBookingBody(input)),
+  )
+
+const expireBookingBody = (
   input: ExpireBookingInput,
 ): Effect.Effect<
   ExpireBookingResult,

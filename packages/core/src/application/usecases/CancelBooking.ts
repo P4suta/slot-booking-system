@@ -9,6 +9,7 @@ import type { Clock } from "../ports/Clock.js"
 import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../ports/IdGenerator.js"
 import type { Logger } from "../ports/Logger.js"
+import { tapTaggedError, withSpan } from "../runtime/Telemetry.js"
 import { applyAndPersist } from "./_applyAndPersist.js"
 import { authenticateCustomer } from "./_authenticate.js"
 import { infoPayload } from "./_log.js"
@@ -38,6 +39,19 @@ export type CancelBookingResult = {
 }
 
 export const CancelBooking = (
+  input: CancelBookingInput,
+): Effect.Effect<
+  CancelBookingResult,
+  DomainError | ConcurrencyError | StorageError,
+  Clock | IdGenerator | BookingEventSourcedRepository | Logger
+> =>
+  withSpan(
+    "usecase.CancelBooking",
+    { "usecase.input.bookingCode": input.code },
+    tapTaggedError(cancelBookingBody(input)),
+  )
+
+const cancelBookingBody = (
   input: CancelBookingInput,
 ): Effect.Effect<
   CancelBookingResult,

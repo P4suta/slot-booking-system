@@ -1,4 +1,5 @@
 import type { ErrorSeverity } from "@booking/core"
+import { SpanStatusCode, trace } from "@opentelemetry/api"
 import {
   GraphQLEnumType,
   GraphQLError,
@@ -236,15 +237,33 @@ export const errorEnvelope = (config: {
     type: resultUnion,
     args,
     description,
-    resolve: async (_root, rawArgs, ctx) => {
-      try {
-        const data = await body(rawArgs as Record<string, unknown>, ctx)
-        const envelope: SuccessEnvelope = { data }
-        return envelope
-      } catch (e) {
-        if (e instanceof BookingError) return wrapBookingError(e)
-        throw e
-      }
-    },
+    resolve: (_root, rawArgs, ctx) =>
+      trace
+        .getTracer("@booking/default/graphql")
+        .startActiveSpan(`graphql.${verb}`, async (span) => {
+          span.setAttribute("graphql.operation.name", verb)
+          span.setAttribute("graphql.operation.type", "mutation")
+          try {
+            const data = await body(rawArgs as Record<string, unknown>, ctx)
+            const envelope: SuccessEnvelope = { data }
+            return envelope
+          } catch (e) {
+            if (e instanceof BookingError) {
+              // Typed wire-side failure — recorded on the span's error.* attributes
+              // by `useDomainErrorTrace`, never as a span exception. The span
+              // status stays unset so it does not poison upstream Jaeger error
+              // counters with expected business outcomes.
+              return wrapBookingError(e)
+            }
+            span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessageOf(e) })
+            span.recordException(e instanceof Error ? e : new Error(errorMessageOf(e)))
+            throw e
+          } finally {
+            span.end()
+          }
+        }),
   }
 }
+
+const errorMessageOf = (e: unknown): string =>
+  e instanceof Error ? e.message : typeof e === "string" ? e : "unknown"

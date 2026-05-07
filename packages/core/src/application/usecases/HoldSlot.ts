@@ -11,6 +11,7 @@ import type { Clock } from "../ports/Clock.js"
 import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../ports/IdGenerator.js"
 import type { Logger } from "../ports/Logger.js"
+import { tapTaggedError, withSpan } from "../runtime/Telemetry.js"
 import { infoPayload } from "./_log.js"
 import { useCaseEnv } from "./_withUseCaseEnv.js"
 
@@ -51,6 +52,23 @@ export type HoldSlotResult = {
 export const HOLD_TTL = Duration.minutes(5)
 
 export const HoldSlot = (
+  input: HoldSlotInput,
+): Effect.Effect<
+  HoldSlotResult,
+  DomainError | ConcurrencyError | StorageError,
+  Clock | IdGenerator | BookingEventSourcedRepository | Logger
+> =>
+  withSpan(
+    "usecase.HoldSlot",
+    {
+      "usecase.input.serviceId": input.slot.serviceId,
+      "usecase.input.providerId": input.slot.providerId,
+      "usecase.input.source": input.source,
+    },
+    tapTaggedError(holdSlotBody(input)),
+  )
+
+const holdSlotBody = (
   input: HoldSlotInput,
 ): Effect.Effect<
   HoldSlotResult,

@@ -9,6 +9,7 @@ import type { Clock } from "../ports/Clock.js"
 import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../ports/IdGenerator.js"
 import type { Logger } from "../ports/Logger.js"
+import { tapTaggedError, withSpan } from "../runtime/Telemetry.js"
 import { applyAndPersist } from "./_applyAndPersist.js"
 import { authenticateCustomer } from "./_authenticate.js"
 import { infoPayload } from "./_log.js"
@@ -36,6 +37,19 @@ export type ConfirmBookingResult = {
 }
 
 export const ConfirmBooking = (
+  input: ConfirmBookingInput,
+): Effect.Effect<
+  ConfirmBookingResult,
+  DomainError | ConcurrencyError | StorageError,
+  Clock | IdGenerator | BookingEventSourcedRepository | Logger
+> =>
+  withSpan(
+    "usecase.ConfirmBooking",
+    { "usecase.input.bookingCode": input.code },
+    tapTaggedError(confirmBookingBody(input)),
+  )
+
+const confirmBookingBody = (
   input: ConfirmBookingInput,
 ): Effect.Effect<
   ConfirmBookingResult,
