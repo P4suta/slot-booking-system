@@ -1,6 +1,7 @@
 # 0030. DurableObject RPC methods returning `Either<E, R>`
 
 - Status: superseded by [ADR-0037](./0037-effect-rpc-do-transport.md)
+- Superseded-By: ADR-0037
 - Date: 2026-05-05
 - Deciders: Yasunobu
 - Tags: durable-object, rpc, error-handling
