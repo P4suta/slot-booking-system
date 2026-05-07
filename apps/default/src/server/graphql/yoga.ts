@@ -1,4 +1,5 @@
 import { trace } from "@opentelemetry/api"
+import { GraphQLError } from "graphql"
 import { createYoga, type Plugin } from "graphql-yoga"
 import type { DaySchedule } from "../durableObjects/DaySchedule.js"
 import type { GraphQLContext } from "./builder.js"
@@ -10,6 +11,32 @@ type Env = {
   readonly DEPLOYMENT_TIMEZONE: string
   readonly SLOT_HMAC_SECRET: string
 }
+
+type DomainErrorExtensions = {
+  readonly __typename?: unknown
+  readonly code?: unknown
+  readonly severity?: unknown
+}
+
+type TaggedOriginal = {
+  readonly _tag?: unknown
+}
+
+const asString = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined)
+
+const extensionsOf = (err: GraphQLError): DomainErrorExtensions =>
+  err.extensions as DomainErrorExtensions
+
+const tagOf = (err: GraphQLError): string | undefined => {
+  const fromTypename = asString(extensionsOf(err).__typename)
+  if (fromTypename !== undefined) return fromTypename
+  const original = err.originalError as TaggedOriginal | null | undefined
+  if (original === null || original === undefined) return undefined
+  return asString(original._tag)
+}
+
+const isGraphQLErrorList = (v: unknown): v is readonly GraphQLError[] =>
+  Array.isArray(v) && v.every((e: unknown) => e instanceof GraphQLError)
 
 /**
  * Phase 2.6 / BI-9 — Yoga plugin that lifts the Pothos errors
@@ -25,30 +52,19 @@ const useDomainErrorTrace: Plugin = {
   onExecute() {
     return {
       onExecuteDone({ result }) {
-        if (
-          typeof result !== "object" ||
-          result === null ||
-          !("errors" in result) ||
-          result.errors === undefined
-        ) {
-          return
-        }
+        if (typeof result !== "object" || !("errors" in result)) return
+        if (!isGraphQLErrorList(result.errors)) return
         const span = trace.getActiveSpan()
         if (span === undefined) return
         for (const err of result.errors) {
-          const ext = err.extensions ?? {}
-          const tag = (() => {
-            if (typeof ext["__typename"] === "string") return ext["__typename"]
-            const original = err.originalError as { _tag?: unknown } | null
-            if (original !== null && typeof original?._tag === "string") return original._tag
-            return undefined
-          })()
+          const tag = tagOf(err)
           if (tag === undefined) continue
+          const ext = extensionsOf(err)
+          const code = asString(ext.code)
+          const severity = asString(ext.severity)
           span.setAttribute("error.type", tag)
-          if (typeof ext["code"] === "string") span.setAttribute("error.code", ext["code"])
-          if (typeof ext["severity"] === "string") {
-            span.setAttribute("error.severity", ext["severity"])
-          }
+          if (code !== undefined) span.setAttribute("error.code", code)
+          if (severity !== undefined) span.setAttribute("error.severity", severity)
           span.recordException({ name: tag, message: err.message })
         }
       },

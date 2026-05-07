@@ -15,7 +15,7 @@ import type { ErrorSeverity } from "@booking/core"
  * `i18nKey` lets the frontend pick the localized message without
  * repeating the catalog.
  */
-export type EncodedDomainError = {
+type EncodedDomainError = {
   readonly _tag: string
   readonly code: string
   readonly severity: ErrorSeverity

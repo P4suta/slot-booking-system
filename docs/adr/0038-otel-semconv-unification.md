@@ -44,7 +44,7 @@ applies — this is the standard path.
 
 ### Layered architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │ apps/default/src/worker.ts  default export                  │
 │   ↓ wrapped by                                              │

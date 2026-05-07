@@ -58,30 +58,23 @@ export const HoldSlotInputWireSchema = Schema.Struct({
   freeText: Schema.NullOr(FreeTextSchema),
   source: BookingSourceSchema,
 })
-/** The shape callers send across the structured-clone wire to `holdSlot`. */
-export type HoldSlotInputWire = Schema.Schema.Encoded<typeof HoldSlotInputWireSchema>
 
 export const ConfirmBookingInputWireSchema = Schema.Struct({
   code: BookingCodeFromUserInputSchema,
   phoneLast4: PhoneLast4Schema,
 })
-export type ConfirmBookingInputWire = Schema.Schema.Encoded<typeof ConfirmBookingInputWireSchema>
 
 export const CancelBookingInputWireSchema = Schema.Struct({
   code: BookingCodeFromUserInputSchema,
   phoneLast4: PhoneLast4Schema,
   reason: Schema.String,
 })
-export type CancelBookingInputWire = Schema.Schema.Encoded<typeof CancelBookingInputWireSchema>
 
 export const RescheduleBookingInputWireSchema = Schema.Struct({
   code: BookingCodeFromUserInputSchema,
   phoneLast4: PhoneLast4Schema,
   newSlot: AvailableSlotInputWireSchema,
 })
-export type RescheduleBookingInputWire = Schema.Schema.Encoded<
-  typeof RescheduleBookingInputWireSchema
->
 
 /**
  * Reconstruct an {@link AvailableSlot} from its wire shape and the

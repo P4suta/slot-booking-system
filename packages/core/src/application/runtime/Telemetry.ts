@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Clock, Effect } from "effect"
 import { codeOf, type DomainError, severityOf } from "../../domain/errors/Errors.js"
 
 /**
@@ -60,15 +60,17 @@ export const addAttributes = (attrs: Readonly<Record<string, unknown>>): Effect.
  */
 export const recordTaggedError = (e: DomainError): Effect.Effect<void> =>
   Effect.flatMap(Effect.currentSpan, (span) =>
-    Effect.sync(() => {
-      span.attribute("error.type", e._tag)
-      span.attribute("error.code", codeOf(e))
-      span.attribute("error.severity", severityOf(e))
-      span.event("exception", BigInt(Date.now()) * 1_000_000n, {
-        "exception.type": e._tag,
-        "exception.message": codeOf(e),
-      })
-    }),
+    Effect.flatMap(Clock.currentTimeNanos, (nanos) =>
+      Effect.sync(() => {
+        span.attribute("error.type", e._tag)
+        span.attribute("error.code", codeOf(e))
+        span.attribute("error.severity", severityOf(e))
+        span.event("exception", nanos, {
+          "exception.type": e._tag,
+          "exception.message": codeOf(e),
+        })
+      }),
+    ),
   ).pipe(Effect.ignoreLogged)
 
 /**
