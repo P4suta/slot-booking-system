@@ -109,14 +109,18 @@ export const signSlot = async (secretHex: string, shape: AvailableSlotShape): Pr
  * Decoded slot fields recovered from a verified token. The shape
  * mirrors `SlotPayloadSchema.Type` minus the version discriminator,
  * which the schema has already pinned to the current token version
- * by the time the caller sees the value.
+ * by the time the caller sees the value. Derived from
+ * {@link SlotPayloadSchema} via TS structural omit so a future
+ * field added to {@link AvailableSlotWireFields} flows through with
+ * no parallel hand-listing.
  */
-export type DecodedSlot = {
-  readonly serviceId: string
-  readonly start: string
-  readonly end: string
-  readonly providerId: string
-  readonly resourceIds: readonly string[]
+export type DecodedSlot = Omit<SlotPayload, "v">
+
+/** Project a verified payload to its caller-facing shape (drop `v`). */
+const projectPayload = (payload: SlotPayload): DecodedSlot => {
+  const { v: _v, ...rest } = payload
+  void _v
+  return rest
 }
 
 /**
@@ -179,13 +183,5 @@ export const verifySlotToken = async (
   }
   const decoded = decodeSlotPayload(parsed)
   if (Result.isFailure(decoded)) return null
-  const { v: _v, ...rest } = decoded.success
-  void _v
-  return {
-    serviceId: rest.serviceId,
-    start: rest.start,
-    end: rest.end,
-    providerId: rest.providerId,
-    resourceIds: rest.resourceIds,
-  }
+  return projectPayload(decoded.success)
 }
