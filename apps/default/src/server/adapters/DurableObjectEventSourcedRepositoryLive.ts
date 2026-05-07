@@ -4,14 +4,14 @@ import {
   type BookingEvent,
   BookingEventSchema,
   BookingEventSourcedRepository,
+  BookingFromRow,
   type BookingId,
-  BookingSchema,
   ConcurrencyError,
   StorageError,
 } from "@booking/core"
 import { max as drizzleMax, eq, sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/durable-sqlite"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Result, Schema } from "effect"
 import { bookingEvents, bookings, doTables, outbox } from "../schema/index.js"
 
 /**
@@ -49,93 +49,74 @@ export type DurableObjectStorageLike = {
   readonly transactionSync: <T>(closure: () => T) => T
 }
 
-const encodeBooking = Schema.encodeSync(BookingSchema)
-const decodeBookingEither = Schema.decodeUnknownResult(BookingSchema)
 const encodeEvent = Schema.encodeSync(BookingEventSchema)
+const decodeBookingFromRow = Schema.decodeUnknownResult(BookingFromRow)
+const encodeBookingToRow = Schema.encodeSync(BookingFromRow)
 
-/** Variant-aware row builder. Mirrors `D1BookingMirror.toRow`. */
+/**
+ * Variant-aware row codec lifted to the core `BookingFromRow` codec
+ * (ADR-0032 + ADR-0036): the per-state row schema, per-state Domain
+ * schema, and the slot ↔ (slotStart, slotEnd) overlay all live in
+ * `packages/core/src/infrastructure/schema/BookingRow.ts`. The two
+ * functions here are thin wrappers that adapt the codec to the
+ * adapter's row-shape expectation; the per-state `switch` ladders
+ * the previous implementation hand-rolled are gone.
+ */
 const bookingToRow = (b: Booking): typeof bookings.$inferInsert => {
-  const enc = encodeBooking(b)
-  const base = {
-    id: b.id,
-    code: enc.code,
-    state: b.state,
-    serviceId: b.serviceId,
-    providerId: b.providerId,
-    resourceIds: enc.resourceIds,
-    slotStart: enc.slot.start,
-    slotEnd: enc.slot.end,
-    source: b.source,
-    nameKana: enc.nameKana,
-    phoneLast4: enc.phoneLast4,
-    freeText: enc.freeText ?? null,
+  const encoded = encodeBookingToRow(b)
+  const insert: typeof bookings.$inferInsert = {
+    id: encoded.id,
+    code: encoded.code,
+    state: encoded.state,
+    serviceId: encoded.serviceId,
+    providerId: encoded.providerId,
+    resourceIds: encoded.resourceIds,
+    slotStart: encoded.slotStart.toString(),
+    slotEnd: encoded.slotEnd.toString(),
+    source: encoded.source,
+    nameKana: encoded.nameKana,
+    phoneLast4: encoded.phoneLast4,
+    freeText: encoded.freeText,
   }
-  switch (b.state) {
+  switch (encoded.state) {
     case "Held":
-      return { ...base, heldAt: b.heldAt.toString(), expiresAt: b.expiresAt.toString() }
+      return {
+        ...insert,
+        heldAt: encoded.heldAt.toString(),
+        expiresAt: encoded.expiresAt.toString(),
+      }
     case "Confirmed":
-      return { ...base, confirmedAt: b.confirmedAt.toString() }
+      return { ...insert, confirmedAt: encoded.confirmedAt.toString() }
     case "Cancelled":
       return {
-        ...base,
-        cancelledAt: b.cancelledAt.toString(),
-        cancelledBy: b.cancelledBy,
-        cancelReason: b.reason,
+        ...insert,
+        cancelledAt: encoded.cancelledAt.toString(),
+        cancelledBy: encoded.cancelledBy,
+        cancelReason: encoded.cancelReason,
       }
     case "Completed":
-      return { ...base, completedAt: b.completedAt.toString() }
+      return { ...insert, completedAt: encoded.completedAt.toString() }
     case "NoShow":
-      return { ...base, markedAt: b.markedAt.toString(), markedBy: b.markedBy }
+      return {
+        ...insert,
+        markedAt: encoded.markedAt.toString(),
+        markedBy: encoded.markedBy,
+      }
   }
 }
 
-/** Reverse: SQL row → `Booking`. Per-state required-column re-validation. */
+/**
+ * Reverse: SQL row → `Booking`. Delegates to the same codec via
+ * `BookingFromRow.decode` — every per-state required-column check
+ * happens inside the schema's `Schema.Union` arms, so a row whose
+ * variant timestamps are missing fails the decode rather than the
+ * caller restating each `null`-guard. Returns `null` so the
+ * `loadAllBookings` consumer can drop a row whose PII has been
+ * purged (the BookingFromRow rejects nullable PII).
+ */
 const rowToBooking = (row: typeof bookings.$inferSelect): Booking | null => {
-  if (row.nameKana === null || row.phoneLast4 === null) return null
-  const common = {
-    id: row.id,
-    code: row.code,
-    serviceId: row.serviceId,
-    providerId: row.providerId,
-    resourceIds: row.resourceIds,
-    slot: { start: row.slotStart, end: row.slotEnd },
-    source: row.source,
-    nameKana: row.nameKana,
-    phoneLast4: row.phoneLast4,
-    freeText: row.freeText,
-  }
-  let candidate: unknown
-  switch (row.state) {
-    case "Held":
-      if (row.heldAt === null || row.expiresAt === null) return null
-      candidate = { ...common, state: "Held", heldAt: row.heldAt, expiresAt: row.expiresAt }
-      break
-    case "Confirmed":
-      if (row.confirmedAt === null) return null
-      candidate = { ...common, state: "Confirmed", confirmedAt: row.confirmedAt }
-      break
-    case "Cancelled":
-      if (row.cancelledAt === null || row.cancelledBy === null || row.cancelReason === null)
-        return null
-      candidate = {
-        ...common,
-        state: "Cancelled",
-        cancelledAt: row.cancelledAt,
-        cancelledBy: row.cancelledBy,
-        reason: row.cancelReason,
-      }
-      break
-    case "Completed":
-      if (row.completedAt === null) return null
-      candidate = { ...common, state: "Completed", completedAt: row.completedAt }
-      break
-    case "NoShow":
-      if (row.markedAt === null || row.markedBy === null) return null
-      candidate = { ...common, state: "NoShow", markedAt: row.markedAt, markedBy: row.markedBy }
-      break
-  }
-  const r = decodeBookingEither(candidate)
-  return r._tag === "Success" ? r.success : null
+  const decoded = decodeBookingFromRow(row)
+  return Result.isSuccess(decoded) ? decoded.success : null
 }
 
 /**
