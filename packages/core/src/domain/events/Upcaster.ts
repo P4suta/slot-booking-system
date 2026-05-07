@@ -49,10 +49,16 @@ export const composeUpcaster =
  * `VersionedCodec` rows so the read path can dispatch on `version`,
  * decode against `Codec_v`, then walk the suffix of upcasters that
  * lifts to the latest.
+ *
+ * Field shape is `Schema.Codec<A, unknown>` (rather than the bare
+ * `Schema.Schema<A>` Top): the registry stores per-version decoders
+ * homogeneously, which leverages `Schema.Codec`'s covariance in
+ * `out T, out E` so concrete codecs (`BookingEventSchema` etc.)
+ * inhabit `Schema.Codec<unknown, unknown>` without a cast.
  */
 export type VersionedCodec<V extends number, A> = {
   readonly version: V
-  readonly schema: Schema.Schema<A>
+  readonly schema: Schema.Codec<A, unknown>
 }
 
 /**
@@ -74,6 +80,48 @@ export const upcastChain = (
 const upcasterChain: readonly Upcaster<unknown, unknown>[] = []
 
 const decodeBookingEvent = Schema.decodeUnknownSync(BookingEventSchema)
+
+/**
+ * Per-version codec registry. Index `i` describes the schema for
+ * version `i + 1` so `versionedCodecs[0]` is always the v1 codec.
+ * Adding a v_(N+1) requires appending one row here and one entry in
+ * {@link upcasterChain} that lifts v_N → v_(N+1); {@link upcastFrom}
+ * picks both up.
+ *
+ * Concrete codecs (e.g. `BookingEventSchema`) flow into
+ * `VersionedCodec<number, unknown>` directly — `Schema.Codec` is
+ * covariant in `out T, out E`, so no cast is needed at registration.
+ */
+const versionedCodecs: readonly VersionedCodec<number, unknown>[] = [
+  { version: 1, schema: BookingEventSchema },
+]
+
+/**
+ * Locate the registered {@link VersionedCodec} for a version literal,
+ * or `undefined` when no row matches. Linear scan; the registry is
+ * tiny (one row per landed version) so the lookup cost is negligible.
+ */
+export const lookupCodec = (version: number): VersionedCodec<number, unknown> | undefined =>
+  versionedCodecs.find((c) => c.version === version)
+
+/**
+ * Decode `raw` after walking through the upcaster suffix `[version-1,
+ * ...]` of {@link upcasterChain}. Mirrors {@link upcastToLatest} but
+ * accepts the source version explicitly so a future v2 read path can
+ * route legacy v1 events through the same fold without inferring the
+ * version from the payload.
+ *
+ * Throws when the version is unregistered (no codec row) or when the
+ * lifted shape fails {@link BookingEventSchema} — same contract as
+ * {@link upcastToLatest}.
+ */
+export const upcastFrom = (version: number, raw: unknown): BookingEvent => {
+  if (lookupCodec(version) === undefined) {
+    throw new Error(`Upcaster: no codec registered for version ${String(version)}`)
+  }
+  const suffix = upcasterChain.slice(version - 1)
+  return decodeBookingEvent(upcastChain(suffix)(raw))
+}
 
 /**
  * Fold an unknown event payload through an explicit `chain` of
