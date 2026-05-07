@@ -1,13 +1,18 @@
 import { Result } from "effect"
 import { expectTypeOf } from "expect-type"
+import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import {
+  ALL_ENTITY_KINDS,
   type BookingId,
+  type Id,
   newBookingId,
+  newId,
   newProviderId,
   newServiceId,
   type ProviderId,
   parseBookingId,
+  parseId,
   parseServiceId,
   type ResourceId,
 } from "../../src/domain/types/EntityId.js"
@@ -39,5 +44,36 @@ describe("EntityId TypeIDs", () => {
     expectTypeOf<BookingId>().not.toExtend<ProviderId>()
     expectTypeOf<ProviderId>().not.toExtend<ResourceId>()
     expectTypeOf<BookingId>().toExtend<string>()
+  })
+
+  it("Id<E> higher-kinded alias matches per-kind named brand", () => {
+    expectTypeOf<Id<"book">>().toEqualTypeOf<BookingId>()
+    expectTypeOf<Id<"prov">>().toEqualTypeOf<ProviderId>()
+    expectTypeOf<Id<"rsrc">>().toEqualTypeOf<ResourceId>()
+  })
+
+  it("round-trips parse(new) for every EntityKind (property)", () => {
+    fc.assert(
+      fc.property(fc.constantFrom(...ALL_ENTITY_KINDS), (kind) => {
+        const id = newId(kind)()
+        return Result.isSuccess(parseId(kind)(id))
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it("rejects every cross-kind pairing (property)", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...ALL_ENTITY_KINDS),
+        fc.constantFrom(...ALL_ENTITY_KINDS),
+        (mintKind, parseKind) => {
+          if (mintKind === parseKind) return true
+          const id = newId(mintKind)()
+          return Result.isFailure(parseId(parseKind)(id))
+        },
+      ),
+      { numRuns: 200 },
+    )
   })
 })

@@ -1,4 +1,4 @@
-import { Result, Schema } from "effect"
+import { type Brand, Result, Schema } from "effect"
 import { typeid } from "typeid-js"
 import { type DomainError, InvalidEntityIdError } from "../errors/Errors.js"
 
@@ -7,93 +7,140 @@ import { type DomainError, InvalidEntityIdError } from "../errors/Errors.js"
  * substituted for one another. See ADR-0003.
  *
  * Internal representation is the canonical TypeID string `<prefix>_<ULID>`.
- * Each id is defined as an `Effect.Schema` so the type, runtime decoder,
- * and `Schema.is` predicate all derive from a single declaration.
+ * Each id is materialised as an `Effect.Schema` so the type, runtime
+ * decoder, and `Schema.is` predicate all derive from a single declaration.
+ *
+ * Higher-kinded brand: every entity kind is one row in the
+ * {@link ENTITY_KIND_TAG} map below; `Id<"book">` is `BookingId`,
+ * `Id<"serv">` is `ServiceId`, etc. Adding a new kind is one row plus
+ * the four legacy aliases (kept so existing call-sites keep compiling).
  */
 
-const makeIdSchema = <const Tag extends string>(prefix: string, tag: Tag) =>
-  Schema.String.check(Schema.isPattern(new RegExp(`^${prefix}_[0-9a-z]{26}$`))).pipe(
-    Schema.brand(tag),
-  )
-
-export const BookingIdSchema = makeIdSchema("book", "BookingId")
-export const ServiceIdSchema = makeIdSchema("serv", "ServiceId")
-export const ProviderIdSchema = makeIdSchema("prov", "ProviderId")
-export const ResourceIdSchema = makeIdSchema("rsrc", "ResourceId")
-export const ClosureIdSchema = makeIdSchema("clos", "ClosureId")
-export const ProviderAbsenceIdSchema = makeIdSchema("absn", "ProviderAbsenceId")
-export const BusinessHoursIdSchema = makeIdSchema("bhrs", "BusinessHoursId")
-export const BookingEventIdSchema = makeIdSchema("evnt", "BookingEventId")
-export const AuditLogIdSchema = makeIdSchema("audt", "AuditLogId")
-export const IdempotencyKeyIdSchema = makeIdSchema("idem", "IdempotencyKeyId")
-export const StaffIdSchema = makeIdSchema("staf", "StaffId")
-
-export type BookingId = Schema.Schema.Type<typeof BookingIdSchema>
-export type ServiceId = Schema.Schema.Type<typeof ServiceIdSchema>
-export type ProviderId = Schema.Schema.Type<typeof ProviderIdSchema>
-export type ResourceId = Schema.Schema.Type<typeof ResourceIdSchema>
-export type ClosureId = Schema.Schema.Type<typeof ClosureIdSchema>
-export type ProviderAbsenceId = Schema.Schema.Type<typeof ProviderAbsenceIdSchema>
-export type BusinessHoursId = Schema.Schema.Type<typeof BusinessHoursIdSchema>
-export type BookingEventId = Schema.Schema.Type<typeof BookingEventIdSchema>
-export type AuditLogId = Schema.Schema.Type<typeof AuditLogIdSchema>
-export type IdempotencyKeyId = Schema.Schema.Type<typeof IdempotencyKeyIdSchema>
-export type StaffId = Schema.Schema.Type<typeof StaffIdSchema>
+const ENTITY_KIND_TAG = {
+  book: "BookingId",
+  serv: "ServiceId",
+  prov: "ProviderId",
+  rsrc: "ResourceId",
+  clos: "ClosureId",
+  absn: "ProviderAbsenceId",
+  bhrs: "BusinessHoursId",
+  evnt: "BookingEventId",
+  audt: "AuditLogId",
+  idem: "IdempotencyKeyId",
+  staf: "StaffId",
+} as const satisfies Record<string, string>
 
 /** Stable union of every TypeID prefix the system mints. */
-export type EntityPrefix =
-  | "book"
-  | "serv"
-  | "prov"
-  | "rsrc"
-  | "clos"
-  | "absn"
-  | "bhrs"
-  | "evnt"
-  | "audt"
-  | "idem"
-  | "staf"
+export type EntityKind = keyof typeof ENTITY_KIND_TAG
 
-const makeParser =
-  <Id>(prefix: EntityPrefix, schema: Schema.Codec<Id, string>) =>
-  (s: string): Result.Result<Id, DomainError> =>
-    Result.mapError(
-      Schema.decodeUnknownResult(schema)(s),
-      () => new InvalidEntityIdError({ expectedPrefix: `${prefix}_`, received: s }),
-    )
+/** Legacy alias for {@link EntityKind}. */
+export type EntityPrefix = EntityKind
 
-export const parseBookingId = makeParser("book", BookingIdSchema)
-export const parseServiceId = makeParser("serv", ServiceIdSchema)
-export const parseProviderId = makeParser("prov", ProviderIdSchema)
-export const parseResourceId = makeParser("rsrc", ResourceIdSchema)
-export const parseClosureId = makeParser("clos", ClosureIdSchema)
-export const parseProviderAbsenceId = makeParser("absn", ProviderAbsenceIdSchema)
-export const parseBusinessHoursId = makeParser("bhrs", BusinessHoursIdSchema)
-export const parseBookingEventId = makeParser("evnt", BookingEventIdSchema)
-export const parseAuditLogId = makeParser("audt", AuditLogIdSchema)
-export const parseIdempotencyKeyId = makeParser("idem", IdempotencyKeyIdSchema)
-export const parseStaffId = makeParser("staf", StaffIdSchema)
+type EntityTag<E extends EntityKind> = (typeof ENTITY_KIND_TAG)[E]
 
 /**
- * TypeID-prefixed string generator. The return type is fixed at the
- * callsite (`newBookingId: () => BookingId = ...`) rather than via
- * a type parameter, because a single-use type parameter triggers
- * `@typescript-eslint/no-unnecessary-type-parameters`.
+ * Higher-kinded brand. `Id<"book">` ≡ `string & Brand<"BookingId">`.
+ * Two distinct kinds yield mutually-disjoint branded types, even though
+ * the runtime representation is plain `string` for both.
  */
-const generator = (prefix: EntityPrefix) => (): string => typeid(prefix).toString()
+export type Id<E extends EntityKind> = string & Brand.Brand<EntityTag<E>>
 
-export const newBookingId: () => BookingId = generator("book") as () => BookingId
-export const newServiceId: () => ServiceId = generator("serv") as () => ServiceId
-export const newProviderId: () => ProviderId = generator("prov") as () => ProviderId
-export const newResourceId: () => ResourceId = generator("rsrc") as () => ResourceId
-export const newClosureId: () => ClosureId = generator("clos") as () => ClosureId
-export const newProviderAbsenceId: () => ProviderAbsenceId = generator(
+/** Tuple enumerating every {@link EntityKind}. Useful for property tests. */
+export const ALL_ENTITY_KINDS = [
+  "book",
+  "serv",
+  "prov",
+  "rsrc",
+  "clos",
   "absn",
-) as () => ProviderAbsenceId
-export const newBusinessHoursId: () => BusinessHoursId = generator("bhrs") as () => BusinessHoursId
-export const newBookingEventId: () => BookingEventId = generator("evnt") as () => BookingEventId
-export const newAuditLogId: () => AuditLogId = generator("audt") as () => AuditLogId
-export const newIdempotencyKeyId: () => IdempotencyKeyId = generator(
+  "bhrs",
+  "evnt",
+  "audt",
   "idem",
-) as () => IdempotencyKeyId
-export const newStaffId: () => StaffId = generator("staf") as () => StaffId
+  "staf",
+] as const satisfies readonly EntityKind[]
+
+/* -------------------------------------------------------------------------- */
+/* Generic schema / parser / generator                                         */
+/* -------------------------------------------------------------------------- */
+
+const idSchema = <E extends EntityKind>(prefix: E) =>
+  Schema.String.check(Schema.isPattern(new RegExp(`^${prefix}_[0-9a-z]{26}$`))).pipe(
+    Schema.brand(ENTITY_KIND_TAG[prefix]),
+  )
+
+/**
+ * Generic Result-flavoured parser for any {@link EntityKind}.
+ * `parseId("book")` is `parseBookingId`, `parseId("serv")` is
+ * `parseServiceId`, and so on.
+ */
+export const parseId =
+  <E extends EntityKind>(prefix: E) =>
+  (s: string): Result.Result<Id<E>, DomainError> =>
+    Result.mapError(
+      Schema.decodeUnknownResult(idSchema(prefix))(s),
+      () => new InvalidEntityIdError({ expectedPrefix: `${prefix}_`, received: s }),
+    ) as unknown as Result.Result<Id<E>, DomainError>
+
+/**
+ * Generic generator. Produces a fresh canonical TypeID for the given
+ * prefix. The single-cast `as Id<E>` is justified: the Schema check
+ * passes by construction (typeid-js emits the canonical
+ * `<prefix>_<26 lower-base32>` shape).
+ */
+export const newId =
+  <E extends EntityKind>(prefix: E) =>
+  (): Id<E> =>
+    typeid(prefix).toString() as unknown as Id<E>
+
+/* -------------------------------------------------------------------------- */
+/* Per-kind exports (legacy named aliases, derived from the generic core)      */
+/* -------------------------------------------------------------------------- */
+
+export const BookingIdSchema = idSchema("book")
+export const ServiceIdSchema = idSchema("serv")
+export const ProviderIdSchema = idSchema("prov")
+export const ResourceIdSchema = idSchema("rsrc")
+export const ClosureIdSchema = idSchema("clos")
+export const ProviderAbsenceIdSchema = idSchema("absn")
+export const BusinessHoursIdSchema = idSchema("bhrs")
+export const BookingEventIdSchema = idSchema("evnt")
+export const AuditLogIdSchema = idSchema("audt")
+export const IdempotencyKeyIdSchema = idSchema("idem")
+export const StaffIdSchema = idSchema("staf")
+
+export type BookingId = Id<"book">
+export type ServiceId = Id<"serv">
+export type ProviderId = Id<"prov">
+export type ResourceId = Id<"rsrc">
+export type ClosureId = Id<"clos">
+export type ProviderAbsenceId = Id<"absn">
+export type BusinessHoursId = Id<"bhrs">
+export type BookingEventId = Id<"evnt">
+export type AuditLogId = Id<"audt">
+export type IdempotencyKeyId = Id<"idem">
+export type StaffId = Id<"staf">
+
+export const parseBookingId = parseId("book")
+export const parseServiceId = parseId("serv")
+export const parseProviderId = parseId("prov")
+export const parseResourceId = parseId("rsrc")
+export const parseClosureId = parseId("clos")
+export const parseProviderAbsenceId = parseId("absn")
+export const parseBusinessHoursId = parseId("bhrs")
+export const parseBookingEventId = parseId("evnt")
+export const parseAuditLogId = parseId("audt")
+export const parseIdempotencyKeyId = parseId("idem")
+export const parseStaffId = parseId("staf")
+
+export const newBookingId = newId("book")
+export const newServiceId = newId("serv")
+export const newProviderId = newId("prov")
+export const newResourceId = newId("rsrc")
+export const newClosureId = newId("clos")
+export const newProviderAbsenceId = newId("absn")
+export const newBusinessHoursId = newId("bhrs")
+export const newBookingEventId = newId("evnt")
+export const newAuditLogId = newId("audt")
+export const newIdempotencyKeyId = newId("idem")
+export const newStaffId = newId("staf")
