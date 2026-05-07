@@ -1,5 +1,14 @@
-import { ServiceCatalog, type ServiceCatalogOps } from "@booking/core"
-import { Effect } from "effect"
+import {
+  BusinessHoursFromRow,
+  ClosureFromRow,
+  ProviderAbsenceFromRow,
+  ProviderFromRow,
+  ResourceFromRow,
+  ServiceCatalog,
+  type ServiceCatalogOps,
+  ServiceFromRow,
+} from "@booking/core"
+import { Effect, Schema } from "effect"
 import { makeD1ServiceCatalog } from "../../adapters/D1ServiceCatalogLive.js"
 import { builder, type GraphQLContext } from "../builder.js"
 import { BookingError } from "../errors.js"
@@ -9,12 +18,12 @@ import { BookingError } from "../errors.js"
  * are exposed as one query field per `list` operation. Writes land in
  * a separate resolver module gated by `StaffCapability`.
  *
- * Each resolver is a one-line wiring through the catalog port: the
- * D1 adapter built per-request, the Effect program runs `list()`, and
- * the encoded form (Schema's wire shape) is what GraphQL serialises.
- * Returning the encoded form keeps the GraphQL types in lockstep with
- * the SQL columns — the read side never sees the in-memory Temporal /
- * Set / brand layer, only the codec output.
+ * Each resolver runs the port's `list()`, then encodes the entity
+ * sequence through its `*FromRow` codec — `Schema.Codec.Encoded` is
+ * the wire shape the GraphQL schema serialises. This keeps the
+ * resolver-to-wire mapping a pure derivation: adding a column to a
+ * table propagates through the row codec, the type alias, and the
+ * Pothos `objectRef` shape generic without any per-resolver rewrite.
  */
 
 const runCatalog = async <A>(
@@ -41,56 +50,48 @@ const runCatalog = async <A>(
   })
 }
 
-/* ----- Output object types ----- */
+/* ----- Output object types — derived from `Schema.Codec.Encoded` of */
+/* each `*FromRow` codec, then projected through `WireShape` to drop  */
+/* brands and `readonly` qualifiers (Pothos's `exposeStringList` /    */
+/* `exposeString` constrain field names to mutable, unbranded shapes  */
+/* — brands are TypeScript-only, never survive the GraphQL wire).     */
 
-type ServiceShape = {
-  readonly id: string
-  readonly name: string
-  readonly description: string
-  readonly durationMinutes: number
-  readonly bufferBeforeMinutes: number
-  readonly bufferAfterMinutes: number
-  readonly holdingDays: number
-  readonly requiredSkills: readonly string[]
-  readonly requiredResourceTypes: readonly string[]
-  readonly enabled: boolean
-}
+type WireShape<T> = T extends string
+  ? string
+  : T extends number
+    ? number
+    : T extends boolean
+      ? boolean
+      : T extends readonly (infer U)[]
+        ? WireShape<U>[]
+        : T extends object
+          ? { -readonly [K in keyof T]: WireShape<T[K]> }
+          : T
 
-type ProviderShape = {
-  readonly id: string
-  readonly name: string
-  readonly skills: readonly string[]
-  readonly enabled: boolean
-}
+type ServiceShape = WireShape<Schema.Codec.Encoded<typeof ServiceFromRow>>
+type ProviderShape = WireShape<Schema.Codec.Encoded<typeof ProviderFromRow>>
+type ResourceShape = WireShape<Schema.Codec.Encoded<typeof ResourceFromRow>>
+type BusinessHoursShape = WireShape<Schema.Codec.Encoded<typeof BusinessHoursFromRow>>
+type ClosureShape = WireShape<Schema.Codec.Encoded<typeof ClosureFromRow>>
+type ProviderAbsenceShape = WireShape<Schema.Codec.Encoded<typeof ProviderAbsenceFromRow>>
+type OpenWindowShape = BusinessHoursShape["windows"][number]
 
-type ResourceShape = {
-  readonly id: string
-  readonly name: string
-  readonly type: string
-  readonly enabled: boolean
-}
+const wire = <T>(value: T): WireShape<T> => value as WireShape<T>
 
-type OpenWindowShape = { readonly start: string; readonly end: string }
-
-type BusinessHoursShape = {
-  readonly id: string
-  readonly weekday: number
-  readonly windows: readonly OpenWindowShape[]
-}
-
-type ClosureShape = {
-  readonly id: string
-  readonly date: string
-  readonly reason: string
-}
-
-type ProviderAbsenceShape = {
-  readonly id: string
-  readonly providerId: string
-  readonly start: string
-  readonly end: string
-  readonly reason: string
-}
+const encodeService = (s: Schema.Schema.Type<typeof ServiceFromRow>): ServiceShape =>
+  wire(Schema.encodeSync(ServiceFromRow)(s))
+const encodeProvider = (p: Schema.Schema.Type<typeof ProviderFromRow>): ProviderShape =>
+  wire(Schema.encodeSync(ProviderFromRow)(p))
+const encodeResource = (r: Schema.Schema.Type<typeof ResourceFromRow>): ResourceShape =>
+  wire(Schema.encodeSync(ResourceFromRow)(r))
+const encodeBusinessHours = (
+  b: Schema.Schema.Type<typeof BusinessHoursFromRow>,
+): BusinessHoursShape => wire(Schema.encodeSync(BusinessHoursFromRow)(b))
+const encodeClosure = (c: Schema.Schema.Type<typeof ClosureFromRow>): ClosureShape =>
+  wire(Schema.encodeSync(ClosureFromRow)(c))
+const encodeProviderAbsence = (
+  a: Schema.Schema.Type<typeof ProviderAbsenceFromRow>,
+): ProviderAbsenceShape => wire(Schema.encodeSync(ProviderAbsenceFromRow)(a))
 
 const ServiceType = builder.objectRef<ServiceShape>("Service").implement({
   description: "Catalog entry for a unit of work the business offers.",
@@ -171,22 +172,7 @@ builder.queryFields((t) => ({
     description: "Every catalog Service, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.services.list(), (rows) =>
-          rows.map(
-            (s): ServiceShape => ({
-              id: s.id,
-              name: s.name,
-              description: s.description,
-              durationMinutes: s.durationMinutes,
-              bufferBeforeMinutes: s.bufferBeforeMinutes,
-              bufferAfterMinutes: s.bufferAfterMinutes,
-              holdingDays: s.holdingDays,
-              requiredSkills: [...s.requiredSkills],
-              requiredResourceTypes: [...s.requiredResourceTypes],
-              enabled: s.enabled,
-            }),
-          ),
-        ),
+        Effect.map(cat.services.list(), (rows) => rows.map((s) => encodeService(s))),
       ),
   }),
   providers: t.field({
@@ -194,16 +180,7 @@ builder.queryFields((t) => ({
     description: "Every catalog Provider, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.providers.list(), (rows) =>
-          rows.map(
-            (p): ProviderShape => ({
-              id: p.id,
-              name: p.name,
-              skills: [...p.skills],
-              enabled: p.enabled,
-            }),
-          ),
-        ),
+        Effect.map(cat.providers.list(), (rows) => rows.map((p) => encodeProvider(p))),
       ),
   }),
   resources: t.field({
@@ -211,16 +188,7 @@ builder.queryFields((t) => ({
     description: "Every catalog Resource, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.resources.list(), (rows) =>
-          rows.map(
-            (r): ResourceShape => ({
-              id: r.id,
-              name: r.name,
-              type: r.type,
-              enabled: r.enabled,
-            }),
-          ),
-        ),
+        Effect.map(cat.resources.list(), (rows) => rows.map((r) => encodeResource(r))),
       ),
   }),
   businessHours: t.field({
@@ -228,18 +196,7 @@ builder.queryFields((t) => ({
     description: "Weekly opening template, one row per ISO weekday.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.businessHours.list(), (rows) =>
-          rows.map(
-            (bh): BusinessHoursShape => ({
-              id: bh.id,
-              weekday: bh.weekday,
-              windows: bh.windows.map((w) => ({
-                start: w.start.toString(),
-                end: w.end.toString(),
-              })),
-            }),
-          ),
-        ),
+        Effect.map(cat.businessHours.list(), (rows) => rows.map((b) => encodeBusinessHours(b))),
       ),
   }),
   closures: t.field({
@@ -247,15 +204,7 @@ builder.queryFields((t) => ({
     description: "Calendar-date closures (public holidays, planned maintenance).",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.closures.list(), (rows) =>
-          rows.map(
-            (c): ClosureShape => ({
-              id: c.id,
-              date: c.date.toString(),
-              reason: c.reason,
-            }),
-          ),
-        ),
+        Effect.map(cat.closures.list(), (rows) => rows.map((c) => encodeClosure(c))),
       ),
   }),
   providerAbsences: t.field({
@@ -264,15 +213,7 @@ builder.queryFields((t) => ({
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
         Effect.map(cat.providerAbsences.list(), (rows) =>
-          rows.map(
-            (a): ProviderAbsenceShape => ({
-              id: a.id,
-              providerId: a.providerId,
-              start: a.start.toString(),
-              end: a.end.toString(),
-              reason: a.reason,
-            }),
-          ),
+          rows.map((a) => encodeProviderAbsence(a)),
         ),
       ),
   }),

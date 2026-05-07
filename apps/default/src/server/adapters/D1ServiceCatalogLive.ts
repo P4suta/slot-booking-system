@@ -1,27 +1,25 @@
 import {
   AggregateNotFoundError,
-  BusinessHoursSchema,
+  BusinessHoursFromRow,
+  businessHours,
   type CatalogRepository,
-  ClosureSchema,
-  ProviderAbsenceSchema,
-  ProviderSchema,
-  ResourceSchema,
+  ClosureFromRow,
+  closures,
+  ProviderAbsenceFromRow,
+  ProviderFromRow,
+  providerAbsences,
+  providers,
+  ResourceFromRow,
+  resources,
   ServiceCatalog,
-  ServiceSchema,
+  ServiceFromRow,
   StorageError,
+  services,
 } from "@booking/core"
 import { eq, type InferInsertModel } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
 import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core"
 import { Effect, Layer, Schema } from "effect"
-import {
-  businessHours,
-  closures,
-  providerAbsences,
-  providers,
-  resources,
-  services,
-} from "../schema/index.js"
 
 /**
  * D1-backed {@link ServiceCatalog}. Six per-entity {@link CatalogRepository}
@@ -148,12 +146,12 @@ export const makeD1ServiceCatalog = (database: D1Database): Layer.Layer<ServiceC
   return Layer.succeed(
     ServiceCatalog,
     ServiceCatalog.of({
-      services: makeRepository(db, services, ServiceSchema),
-      providers: makeRepository(db, providers, ProviderSchema),
-      resources: makeRepository(db, resources, ResourceSchema),
-      businessHours: makeRepository(db, businessHours, BusinessHoursSchema),
-      closures: makeRepository(db, closures, ClosureSchema),
-      providerAbsences: makeRepository(db, providerAbsences, ProviderAbsenceSchema),
+      services: makeRepository(db, services, ServiceFromRow),
+      providers: makeRepository(db, providers, ProviderFromRow),
+      resources: makeRepository(db, resources, ResourceFromRow),
+      businessHours: makeRepository(db, businessHours, BusinessHoursFromRow),
+      closures: makeRepository(db, closures, ClosureFromRow),
+      providerAbsences: makeRepository(db, providerAbsences, ProviderAbsenceFromRow),
     }),
   )
 }
