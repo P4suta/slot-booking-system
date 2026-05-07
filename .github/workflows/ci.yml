@@ -148,11 +148,14 @@ jobs:
             slot-booking-system-ci:latest \
             bash -c '! rg -n -t ts -e "\\bnew Date\\(|\\bDate\\.now\\(|@ts-ignore|@ts-expect-error|: any\\b" packages/core/src apps/default/src 2>/dev/null'
 
-      - name: Test (vitest + coverage)
+      - name: Test (vitest + coverage, all packages)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
             -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
             -w /workspace \
             slot-booking-system-ci:latest \
-            corepack pnpm -F @booking/core run test:coverage
+            corepack pnpm -r run test:coverage
+
+      - name: Schema-drift gate (apps/default/schema.graphql)
+        run: bash apps/default/scripts/schema-drift-check.sh

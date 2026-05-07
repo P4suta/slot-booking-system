@@ -74,6 +74,12 @@ pre-push:
       run: docker compose run --rm dev ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
     test:
       run: docker compose run --rm dev bash -c "cd packages/core && ./node_modules/.bin/vitest run"
+    test-default:
+      run: docker compose run --rm dev bash -c "cd apps/default && ./node_modules/.bin/vitest run"
+    test-web:
+      run: docker compose run --rm dev bash -c "cd apps/web && ./node_modules/.bin/vitest run"
+    schema-drift:
+      run: bash apps/default/scripts/schema-drift-check.sh
     pii-guard-full:
       run: |
         docker compose run --rm dev bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'

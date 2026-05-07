@@ -293,6 +293,19 @@ smoke-all:
     just smoke-available-slots
     just smoke-booking-flow
 
+# Drift gate for `apps/default/schema.graphql`. Re-renders the SDL
+# via `pnpm print-schema` and fails if the working tree disagrees
+# with the regenerated output (Phase 3 PR#8 / ADR-0036 / ADR-0041).
+schema-drift-check:
+    bash apps/default/scripts/schema-drift-check.sh
+
+# Run the Miniflare-backed integration test suite (Phase 3 PR#8).
+# Out-of-process worker + DO + D1 fixtures so holdSlot /
+# confirmBooking / cancelBooking / rescheduleBooking exercise the
+# full lifecycle that smoke-booking-flow only sketches.
+test-integration:
+    {{DEV}} bash -c "cd apps/default && corepack pnpm run test:integration"
+
 # ---------------------------------------------------------------------------
 # Aggregate gates
 # ---------------------------------------------------------------------------

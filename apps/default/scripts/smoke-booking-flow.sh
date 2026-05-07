@@ -68,10 +68,39 @@ echo "${hold_response}"
 held=$(echo "${hold_response}" | extract_field "data.holdSlot.__typename")
 if [ "${held}" != "MutationHoldSlotSuccess" ]; then
   echo "smoke: expected MutationHoldSlotSuccess after holdSlot, got ${held}" >&2
+  # Surface dev-only `extensions.cause.message` — populated by the
+  # ErrorRedaction port (ADR-0043) when IS_DEV='1'. The caller can
+  # paste this into Jaeger search to find the matching trace.
+  echo "${hold_response}" | python3 -c '
+import json, sys
+data = json.loads(sys.stdin.read())
+errors = data.get("errors") or []
+for err in errors:
+    cause = (err.get("extensions") or {}).get("cause")
+    if cause: sys.stderr.write(f"smoke: cause = {cause.get(\"name\", \"?\")}: {cause.get(\"message\", \"?\")}\n")
+' >&2 || true
   exit 1
 fi
 booking_id=$(echo "${hold_response}" | extract_field "data.holdSlot.data.bookingId")
-echo "booking: ${booking_id}"
+state=$(echo "${hold_response}" | extract_field "data.holdSlot.data.state")
+event_type=$(echo "${hold_response}" | extract_field "data.holdSlot.data.eventType")
+
+# Field-level assertions — pin the exact wire shape so a future PR
+# that drifts the booking-id format / state / event type fails this
+# gate before the regression reaches the operator.
+if ! [[ "${booking_id}" =~ ^bk_[0-9a-z]{26}$ ]]; then
+  echo "smoke: booking id ${booking_id} does not match TypeID pattern bk_[0-9a-z]{26}" >&2
+  exit 1
+fi
+if [ "${state}" != "Held" ]; then
+  echo "smoke: expected state=Held after holdSlot, got ${state}" >&2
+  exit 1
+fi
+if [ "${event_type}" != "Held" ]; then
+  echo "smoke: expected eventType=Held after holdSlot, got ${event_type}" >&2
+  exit 1
+fi
+echo "booking: ${booking_id} state=${state} eventType=${event_type}"
 
 # We need the booking code from the seed flow; for now skip
 # confirmBooking + cancelBooking — they require parsing the code
