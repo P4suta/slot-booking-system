@@ -31,7 +31,6 @@
     "@opentelemetry/sdk-trace-base": "latest",
     "@types/node": "latest",
     "@vitest/coverage-v8": "latest",
-    "fast-check": "latest",
     "cloudflare": "latest",
     "drizzle-kit": "rc",
     "tsx": "latest",

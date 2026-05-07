@@ -78,9 +78,6 @@ importers:
       drizzle-kit:
         specifier: rc
         version: 1.0.0-rc.2
-      fast-check:
-        specifier: latest
-        version: 4.7.0
       tsx:
         specifier: latest
         version: 4.21.0

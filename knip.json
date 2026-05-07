@@ -6,14 +6,21 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/default": {
-      "project": ["src/**/*.ts"],
+      "entry": [
+        "test/**/*.test.ts",
+        "test/integration/**/*.ts",
+        "scripts/**/*.ts",
+        "seed/**/*.ts"
+      ],
+      "project": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "seed/**/*.ts"],
+      "ignore": ["src/server/rest/openapiSpec.ts"],
       "wrangler": {
         "config": ["wrangler.toml"]
       }
     },
     "apps/web": {
-      "entry": ["src/routes/**/*.{svelte,ts}", "src/app.html"],
-      "project": ["src/**/*.{ts,svelte}"],
+      "entry": ["src/routes/**/*.{svelte,ts}", "src/app.html", "test/**/*.test.ts"],
+      "project": ["src/**/*.{ts,svelte}", "test/**/*.ts"],
       "ignore": ["src/lib/graphql/client.ts"],
       "ignoreDependencies": ["@booking/core", "@cloudflare/workers-types"]
     }

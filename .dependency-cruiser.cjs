@@ -62,6 +62,7 @@ module.exports = {
           "|apps/.*/src/worker\\.ts|apps/.*/src/server/schema\\.ts" +
           "|^packages/core/src/derive/index\\.ts" +
           "|^apps/default/seed/seed\\.ts" +
+          "|^apps/default/scripts/" +
           // SvelteKit's file-system routing loads these by convention.
           "|^apps/web/src/routes/.*\\.svelte$" +
           "|^apps/web/src/(app\\.d\\.ts|app\\.html|app\\.css|hooks\\.server\\.ts)$" +

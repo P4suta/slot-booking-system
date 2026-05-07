@@ -18,7 +18,7 @@ type ExportResult = { readonly code: number; readonly error?: Error }
  * `wrangler dev` runs that have not opted into the observability
  * stack (`just dev-up`). ADR-0042 / ADR-0044.
  */
-export class NoopSpanExporter implements SpanExporter {
+class NoopSpanExporter implements SpanExporter {
   export(_spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
     resultCallback({ code: 0 })
   }

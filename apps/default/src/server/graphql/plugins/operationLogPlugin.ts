@@ -82,8 +82,6 @@ const statusToSeverity = (
   }
 }
 
-export type OperationLogEmit = (record: Readonly<Record<string, unknown>>) => void
-
 /**
  * Pure derivation extracted so it can be exercised under any
  * fixture without spinning up a yoga / envelop runtime. Produces
