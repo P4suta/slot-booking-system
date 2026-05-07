@@ -2,6 +2,12 @@
 
 ## Status
 
+**Completed** — landed 2026-05-08 (commit `c172e71`). Superseded by
+[ADR-0039 Effect 4 + drizzle-orm 1 migration retrospective](../adr/0039-effect-4-drizzle-1-migration.md);
+the breaking-changes inventory below is preserved as historical notes.
+
+The original deferral notes (kept verbatim for archeology):
+
 **Deferred** — Phase 2.2 attempted in session 2026-05-06 but reverted.
 Effect 4 is in **beta** (`4.0.0-beta.60`, no rc / no stable as of 2026-05),
 and the migration surface measured **1224 type errors / 24 distinct
