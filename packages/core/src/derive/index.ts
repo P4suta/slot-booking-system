@@ -57,3 +57,16 @@ export const schemaToArbitrary = <S extends Schema.Top>(s: S): FCArbitrary<S["Ty
  */
 export const schemaToCheckConstraint = (schema: Schema.Top, columnName: string): string | null =>
   fold(toSqlCheck(columnName))(fromSchemaAst(schema.ast))
+
+/**
+ * Twin-functor projections — ADR-0041 / Phase 3 PR#7-#8. Each lifts
+ * the same Schema source category to a different target artefact
+ * (GraphQL types live in `apps/default` because Pothos is an
+ * adapter-layer dep; OpenAPI schemas are runtime-agnostic and ship
+ * from `packages/core`).
+ */
+export {
+  type DeriveOpenAPIOptions,
+  type OpenAPISchemaObject,
+  schemaToOpenAPISchema,
+} from "./openapi.js"

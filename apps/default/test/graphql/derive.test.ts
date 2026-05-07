@@ -3,10 +3,12 @@ import { Schema } from "effect"
 import {
   GraphQLBoolean,
   GraphQLFloat,
-  GraphQLList,
-  GraphQLNonNull,
+  type GraphQLNonNull,
   type GraphQLObjectType,
+  type GraphQLOutputType,
   GraphQLString,
+  isListType,
+  isNonNullType,
   isObjectType,
 } from "graphql"
 import { describe, expect, it } from "vitest"
@@ -26,11 +28,13 @@ describe("schemaToGraphQLOutputType — Schema → GraphQLType functor", () => {
   })
 
   it("lifts Schema.Array(String) to GraphQLList(NonNull(String))", () => {
-    const out = schemaToGraphQLOutputType(Schema.Array(Schema.String))
-    expect(out).toBeInstanceOf(GraphQLList)
-    const inner = (out as GraphQLList<unknown>).ofType
-    expect(inner).toBeInstanceOf(GraphQLNonNull)
-    expect((inner as GraphQLNonNull<unknown>).ofType).toBe(GraphQLString)
+    const out: GraphQLOutputType = schemaToGraphQLOutputType(Schema.Array(Schema.String))
+    expect(isListType(out)).toBe(true)
+    if (!isListType(out)) return
+    const inner = out.ofType as GraphQLOutputType
+    expect(isNonNullType(inner)).toBe(true)
+    if (!isNonNullType(inner)) return
+    expect((inner as GraphQLNonNull<typeof GraphQLString>).ofType).toBe(GraphQLString)
   })
 
   it("lifts Schema.Struct to a named GraphQLObjectType", () => {
