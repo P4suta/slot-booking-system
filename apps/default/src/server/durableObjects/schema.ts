@@ -1,3 +1,8 @@
+import { bookingEvents } from "../schema/bookingEvents.js"
+import { bookings } from "../schema/bookings.js"
+import { outbox, outboxDead } from "../schema/outbox.js"
+import { tablesToDDL } from "./ddl.js"
+
 /**
  * DDL for the DurableObject's local SQLite. Applied idempotently from
  * the DO constructor under `ctx.blockConcurrencyWhile`, so every fetch
@@ -9,84 +14,20 @@
  * because the DO is the write side, not the audit sink (audit lives
  * in D1, populated by `D1AuditLoggerLive` in Phase 0.12).
  *
+ * The DDL is **derived** from the drizzle table definitions via
+ * {@link tablesToDDL}. Drizzle is the single source of truth for
+ * column shape; adding a column / index in
+ * `apps/default/src/server/schema/*.ts` propagates here automatically.
+ *
  * Why not `drizzle-kit migrate`: the kit produces a directory of `.sql`
  * files plus a JSON journal that wrangler does not bundle by default,
  * and the per-deployment migration stack adds complexity that this
- * project doesn't need (schema is small, evolution is captured in ADRs).
- * `CREATE TABLE IF NOT EXISTS` is idempotent and re-runs cheaply on
- * every cold start, so the DO can self-heal after eviction without
+ * project doesn't need (schema is small, evolution is captured in
+ * ADRs). `CREATE TABLE IF NOT EXISTS` is idempotent and re-runs cheaply
+ * on every cold start, so the DO can self-heal after eviction without
  * any orchestration.
  */
-const DURABLE_OBJECT_DDL = [
-  /* bookings — read-side projection (snapshot per aggregate). */
-  `CREATE TABLE IF NOT EXISTS bookings (
-     id text PRIMARY KEY NOT NULL,
-     code text NOT NULL UNIQUE,
-     state text NOT NULL,
-     service_id text NOT NULL,
-     provider_id text NOT NULL,
-     resource_ids text NOT NULL,
-     slot_start text NOT NULL,
-     slot_end text NOT NULL,
-     source text NOT NULL,
-     name_kana text,
-     phone_last4 text,
-     free_text text,
-     held_at text,
-     expires_at text,
-     confirmed_at text,
-     cancelled_at text,
-     cancelled_by text,
-     cancel_reason text,
-     completed_at text,
-     marked_at text,
-     marked_by text,
-     updated_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-   )`,
-  /* booking_events — append-only truth log, bitemporal + versioned. */
-  `CREATE TABLE IF NOT EXISTS booking_events (
-     id text PRIMARY KEY NOT NULL,
-     booking_id text NOT NULL,
-     seq integer NOT NULL,
-     version integer NOT NULL DEFAULT 1,
-     type text NOT NULL,
-     occurred_at text NOT NULL,
-     recorded_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-     payload text
-   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS ux_booking_events_booking_seq
-     ON booking_events (booking_id, seq)`,
-  /* outbox — pending DO → D1 relay rows, with retry budget.
-   * Phase 0.7-β5 dropped the inline `snapshot` column; the relay
-   * reads `bookings` at drain time so N events on the same booking
-   * no longer carry N copies of the snapshot. */
-  `CREATE TABLE IF NOT EXISTS outbox (
-     id text PRIMARY KEY NOT NULL,
-     booking_id text NOT NULL,
-     seq integer NOT NULL,
-     type text NOT NULL,
-     payload text NOT NULL,
-     enqueued_at text NOT NULL,
-     next_attempt_at text NOT NULL,
-     attempts integer NOT NULL DEFAULT 0,
-     last_error text
-   )`,
-  `CREATE INDEX IF NOT EXISTS ix_outbox_next_attempt
-     ON outbox (next_attempt_at)`,
-  /* outbox_dead — rows that exhausted the retry budget. Snapshot
-   * intentionally absent (operator reads the live `bookings` row). */
-  `CREATE TABLE IF NOT EXISTS outbox_dead (
-     id text PRIMARY KEY NOT NULL,
-     booking_id text NOT NULL,
-     seq integer NOT NULL,
-     type text NOT NULL,
-     payload text NOT NULL,
-     enqueued_at text NOT NULL,
-     died_at text NOT NULL,
-     attempts integer NOT NULL,
-     last_error text NOT NULL
-   )`,
-] as const
+const DURABLE_OBJECT_DDL = tablesToDDL([bookings, bookingEvents, outbox, outboxDead])
 
 /**
  * Apply the DDL to the DO's SQL storage. Idempotent — every statement
