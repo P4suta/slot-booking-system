@@ -24,14 +24,23 @@ default:
 # Bootstrap
 # ---------------------------------------------------------------------------
 
-# Build the dev image, install workspace deps, register git hooks.
-bootstrap: image install hooks
+# Build the dev image, install workspace deps, compile generated
+# code (paraglide messages), register git hooks.
+bootstrap: image install paraglide hooks
 
 image:
     docker compose build dev
 
 install:
     {{DEV}} {{PNPM}} install --frozen-lockfile=false
+
+# Compile inlang paraglide message catalogues into typed ESM modules
+# under `apps/web/src/paraglide/`. The directory is git-ignored —
+# the source of truth is `apps/web/messages/{ja,en}.json` plus the
+# `project.inlang/` settings; compile turns those into the typed
+# message functions consumed by `apps/web/src/lib/i18n.ts`.
+paraglide:
+    {{DEV}} bash -c "cd apps/web && {{PNPM}} run paraglide"
 
 hooks:
     {{DEV}} lefthook install
@@ -79,7 +88,9 @@ markdownlint:
         "#**/dist/**" \
         "#**/coverage/**" \
         "#**/PULL_REQUEST_TEMPLATE.md" \
-        "#**/ISSUE_TEMPLATE/**"
+        "#**/ISSUE_TEMPLATE/**" \
+        "#apps/web/src/paraglide/**" \
+        "#apps/web/project.inlang/**"
 
 lint: lint-biome lint-eslint markdownlint
 

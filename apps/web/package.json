@@ -5,11 +5,12 @@
   "type": "module",
   "description": "SvelteKit frontend (customer + staff) for the booking system.",
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
+    "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy globalVariable baseLocale --is-server 'import.meta.env.SSR' --emit-ts-declarations --no-emit-readme --silent",
+    "dev": "pnpm run paraglide && vite dev",
+    "build": "pnpm run paraglide && vite build",
     "preview": "vite preview",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "check": "pnpm run paraglide && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:watch": "pnpm run paraglide && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "echo 'no tests in web app yet'",
     "test:coverage": "echo 'no tests in web app yet'"
   },

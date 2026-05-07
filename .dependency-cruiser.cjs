@@ -74,7 +74,8 @@ module.exports = {
   options: {
     doNotFollow: { path: "node_modules" },
     exclude: {
-      path: "(node_modules|dist|\\.wrangler|\\.svelte-kit|coverage|\\.turbo)",
+      path:
+        "(node_modules|dist|\\.wrangler|\\.svelte-kit|coverage|\\.turbo|apps/web/src/paraglide)",
     },
     tsPreCompilationDeps: true,
     tsConfig: { fileName: "tsconfig.base.json" },

@@ -65,6 +65,15 @@ jobs:
             slot-booking-system-ci:latest \
             corepack pnpm install --frozen-lockfile=false
 
+      - name: Compile paraglide message catalogues
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace/apps/web \
+            slot-booking-system-ci:latest \
+            corepack pnpm run paraglide
+
       - name: Lint (biome)
         run: |
           docker run --rm \
