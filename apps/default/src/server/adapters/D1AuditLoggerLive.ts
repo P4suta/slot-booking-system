@@ -30,8 +30,8 @@ import { auditLog } from "../schema/index.js"
  * `"E_INF_AUDIT_WRITE"`, `error.severity` = `"infrastructure"`),
  * so the operator dashboard sees the audit miss and can correlate
  * it back to the originating request via the shared `traceId`
- * pinned on the `CurrentTraceId` Reference (the `Logger`-side
- * decorator merges it automatically).
+ * derived from the active OTel span (the `Logger`-side decorator
+ * merges it automatically).
  *
  * The Logger dependency is declared on the layer's R channel
  * (`Layer.Layer<AuditLogger, never, Logger>`). Production wires it

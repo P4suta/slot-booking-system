@@ -465,8 +465,9 @@ export const severityOf = (e: DomainError): ErrorSeverity => metadataOf(e).sever
  *   - `_tag`, `code`, `severity`
  *   - the error's own scalar/structured payload (the constructor args,
  *     enumerated via the Schema `fields` on the class — Phase 2.0 / BI-2)
- *   - `traceId` (passed in by the log layer from the `CurrentTraceId`
- *     FiberRef — domain errors no longer carry it themselves)
+ *   - `traceId` (passed in by the log layer from the active OTel
+ *     span via `getCurrentTraceId` — domain errors no longer carry
+ *     it themselves)
  *   - `cause` only when the error class has one as a payload field
  *     (currently `StorageError`); the unwrapping is delegated to
  *     {@link extractCausePreview}.

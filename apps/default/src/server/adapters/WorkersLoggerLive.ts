@@ -8,11 +8,13 @@ import { Effect, Layer, Option } from "effect"
  * payload as a single line so the operator dashboard can filter on
  * `_tag` / `code` / `severity` / `traceId` without per-message regex.
  *
- * The logger reads the request-scoped `TraceId` from the
- * `CurrentTraceId` FiberRef and merges it into the emitted payload
- * when the call site has not provided one explicitly. The FiberRef
- * is seeded by the worker entry point (or the DO's `runUseCase`)
- * so a chain of nested sub-effects share the same trace without
+ * The logger reads the request-scoped `TraceId` from the active
+ * OTel span via `getCurrentTraceId` (re-encoded from the OTel hex
+ * traceId to a Crockford ULID) and merges it into the emitted
+ * payload when the call site has not provided one explicitly.
+ * `instrument(handler, otelConfig)` from `@microlabs/otel-cf-workers`
+ * is the worker root and always starts a span before any Effect
+ * runs, so the trace is shared across nested sub-effects without
  * threading it through every function signature.
  *
  * The adapter is deliberately stateless — Workers spin up a fresh

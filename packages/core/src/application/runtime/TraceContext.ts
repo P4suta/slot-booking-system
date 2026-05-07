@@ -1,57 +1,25 @@
-import { Effect, FiberRef } from "effect"
-import { ulid } from "ulidx"
-import { parseTraceId, type TraceId } from "../../domain/errors/TraceId.js"
+import { Effect, Option } from "effect"
+import { type TraceId, traceIdFromHex } from "../../domain/errors/TraceId.js"
 
 /**
- * Request-scoped `TraceId` carrier. The Worker entry point seeds the
- * FiberRef when it receives a request (e.g. from a `traceparent`
- * header or by minting a fresh ULID); use cases / loggers / audit
- * writers read the same FiberRef so a single request's chain shares
- * one trace id end-to-end without threading it through every
- * function signature.
+ * Read the current trace id from the active OTel span.
  *
- * The fork-inherit semantics of `FiberRef.make` mean concurrent
- * sub-effects see the same value automatically — no manual
- * `Effect.locally(traceId, …)` wrapping needed for the common case.
+ * `instrument(handler, otelConfig)` from `@microlabs/otel-cf-workers`
+ * is the worker root and always starts a span before any Effect runs;
+ * `Effect.currentSpan` therefore yields the OTel-native span context
+ * and we re-encode its 32-hex `traceId` to a 26-char Crockford ULID
+ * for the audit / log sinks that ADR-0009 fixes on a ULID-shaped
+ * `TraceId` brand. Same 128 bits, two display encodings — the
+ * runbook (ADR-0038) documents the pivot procedure so operators can
+ * cross-link OTel-native trace search and audit-log queries.
  *
- * Why FiberRef over `Context.Tag`: the trace id is **inherited by
- * every forked child fiber** without being redeclared in each
- * sub-effect's `R` channel; a `Tag` would force every leaf to list
- * `TraceContext` in its requirements. The FiberRef pattern matches
- * Effect's idiomatic carrier for cross-cutting context (it is the
- * shape `Effect.runtime` itself uses for `currentSpan`).
+ * Returns undefined when no span has wrapped the effect (test fibers
+ * without an `Effect.withSpan` wrap, scheduled handlers without OTel
+ * wiring) or when the span is no-op (all-zero traceId sentinel).
+ * Sinks treat undefined as "omit traceId entirely" rather than
+ * persisting a sentinel value.
  */
-export const CurrentTraceId: FiberRef.FiberRef<TraceId | undefined> = FiberRef.unsafeMake<
-  TraceId | undefined
->(undefined)
-
-/**
- * Read the current trace id, or return undefined when no request
- * context has been attached. Sinks (logger, audit) call this to
- * decorate emitted payloads.
- */
-export const getCurrentTraceId: Effect.Effect<TraceId | undefined> = FiberRef.get(CurrentTraceId)
-
-/**
- * Run an Effect with a specific trace id pinned. The carrier is
- * scoped to the inner Effect; on exit, the FiberRef restores the
- * outer value (or resets to undefined at the root).
- */
-export const withTraceId = <A, E, R>(
-  traceId: TraceId,
-  inner: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> => Effect.locally(inner, CurrentTraceId, traceId)
-
-/**
- * Mint a fresh request-scoped `TraceId` from a freshly-generated
- * Crockford ULID. ulidx is total within its alphabet, so
- * `parseTraceId` here never fails on its output; the throw is the
- * boundary that records the assumption.
- */
-export const mintTraceId = (): TraceId => {
-  const raw = ulid()
-  const r = parseTraceId(raw)
-  /* c8 ignore next 1 — defensive branch: ulidx output is total for the parser */
-  if (r._tag === "Left") throw new Error(`mintTraceId: ulidx produced a non-TraceId value: ${raw}`)
-  return r.right
-}
+export const getCurrentTraceId: Effect.Effect<TraceId | undefined> = Effect.map(
+  Effect.option(Effect.currentSpan),
+  (maybe) => (Option.isSome(maybe) ? traceIdFromHex(maybe.value.traceId) : undefined),
+)
