@@ -123,9 +123,15 @@ directly) was considered but rejected:
 - The operator-facing concept is unchanged: one id per request,
   searchable in both surfaces.
 
-`getCurrentTraceId` / `withTraceId` / `mintTraceId` therefore
-remain unchanged — Span integration is a future Phase carry-over
-when the ULID assumption is no longer load-bearing.
+`getCurrentTraceId` therefore reads from the active OTel span and
+re-encodes its 32-hex traceId as a Crockford ULID via
+`traceIdFromHex` — same 128 bits, two display encodings — and the
+operator runbook documents the pivot procedure between OTel-native
+trace search and audit-log queries. The FiberRef carrier
+(`CurrentTraceId`) and the now-unused `withTraceId` / `mintTraceId`
+helpers were dropped as part of this resolution (see commit `9ad912f`,
+`refactor(core): TraceContext on currentSpan`); the ULID `TraceId`
+brand stays as the audit surface concept.
 
 ## Consequences
 
@@ -154,11 +160,13 @@ when the ULID assumption is no longer load-bearing.
 
 ### Carry-over
 
-- **TraceContext FiberRef → Span integration**: when the ULID
-  brand assumption is no longer load-bearing (post-paraglide /
-  post-i18n carry-over), unify `getCurrentTraceId` to read from
-  `Effect.currentSpan.traceId` directly, dropping the
-  `CurrentTraceId` FiberRef. ADR-update path.
+- **TraceContext FiberRef → Span integration**: ✅ resolved in
+  commit `9ad912f` (`refactor(core): TraceContext on currentSpan`).
+  `getCurrentTraceId` now reads from `Effect.currentSpan` and
+  re-encodes the OTel hex traceId to Crockford ULID via
+  `traceIdFromHex` on `TraceId`; the `CurrentTraceId` FiberRef +
+  `withTraceId` / `mintTraceId` helpers (never seeded in production)
+  are gone.
 - **e2e test for span emission**: `BasicTracerProvider` +
   `InMemorySpanExporter` in test setup, asserting each
   `BookingError` path produces the expected `error.type`
