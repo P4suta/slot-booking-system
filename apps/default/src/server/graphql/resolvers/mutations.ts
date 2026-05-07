@@ -1,10 +1,24 @@
 import { Effect } from "effect"
+import {
+  type GraphQLFieldConfig,
+  type GraphQLFieldConfigArgumentMap,
+  GraphQLNonNull,
+  GraphQLObjectType,
+  GraphQLString,
+} from "graphql"
 import { type DecodedSlot, verifySlotToken } from "../../auth/slotToken.js"
 import type { DaySchedule } from "../../durableObjects/DaySchedule.js"
 import { makeDayScheduleClient } from "../../durableObjects/effectRpc/client.js"
-import { BookingSourceEnum, builder, type GraphQLContext } from "../builder.js"
+import type { GraphQLContext } from "../context.js"
 import { runRpcOrThrow } from "../effectRpcRunner.js"
 import { BookingError } from "../errors.js"
+import {
+  bookingSourceEnumType,
+  type ErrorEnvelopeRegistry,
+  errorEnvelope,
+  phoneLast4Scalar,
+  plainDateScalar,
+} from "../resolver.js"
 
 /**
  * Booking mutations — `holdSlot`, `confirmBooking`, `cancelBooking`,
@@ -39,12 +53,13 @@ type BookingResultShape = {
   readonly eventType: string
 }
 
-const BookingResultType = builder.objectRef<BookingResultShape>("BookingResult").implement({
+const bookingResultType = new GraphQLObjectType({
+  name: "BookingResult",
   description: "Outcome of a write to a booking; carries the new state and the emitted event.",
-  fields: (t) => ({
-    bookingId: t.exposeString("bookingId"),
-    state: t.exposeString("state"),
-    eventType: t.exposeString("eventType"),
+  fields: () => ({
+    bookingId: { type: GraphQLString },
+    state: { type: GraphQLString },
+    eventType: { type: GraphQLString },
   }),
 })
 
@@ -69,140 +84,170 @@ const verifyOrRefuse = async (env: GraphQLContext["env"], token: string): Promis
   return slot
 }
 
-builder.mutationType({
-  fields: (t) => ({
-    holdSlot: t.field({
-      type: BookingResultType,
-      errors: { types: [BookingError] },
-      description:
-        "Place a 5-minute hold on the slot identified by the HMAC-signed `slotToken`. " +
-        "The token is one of the values returned by `availableSlots` — see ADR-0033 / " +
-        "Phase 0.7-α5 for the brand justification.",
-      args: {
-        date: t.arg({ type: "PlainDate", required: true }),
-        slotToken: t.arg.string({ required: true }),
-        nameKana: t.arg.string({ required: true }),
-        phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
-        freeText: t.arg.string({ required: false }),
-        source: t.arg({ type: BookingSourceEnum, required: true }),
-      },
-      resolve: async (_root, args, ctx) => {
-        const slot = await verifyOrRefuse(ctx.env, args.slotToken)
-        const stub = dayDoFor(ctx.env, args.date)
-        return runRpcOrThrow(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const client = yield* makeDayScheduleClient(stub)
-              return yield* client.HoldSlot({
-                slot: {
-                  serviceId: slot.serviceId,
-                  providerId: slot.providerId,
-                  resourceIds: slot.resourceIds,
-                  start: slot.start,
-                  end: slot.end,
-                },
-                nameKana: args.nameKana,
-                phoneLast4: args.phoneLast4,
-                freeText: args.freeText ?? null,
-                source: args.source,
-              })
-            }),
-          ),
-        )
-      },
-    }),
+const holdSlotArgs: GraphQLFieldConfigArgumentMap = {
+  date: { type: new GraphQLNonNull(plainDateScalar) },
+  slotToken: { type: new GraphQLNonNull(GraphQLString) },
+  nameKana: { type: new GraphQLNonNull(GraphQLString) },
+  phoneLast4: { type: new GraphQLNonNull(phoneLast4Scalar) },
+  freeText: { type: GraphQLString },
+  source: { type: new GraphQLNonNull(bookingSourceEnumType) },
+}
 
-    confirmBooking: t.field({
-      type: BookingResultType,
-      errors: { types: [BookingError] },
-      description:
-        "Promote a Held booking to Confirmed. Customer auth = `BookingCode + " +
-        "PhoneLast4`, lifted to a `CustomerCapability` inside the use case.",
-      args: {
-        date: t.arg({ type: "PlainDate", required: true }),
-        code: t.arg.string({ required: true }),
-        phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
-      },
-      resolve: async (_root, args, ctx) => {
-        const stub = dayDoFor(ctx.env, args.date)
-        return runRpcOrThrow(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const client = yield* makeDayScheduleClient(stub)
-              return yield* client.ConfirmBooking({
-                code: args.code,
-                phoneLast4: args.phoneLast4,
-              })
-            }),
-          ),
-        )
-      },
-    }),
+const customerAuthArgs: GraphQLFieldConfigArgumentMap = {
+  date: { type: new GraphQLNonNull(plainDateScalar) },
+  code: { type: new GraphQLNonNull(GraphQLString) },
+  phoneLast4: { type: new GraphQLNonNull(phoneLast4Scalar) },
+}
 
-    cancelBooking: t.field({
-      type: BookingResultType,
-      errors: { types: [BookingError] },
-      description:
-        "Cancel a Held or Confirmed booking. Customer auth = `BookingCode + " +
-        "PhoneLast4`, lifted to a `CustomerCapability` inside the use case.",
-      args: {
-        date: t.arg({ type: "PlainDate", required: true }),
-        code: t.arg.string({ required: true }),
-        phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
-        reason: t.arg.string({ required: true }),
-      },
-      resolve: async (_root, args, ctx) => {
-        const stub = dayDoFor(ctx.env, args.date)
-        return runRpcOrThrow(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const client = yield* makeDayScheduleClient(stub)
-              return yield* client.CancelBooking({
-                code: args.code,
-                phoneLast4: args.phoneLast4,
-                reason: args.reason,
-              })
-            }),
-          ),
-        )
-      },
-    }),
+const cancelArgs: GraphQLFieldConfigArgumentMap = {
+  ...customerAuthArgs,
+  reason: { type: new GraphQLNonNull(GraphQLString) },
+}
 
-    rescheduleBooking: t.field({
-      type: BookingResultType,
-      errors: { types: [BookingError] },
-      description:
-        "Move a Confirmed booking to a different slot on the same day. " +
-        "`newSlotToken` is the HMAC-signed envelope from a fresh `availableSlots` " +
-        "lookup — the verification path is identical to `holdSlot`.",
-      args: {
-        date: t.arg({ type: "PlainDate", required: true }),
-        code: t.arg.string({ required: true }),
-        phoneLast4: t.arg({ type: "PhoneLast4", required: true }),
-        newSlotToken: t.arg.string({ required: true }),
-      },
-      resolve: async (_root, args, ctx) => {
-        const slot = await verifyOrRefuse(ctx.env, args.newSlotToken)
-        const stub = dayDoFor(ctx.env, args.date)
-        return runRpcOrThrow(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const client = yield* makeDayScheduleClient(stub)
-              return yield* client.RescheduleBooking({
-                code: args.code,
-                phoneLast4: args.phoneLast4,
-                newSlot: {
-                  serviceId: slot.serviceId,
-                  providerId: slot.providerId,
-                  resourceIds: slot.resourceIds,
-                  start: slot.start,
-                  end: slot.end,
-                },
-              })
-            }),
-          ),
-        )
-      },
-    }),
+const rescheduleArgs: GraphQLFieldConfigArgumentMap = {
+  ...customerAuthArgs,
+  newSlotToken: { type: new GraphQLNonNull(GraphQLString) },
+}
+
+type HoldSlotArgs = {
+  readonly date: string
+  readonly slotToken: string
+  readonly nameKana: string
+  readonly phoneLast4: string
+  readonly freeText: string | null
+  readonly source: "online" | "walkin" | "phone" | "staff"
+}
+
+type CustomerAuthArgs = {
+  readonly date: string
+  readonly code: string
+  readonly phoneLast4: string
+}
+
+type CancelArgs = CustomerAuthArgs & { readonly reason: string }
+type RescheduleArgs = CustomerAuthArgs & { readonly newSlotToken: string }
+
+export const bookingMutationFields = (
+  registry: ErrorEnvelopeRegistry,
+): Record<string, GraphQLFieldConfig<unknown, GraphQLContext>> => ({
+  holdSlot: errorEnvelope({
+    verb: "HoldSlot",
+    inner: bookingResultType,
+    args: holdSlotArgs,
+    description:
+      "Place a 5-minute hold on the slot identified by the HMAC-signed `slotToken`. " +
+      "The token is one of the values returned by `availableSlots` — see ADR-0033 / " +
+      "Phase 0.7-α5 for the brand justification.",
+    registry,
+    body: async (rawArgs, ctx): Promise<BookingResultShape> => {
+      const args = rawArgs as unknown as HoldSlotArgs
+      const slot = await verifyOrRefuse(ctx.env, args.slotToken)
+      const stub = dayDoFor(ctx.env, args.date)
+      return runRpcOrThrow(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* makeDayScheduleClient(stub)
+            return yield* client.HoldSlot({
+              slot: {
+                serviceId: slot.serviceId,
+                providerId: slot.providerId,
+                resourceIds: slot.resourceIds,
+                start: slot.start,
+                end: slot.end,
+              },
+              nameKana: args.nameKana,
+              phoneLast4: args.phoneLast4,
+              freeText: args.freeText ?? null,
+              source: args.source,
+            })
+          }),
+        ),
+      )
+    },
+  }),
+
+  confirmBooking: errorEnvelope({
+    verb: "ConfirmBooking",
+    inner: bookingResultType,
+    args: customerAuthArgs,
+    description:
+      "Promote a Held booking to Confirmed. Customer auth = `BookingCode + " +
+      "PhoneLast4`, lifted to a `CustomerCapability` inside the use case.",
+    registry,
+    body: async (rawArgs, ctx): Promise<BookingResultShape> => {
+      const args = rawArgs as unknown as CustomerAuthArgs
+      const stub = dayDoFor(ctx.env, args.date)
+      return runRpcOrThrow(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* makeDayScheduleClient(stub)
+            return yield* client.ConfirmBooking({
+              code: args.code,
+              phoneLast4: args.phoneLast4,
+            })
+          }),
+        ),
+      )
+    },
+  }),
+
+  cancelBooking: errorEnvelope({
+    verb: "CancelBooking",
+    inner: bookingResultType,
+    args: cancelArgs,
+    description:
+      "Cancel a Held or Confirmed booking. Customer auth = `BookingCode + " +
+      "PhoneLast4`, lifted to a `CustomerCapability` inside the use case.",
+    registry,
+    body: async (rawArgs, ctx): Promise<BookingResultShape> => {
+      const args = rawArgs as unknown as CancelArgs
+      const stub = dayDoFor(ctx.env, args.date)
+      return runRpcOrThrow(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* makeDayScheduleClient(stub)
+            return yield* client.CancelBooking({
+              code: args.code,
+              phoneLast4: args.phoneLast4,
+              reason: args.reason,
+            })
+          }),
+        ),
+      )
+    },
+  }),
+
+  rescheduleBooking: errorEnvelope({
+    verb: "RescheduleBooking",
+    inner: bookingResultType,
+    args: rescheduleArgs,
+    description:
+      "Move a Confirmed booking to a different slot on the same day. " +
+      "`newSlotToken` is the HMAC-signed envelope from a fresh `availableSlots` " +
+      "lookup — the verification path is identical to `holdSlot`.",
+    registry,
+    body: async (rawArgs, ctx): Promise<BookingResultShape> => {
+      const args = rawArgs as unknown as RescheduleArgs
+      const slot = await verifyOrRefuse(ctx.env, args.newSlotToken)
+      const stub = dayDoFor(ctx.env, args.date)
+      return runRpcOrThrow(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* makeDayScheduleClient(stub)
+            return yield* client.RescheduleBooking({
+              code: args.code,
+              phoneLast4: args.phoneLast4,
+              newSlot: {
+                serviceId: slot.serviceId,
+                providerId: slot.providerId,
+                resourceIds: slot.resourceIds,
+                start: slot.start,
+                end: slot.end,
+              },
+            })
+          }),
+        ),
+      )
+    },
   }),
 })

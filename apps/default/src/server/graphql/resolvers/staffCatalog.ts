@@ -26,9 +26,20 @@ import {
   summarizeParse,
 } from "@booking/core"
 import { Effect, Schema } from "effect"
+import {
+  GraphQLBoolean,
+  type GraphQLFieldConfig,
+  GraphQLInputObjectType,
+  GraphQLInt,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLObjectType,
+  GraphQLString,
+} from "graphql"
 import { makeD1ServiceCatalog } from "../../adapters/D1ServiceCatalogLive.js"
-import { builder, type GraphQLContext } from "../builder.js"
+import type { GraphQLContext } from "../context.js"
 import { BookingError } from "../errors.js"
+import { type ErrorEnvelopeRegistry, errorEnvelope } from "../resolver.js"
 
 /**
  * Staff-only mutations for the catalog. The capability check lives at
@@ -54,17 +65,8 @@ import { BookingError } from "../errors.js"
 
 const decodeCapability = Schema.decodeUnknownResult(CapabilitySchema)
 
-/**
- * Lift any `DomainError` into the GraphQL `BookingError` arm. The
- * `_tag` / `code` / `severity` carry through unchanged so the client
- * can branch on the precise failure category — Validation
- * (`InvalidCatalogInput` / `MissingStaffCapability`) vs DomainRule
- * (`InsufficientCapability`) vs Infrastructure (`Storage`) — rather
- * than seeing every refusal collapse into a single tag.
- */
 const liftDomainError = (e: DomainError): BookingError => new BookingError(errorToGraphQLPayload(e))
 
-/** Refuse a missing or malformed `StaffCapability` envelope. */
 const refuseHeader = (reason: "absent" | "malformed" | "wrong_kind"): BookingError =>
   liftDomainError(new MissingStaffCapabilityError({ reason }))
 
@@ -111,89 +113,103 @@ const runCatalog = async <A>(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Result + input scaffolding                                                  */
+/* Output mutation result + input shapes                                       */
 /* -------------------------------------------------------------------------- */
 
 type MutationResultShape = { readonly id: string }
 
-const MutationResultType = builder
-  .objectRef<MutationResultShape>("CatalogMutationResult")
-  .implement({
-    description: "Identity of the catalog row written by a staff mutation.",
-    fields: (t) => ({ id: t.exposeString("id") }),
-  })
-
-const SkillListInput = builder.inputType("SkillListInput", {
-  fields: (t) => ({ values: t.stringList({ required: true }) }),
+const catalogMutationResultType = new GraphQLObjectType({
+  name: "CatalogMutationResult",
+  description: "Identity of the catalog row written by a staff mutation.",
+  fields: () => ({ id: { type: GraphQLString } }),
 })
 
-const ResourceTypeListInput = builder.inputType("ResourceTypeListInput", {
-  fields: (t) => ({ values: t.stringList({ required: true }) }),
-})
-
-const OpenWindowInput = builder.inputType("OpenWindowInput", {
-  fields: (t) => ({
-    start: t.string({ required: true }),
-    end: t.string({ required: true }),
+const skillListInput = new GraphQLInputObjectType({
+  name: "SkillListInput",
+  fields: () => ({
+    values: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) },
   }),
 })
 
-const ServiceInput = builder.inputType("ServiceInput", {
-  fields: (t) => ({
-    id: t.string({ required: false }),
-    name: t.string({ required: true }),
-    description: t.string({ required: true }),
-    durationMinutes: t.int({ required: true }),
-    bufferBeforeMinutes: t.int({ required: true }),
-    bufferAfterMinutes: t.int({ required: true }),
-    holdingDays: t.int({ required: true }),
-    requiredSkills: t.field({ type: SkillListInput, required: true }),
-    requiredResourceTypes: t.field({ type: ResourceTypeListInput, required: true }),
-    enabled: t.boolean({ required: true }),
+const resourceTypeListInput = new GraphQLInputObjectType({
+  name: "ResourceTypeListInput",
+  fields: () => ({
+    values: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) },
   }),
 })
 
-const ProviderInput = builder.inputType("ProviderInput", {
-  fields: (t) => ({
-    id: t.string({ required: false }),
-    name: t.string({ required: true }),
-    skills: t.field({ type: SkillListInput, required: true }),
-    enabled: t.boolean({ required: true }),
+const openWindowInput = new GraphQLInputObjectType({
+  name: "OpenWindowInput",
+  fields: () => ({
+    start: { type: new GraphQLNonNull(GraphQLString) },
+    end: { type: new GraphQLNonNull(GraphQLString) },
   }),
 })
 
-const ResourceInput = builder.inputType("ResourceInput", {
-  fields: (t) => ({
-    id: t.string({ required: false }),
-    name: t.string({ required: true }),
-    type: t.string({ required: true }),
-    enabled: t.boolean({ required: true }),
+const serviceInput = new GraphQLInputObjectType({
+  name: "ServiceInput",
+  fields: () => ({
+    id: { type: GraphQLString },
+    name: { type: new GraphQLNonNull(GraphQLString) },
+    description: { type: new GraphQLNonNull(GraphQLString) },
+    durationMinutes: { type: new GraphQLNonNull(GraphQLInt) },
+    bufferBeforeMinutes: { type: new GraphQLNonNull(GraphQLInt) },
+    bufferAfterMinutes: { type: new GraphQLNonNull(GraphQLInt) },
+    holdingDays: { type: new GraphQLNonNull(GraphQLInt) },
+    requiredSkills: { type: new GraphQLNonNull(skillListInput) },
+    requiredResourceTypes: { type: new GraphQLNonNull(resourceTypeListInput) },
+    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
   }),
 })
 
-const BusinessHoursInput = builder.inputType("BusinessHoursInput", {
-  fields: (t) => ({
-    id: t.string({ required: false }),
-    weekday: t.int({ required: true }),
-    windows: t.field({ type: [OpenWindowInput], required: true }),
+const providerInput = new GraphQLInputObjectType({
+  name: "ProviderInput",
+  fields: () => ({
+    id: { type: GraphQLString },
+    name: { type: new GraphQLNonNull(GraphQLString) },
+    skills: { type: new GraphQLNonNull(skillListInput) },
+    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
   }),
 })
 
-const ClosureInput = builder.inputType("ClosureInput", {
-  fields: (t) => ({
-    id: t.string({ required: false }),
-    date: t.string({ required: true }),
-    reason: t.string({ required: true }),
+const resourceInput = new GraphQLInputObjectType({
+  name: "ResourceInput",
+  fields: () => ({
+    id: { type: GraphQLString },
+    name: { type: new GraphQLNonNull(GraphQLString) },
+    type: { type: new GraphQLNonNull(GraphQLString) },
+    enabled: { type: new GraphQLNonNull(GraphQLBoolean) },
   }),
 })
 
-const ProviderAbsenceInput = builder.inputType("ProviderAbsenceInput", {
-  fields: (t) => ({
-    id: t.string({ required: false }),
-    providerId: t.string({ required: true }),
-    start: t.string({ required: true }),
-    end: t.string({ required: true }),
-    reason: t.string({ required: true }),
+const businessHoursInput = new GraphQLInputObjectType({
+  name: "BusinessHoursInput",
+  fields: () => ({
+    id: { type: GraphQLString },
+    weekday: { type: new GraphQLNonNull(GraphQLInt) },
+    windows: {
+      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(openWindowInput))),
+    },
+  }),
+})
+
+const closureInput = new GraphQLInputObjectType({
+  name: "ClosureInput",
+  fields: () => ({
+    id: { type: GraphQLString },
+    date: { type: new GraphQLNonNull(GraphQLString) },
+    reason: { type: new GraphQLNonNull(GraphQLString) },
+  }),
+})
+
+const providerAbsenceInput = new GraphQLInputObjectType({
+  name: "ProviderAbsenceInput",
+  fields: () => ({
+    id: { type: GraphQLString },
+    providerId: { type: new GraphQLNonNull(GraphQLString) },
+    start: { type: new GraphQLNonNull(GraphQLString) },
+    end: { type: new GraphQLNonNull(GraphQLString) },
+    reason: { type: new GraphQLNonNull(GraphQLString) },
   }),
 })
 
@@ -208,16 +224,72 @@ const decodeOrRefuse = <E, R>(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Mutation registration                                                       */
-/* -------------------------------------------------------------------------- */
+/* Mutation field factory                                                      */
 
-builder.mutationFields((t) => ({
-  saveService: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+type SkillListInputShape = { readonly values: readonly string[] }
+type ResourceTypeListInputShape = { readonly values: readonly string[] }
+type OpenWindowInputShape = { readonly start: string; readonly end: string }
+
+type ServiceInputShape = {
+  readonly id?: string
+  readonly name: string
+  readonly description: string
+  readonly durationMinutes: number
+  readonly bufferBeforeMinutes: number
+  readonly bufferAfterMinutes: number
+  readonly holdingDays: number
+  readonly requiredSkills: SkillListInputShape
+  readonly requiredResourceTypes: ResourceTypeListInputShape
+  readonly enabled: boolean
+}
+
+type ProviderInputShape = {
+  readonly id?: string
+  readonly name: string
+  readonly skills: SkillListInputShape
+  readonly enabled: boolean
+}
+
+type ResourceInputShape = {
+  readonly id?: string
+  readonly name: string
+  readonly type: string
+  readonly enabled: boolean
+}
+
+type BusinessHoursInputShape = {
+  readonly id?: string
+  readonly weekday: number
+  readonly windows: readonly OpenWindowInputShape[]
+}
+
+type ClosureInputShape = {
+  readonly id?: string
+  readonly date: string
+  readonly reason: string
+}
+
+type ProviderAbsenceInputShape = {
+  readonly id?: string
+  readonly providerId: string
+  readonly start: string
+  readonly end: string
+  readonly reason: string
+}
+
+const idArg = { id: { type: new GraphQLNonNull(GraphQLString) } }
+
+export const staffCatalogMutationFields = (
+  registry: ErrorEnvelopeRegistry,
+): Record<string, GraphQLFieldConfig<unknown, GraphQLContext>> => ({
+  saveService: errorEnvelope({
+    verb: "SaveService",
+    inner: catalogMutationResultType,
+    args: { input: { type: new GraphQLNonNull(serviceInput) } },
     description: "Upsert a Service. Requires StaffCapability with `manage_catalog`.",
-    args: { input: t.arg({ type: ServiceInput, required: true }) },
-    resolve: async (_root, { input }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { input } = rawArgs as { readonly input: ServiceInputShape }
       requireStaffScope(ctx.request, "manage_catalog")
       const id = input.id ?? newServiceId()
       const entity = decodeOrRefuse("service", ServiceSchema, {
@@ -237,12 +309,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  deleteService: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  deleteService: errorEnvelope({
+    verb: "DeleteService",
+    inner: catalogMutationResultType,
+    args: idArg,
     description: "Delete a Service by id. Requires StaffCapability with `manage_catalog`.",
-    args: { id: t.arg.string({ required: true }) },
-    resolve: async (_root, { id }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { id } = rawArgs as { readonly id: string }
       requireStaffScope(ctx.request, "manage_catalog")
       const decoded = decodeOrRefuse("service", ServiceSchema.fields.id, id)
       await runCatalog(ctx.env, (cat) => cat.services.delete(decoded))
@@ -250,12 +324,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  saveProvider: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  saveProvider: errorEnvelope({
+    verb: "SaveProvider",
+    inner: catalogMutationResultType,
+    args: { input: { type: new GraphQLNonNull(providerInput) } },
     description: "Upsert a Provider. Requires StaffCapability with `manage_catalog`.",
-    args: { input: t.arg({ type: ProviderInput, required: true }) },
-    resolve: async (_root, { input }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { input } = rawArgs as { readonly input: ProviderInputShape }
       requireStaffScope(ctx.request, "manage_catalog")
       const id = input.id ?? newProviderId()
       const entity = decodeOrRefuse("provider", ProviderSchema, {
@@ -269,12 +345,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  deleteProvider: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  deleteProvider: errorEnvelope({
+    verb: "DeleteProvider",
+    inner: catalogMutationResultType,
+    args: idArg,
     description: "Delete a Provider by id. Requires StaffCapability with `manage_catalog`.",
-    args: { id: t.arg.string({ required: true }) },
-    resolve: async (_root, { id }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { id } = rawArgs as { readonly id: string }
       requireStaffScope(ctx.request, "manage_catalog")
       const decoded = decodeOrRefuse("provider", ProviderSchema.fields.id, id)
       await runCatalog(ctx.env, (cat) => cat.providers.delete(decoded))
@@ -282,12 +360,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  saveResource: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  saveResource: errorEnvelope({
+    verb: "SaveResource",
+    inner: catalogMutationResultType,
+    args: { input: { type: new GraphQLNonNull(resourceInput) } },
     description: "Upsert a Resource. Requires StaffCapability with `manage_catalog`.",
-    args: { input: t.arg({ type: ResourceInput, required: true }) },
-    resolve: async (_root, { input }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { input } = rawArgs as { readonly input: ResourceInputShape }
       requireStaffScope(ctx.request, "manage_catalog")
       const id = input.id ?? newResourceId()
       const entity = decodeOrRefuse("resource", ResourceSchema, {
@@ -301,12 +381,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  deleteResource: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  deleteResource: errorEnvelope({
+    verb: "DeleteResource",
+    inner: catalogMutationResultType,
+    args: idArg,
     description: "Delete a Resource by id. Requires StaffCapability with `manage_catalog`.",
-    args: { id: t.arg.string({ required: true }) },
-    resolve: async (_root, { id }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { id } = rawArgs as { readonly id: string }
       requireStaffScope(ctx.request, "manage_catalog")
       const decoded = decodeOrRefuse("resource", ResourceSchema.fields.id, id)
       await runCatalog(ctx.env, (cat) => cat.resources.delete(decoded))
@@ -314,12 +396,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  saveBusinessHours: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  saveBusinessHours: errorEnvelope({
+    verb: "SaveBusinessHours",
+    inner: catalogMutationResultType,
+    args: { input: { type: new GraphQLNonNull(businessHoursInput) } },
     description: "Upsert a BusinessHours row. Requires StaffCapability with `manage_catalog`.",
-    args: { input: t.arg({ type: BusinessHoursInput, required: true }) },
-    resolve: async (_root, { input }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { input } = rawArgs as { readonly input: BusinessHoursInputShape }
       requireStaffScope(ctx.request, "manage_catalog")
       const id = input.id ?? newBusinessHoursId()
       const entity = decodeOrRefuse("businessHours", BusinessHoursSchema, {
@@ -332,13 +416,15 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  deleteBusinessHours: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  deleteBusinessHours: errorEnvelope({
+    verb: "DeleteBusinessHours",
+    inner: catalogMutationResultType,
+    args: idArg,
     description:
       "Delete a BusinessHours row by id. Requires StaffCapability with `manage_catalog`.",
-    args: { id: t.arg.string({ required: true }) },
-    resolve: async (_root, { id }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { id } = rawArgs as { readonly id: string }
       requireStaffScope(ctx.request, "manage_catalog")
       const decoded = decodeOrRefuse("businessHours", BusinessHoursSchema.fields.id, id)
       await runCatalog(ctx.env, (cat) => cat.businessHours.delete(decoded))
@@ -346,12 +432,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  saveClosure: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  saveClosure: errorEnvelope({
+    verb: "SaveClosure",
+    inner: catalogMutationResultType,
+    args: { input: { type: new GraphQLNonNull(closureInput) } },
     description: "Upsert a Closure. Requires StaffCapability with `manage_catalog`.",
-    args: { input: t.arg({ type: ClosureInput, required: true }) },
-    resolve: async (_root, { input }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { input } = rawArgs as { readonly input: ClosureInputShape }
       requireStaffScope(ctx.request, "manage_catalog")
       const id = input.id ?? newClosureId()
       const entity = decodeOrRefuse("closure", ClosureSchema, {
@@ -364,12 +452,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  deleteClosure: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  deleteClosure: errorEnvelope({
+    verb: "DeleteClosure",
+    inner: catalogMutationResultType,
+    args: idArg,
     description: "Delete a Closure by id. Requires StaffCapability with `manage_catalog`.",
-    args: { id: t.arg.string({ required: true }) },
-    resolve: async (_root, { id }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { id } = rawArgs as { readonly id: string }
       requireStaffScope(ctx.request, "manage_catalog")
       const decoded = decodeOrRefuse("closure", ClosureSchema.fields.id, id)
       await runCatalog(ctx.env, (cat) => cat.closures.delete(decoded))
@@ -377,12 +467,14 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  saveProviderAbsence: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  saveProviderAbsence: errorEnvelope({
+    verb: "SaveProviderAbsence",
+    inner: catalogMutationResultType,
+    args: { input: { type: new GraphQLNonNull(providerAbsenceInput) } },
     description: "Upsert a ProviderAbsence. Requires StaffCapability with `manage_catalog`.",
-    args: { input: t.arg({ type: ProviderAbsenceInput, required: true }) },
-    resolve: async (_root, { input }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { input } = rawArgs as { readonly input: ProviderAbsenceInputShape }
       requireStaffScope(ctx.request, "manage_catalog")
       const id = input.id ?? newProviderAbsenceId()
       const entity = decodeOrRefuse("providerAbsence", ProviderAbsenceSchema, {
@@ -397,16 +489,18 @@ builder.mutationFields((t) => ({
     },
   }),
 
-  deleteProviderAbsence: t.field({
-    type: MutationResultType,
-    errors: { types: [BookingError] },
+  deleteProviderAbsence: errorEnvelope({
+    verb: "DeleteProviderAbsence",
+    inner: catalogMutationResultType,
+    args: idArg,
     description: "Delete a ProviderAbsence by id. Requires StaffCapability with `manage_catalog`.",
-    args: { id: t.arg.string({ required: true }) },
-    resolve: async (_root, { id }, ctx) => {
+    registry,
+    body: async (rawArgs, ctx): Promise<MutationResultShape> => {
+      const { id } = rawArgs as { readonly id: string }
       requireStaffScope(ctx.request, "manage_catalog")
       const decoded = decodeOrRefuse("providerAbsence", ProviderAbsenceSchema.fields.id, id)
       await runCatalog(ctx.env, (cat) => cat.providerAbsences.delete(decoded))
       return { id }
     },
   }),
-}))
+})

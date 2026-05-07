@@ -11,9 +11,19 @@ import {
   type StorageError,
 } from "@booking/core"
 import { Effect, Schema } from "effect"
+import {
+  GraphQLBoolean,
+  type GraphQLFieldConfig,
+  GraphQLInt,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLObjectType,
+  GraphQLString,
+} from "graphql"
 import { makeD1ServiceCatalog } from "../../adapters/D1ServiceCatalogLive.js"
-import { builder, type GraphQLContext } from "../builder.js"
+import type { GraphQLContext } from "../context.js"
 import { BookingError } from "../errors.js"
+import { instantScalar, plainDateScalar } from "../resolver.js"
 
 /**
  * Read-only GraphQL surface for the service catalog. The six entities
@@ -24,8 +34,12 @@ import { BookingError } from "../errors.js"
  * sequence through its `*FromRow` codec — `Schema.Codec.Encoded` is
  * the wire shape the GraphQL schema serialises. This keeps the
  * resolver-to-wire mapping a pure derivation: adding a column to a
- * table propagates through the row codec, the type alias, and the
- * Pothos `objectRef` shape generic without any per-resolver rewrite.
+ * table propagates through the row codec and the encoded shape, while
+ * the GraphQL output type stays a hand-rolled `GraphQLObjectType` (the
+ * Schema → GraphQL functor at `../derive.ts` does not yet detect
+ * `Schema.Int` annotations or custom-scalar branding, so the byte-
+ * equal SDL constraint forces a hand-rolled construction here; the
+ * functor extension is recorded as a deferred ADR-0041 follow-up).
  */
 
 const runCatalog = async <A>(
@@ -56,171 +70,157 @@ const runCatalog = async <A>(
   })
 }
 
-/* ----- Output object types — derived from `Schema.Codec.Encoded` of */
-/* each `*FromRow` codec, then projected through `WireShape` to drop  */
-/* brands and `readonly` qualifiers (Pothos's `exposeStringList` /    */
-/* `exposeString` constrain field names to mutable, unbranded shapes  */
-/* — brands are TypeScript-only, never survive the GraphQL wire).     */
+/* -------------------------------------------------------------------------- */
+/* Output GraphQL types — hand-rolled to match the gold SDL anchor at         */
+/* `apps/default/schema.graphql` (descriptions, field types, custom-scalar    */
+/* mapping). All output fields default to nullable, matching Pothos's         */
+/* baseline; list-element non-null wrap (`[X!]`) carries through unchanged.   */
 
-type WireShape<T> = T extends string
-  ? string
-  : T extends number
-    ? number
-    : T extends boolean
-      ? boolean
-      : T extends readonly (infer U)[]
-        ? WireShape<U>[]
-        : T extends object
-          ? { -readonly [K in keyof T]: WireShape<T[K]> }
-          : T
-
-type ServiceShape = WireShape<Schema.Codec.Encoded<typeof ServiceFromRow>>
-type ProviderShape = WireShape<Schema.Codec.Encoded<typeof ProviderFromRow>>
-type ResourceShape = WireShape<Schema.Codec.Encoded<typeof ResourceFromRow>>
-type BusinessHoursShape = WireShape<Schema.Codec.Encoded<typeof BusinessHoursFromRow>>
-type ClosureShape = WireShape<Schema.Codec.Encoded<typeof ClosureFromRow>>
-type ProviderAbsenceShape = WireShape<Schema.Codec.Encoded<typeof ProviderAbsenceFromRow>>
-type OpenWindowShape = BusinessHoursShape["windows"][number]
-
-const wire = <T>(value: T): WireShape<T> => value as WireShape<T>
-
-const encodeService = (s: Schema.Schema.Type<typeof ServiceFromRow>): ServiceShape =>
-  wire(Schema.encodeSync(ServiceFromRow)(s))
-const encodeProvider = (p: Schema.Schema.Type<typeof ProviderFromRow>): ProviderShape =>
-  wire(Schema.encodeSync(ProviderFromRow)(p))
-const encodeResource = (r: Schema.Schema.Type<typeof ResourceFromRow>): ResourceShape =>
-  wire(Schema.encodeSync(ResourceFromRow)(r))
-const encodeBusinessHours = (
-  b: Schema.Schema.Type<typeof BusinessHoursFromRow>,
-): BusinessHoursShape => wire(Schema.encodeSync(BusinessHoursFromRow)(b))
-const encodeClosure = (c: Schema.Schema.Type<typeof ClosureFromRow>): ClosureShape =>
-  wire(Schema.encodeSync(ClosureFromRow)(c))
-const encodeProviderAbsence = (
-  a: Schema.Schema.Type<typeof ProviderAbsenceFromRow>,
-): ProviderAbsenceShape => wire(Schema.encodeSync(ProviderAbsenceFromRow)(a))
-
-const ServiceType = builder.objectRef<ServiceShape>("Service").implement({
+const serviceType = new GraphQLObjectType({
+  name: "Service",
   description: "Catalog entry for a unit of work the business offers.",
-  fields: (t) => ({
-    id: t.exposeString("id"),
-    name: t.exposeString("name"),
-    description: t.exposeString("description"),
-    durationMinutes: t.exposeInt("durationMinutes"),
-    bufferBeforeMinutes: t.exposeInt("bufferBeforeMinutes"),
-    bufferAfterMinutes: t.exposeInt("bufferAfterMinutes"),
-    holdingDays: t.exposeInt("holdingDays"),
-    requiredSkills: t.exposeStringList("requiredSkills"),
-    requiredResourceTypes: t.exposeStringList("requiredResourceTypes"),
-    enabled: t.exposeBoolean("enabled"),
+  fields: () => ({
+    id: { type: GraphQLString },
+    name: { type: GraphQLString },
+    description: { type: GraphQLString },
+    durationMinutes: { type: GraphQLInt },
+    bufferBeforeMinutes: { type: GraphQLInt },
+    bufferAfterMinutes: { type: GraphQLInt },
+    holdingDays: { type: GraphQLInt },
+    requiredSkills: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
+    requiredResourceTypes: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
+    enabled: { type: GraphQLBoolean },
   }),
 })
 
-const ProviderType = builder.objectRef<ProviderShape>("Provider").implement({
+const providerType = new GraphQLObjectType({
+  name: "Provider",
   description: "A person who performs the work for a Service.",
-  fields: (t) => ({
-    id: t.exposeString("id"),
-    name: t.exposeString("name"),
-    skills: t.exposeStringList("skills"),
-    enabled: t.exposeBoolean("enabled"),
+  fields: () => ({
+    id: { type: GraphQLString },
+    name: { type: GraphQLString },
+    skills: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
+    enabled: { type: GraphQLBoolean },
   }),
 })
 
-const ResourceType = builder.objectRef<ResourceShape>("Resource").implement({
+const resourceType = new GraphQLObjectType({
+  name: "Resource",
   description: "A single indivisible unit of physical capacity.",
-  fields: (t) => ({
-    id: t.exposeString("id"),
-    name: t.exposeString("name"),
-    type: t.exposeString("type"),
-    enabled: t.exposeBoolean("enabled"),
+  fields: () => ({
+    id: { type: GraphQLString },
+    name: { type: GraphQLString },
+    type: { type: GraphQLString },
+    enabled: { type: GraphQLBoolean },
   }),
 })
 
-const OpenWindowType = builder.objectRef<OpenWindowShape>("OpenWindow").implement({
+const openWindowType = new GraphQLObjectType({
+  name: "OpenWindow",
   description: "Half-open `[start, end)` time interval within a single civil day.",
-  fields: (t) => ({
-    start: t.exposeString("start"),
-    end: t.exposeString("end"),
+  fields: () => ({
+    start: { type: GraphQLString },
+    end: { type: GraphQLString },
   }),
 })
 
-const BusinessHoursType = builder.objectRef<BusinessHoursShape>("BusinessHours").implement({
+const businessHoursType = new GraphQLObjectType({
+  name: "BusinessHours",
   description: "Open intervals for one ISO weekday (1=Mon..7=Sun).",
-  fields: (t) => ({
-    id: t.exposeString("id"),
-    weekday: t.exposeInt("weekday"),
-    windows: t.field({ type: [OpenWindowType], resolve: (b) => b.windows }),
+  fields: () => ({
+    id: { type: GraphQLString },
+    weekday: { type: GraphQLInt },
+    windows: { type: new GraphQLList(new GraphQLNonNull(openWindowType)) },
   }),
 })
 
-const ClosureType = builder.objectRef<ClosureShape>("Closure").implement({
+const closureType = new GraphQLObjectType({
+  name: "Closure",
   description: "Calendar-date business closure (overrides the weekday template).",
-  fields: (t) => ({
-    id: t.exposeString("id"),
-    date: t.field({ type: "PlainDate", resolve: (c) => c.date }),
-    reason: t.exposeString("reason"),
+  fields: () => ({
+    id: { type: GraphQLString },
+    date: { type: plainDateScalar },
+    reason: { type: GraphQLString },
   }),
 })
 
-const ProviderAbsenceType = builder.objectRef<ProviderAbsenceShape>("ProviderAbsence").implement({
+const providerAbsenceType = new GraphQLObjectType({
+  name: "ProviderAbsence",
   description: "Per-provider unavailability window (vacation, training, sick leave).",
-  fields: (t) => ({
-    id: t.exposeString("id"),
-    providerId: t.exposeString("providerId"),
-    start: t.field({ type: "Instant", resolve: (a) => a.start }),
-    end: t.field({ type: "Instant", resolve: (a) => a.end }),
-    reason: t.exposeString("reason"),
+  fields: () => ({
+    id: { type: GraphQLString },
+    providerId: { type: GraphQLString },
+    start: { type: instantScalar },
+    end: { type: instantScalar },
+    reason: { type: GraphQLString },
   }),
 })
 
-builder.queryFields((t) => ({
-  services: t.field({
-    type: [ServiceType],
+/* -------------------------------------------------------------------------- */
+/* Query field factory                                                         */
+
+export const catalogQueryFields = (): Record<
+  string,
+  GraphQLFieldConfig<unknown, GraphQLContext>
+> => ({
+  services: {
+    type: new GraphQLList(new GraphQLNonNull(serviceType)),
     description: "Every catalog Service, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.services.list(), (rows) => rows.map((s) => encodeService(s))),
+        Effect.map(cat.services.list(), (rows) =>
+          rows.map((r) => Schema.encodeSync(ServiceFromRow)(r)),
+        ),
       ),
-  }),
-  providers: t.field({
-    type: [ProviderType],
+  },
+  providers: {
+    type: new GraphQLList(new GraphQLNonNull(providerType)),
     description: "Every catalog Provider, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.providers.list(), (rows) => rows.map((p) => encodeProvider(p))),
+        Effect.map(cat.providers.list(), (rows) =>
+          rows.map((r) => Schema.encodeSync(ProviderFromRow)(r)),
+        ),
       ),
-  }),
-  resources: t.field({
-    type: [ResourceType],
+  },
+  resources: {
+    type: new GraphQLList(new GraphQLNonNull(resourceType)),
     description: "Every catalog Resource, including disabled ones.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.resources.list(), (rows) => rows.map((r) => encodeResource(r))),
+        Effect.map(cat.resources.list(), (rows) =>
+          rows.map((r) => Schema.encodeSync(ResourceFromRow)(r)),
+        ),
       ),
-  }),
-  businessHours: t.field({
-    type: [BusinessHoursType],
+  },
+  businessHours: {
+    type: new GraphQLList(new GraphQLNonNull(businessHoursType)),
     description: "Weekly opening template, one row per ISO weekday.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.businessHours.list(), (rows) => rows.map((b) => encodeBusinessHours(b))),
+        Effect.map(cat.businessHours.list(), (rows) =>
+          rows.map((r) => Schema.encodeSync(BusinessHoursFromRow)(r)),
+        ),
       ),
-  }),
-  closures: t.field({
-    type: [ClosureType],
+  },
+  closures: {
+    type: new GraphQLList(new GraphQLNonNull(closureType)),
     description: "Calendar-date closures (public holidays, planned maintenance).",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
-        Effect.map(cat.closures.list(), (rows) => rows.map((c) => encodeClosure(c))),
+        Effect.map(cat.closures.list(), (rows) =>
+          rows.map((r) => Schema.encodeSync(ClosureFromRow)(r)),
+        ),
       ),
-  }),
-  providerAbsences: t.field({
-    type: [ProviderAbsenceType],
+  },
+  providerAbsences: {
+    type: new GraphQLList(new GraphQLNonNull(providerAbsenceType)),
     description: "Per-provider unavailability windows.",
     resolve: (_root, _args, ctx) =>
       runCatalog(ctx.env, (cat) =>
         Effect.map(cat.providerAbsences.list(), (rows) =>
-          rows.map((a) => encodeProviderAbsence(a)),
+          rows.map((r) => Schema.encodeSync(ProviderAbsenceFromRow)(r)),
         ),
       ),
-  }),
-}))
+  },
+})

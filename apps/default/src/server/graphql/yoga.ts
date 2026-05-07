@@ -2,7 +2,7 @@ import { trace } from "@opentelemetry/api"
 import { GraphQLError } from "graphql"
 import { createYoga, type Plugin } from "graphql-yoga"
 import type { DaySchedule } from "../durableObjects/DaySchedule.js"
-import type { GraphQLContext } from "./builder.js"
+import type { GraphQLContext } from "./context.js"
 import { schema } from "./schema.js"
 
 type Env = {

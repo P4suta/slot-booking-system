@@ -11,7 +11,7 @@ import {
   GraphQLString,
   GraphQLUnionType,
 } from "graphql"
-import type { GraphQLContext } from "./builder.js"
+import type { GraphQLContext } from "./context.js"
 import { BookingError } from "./errors.js"
 
 /**

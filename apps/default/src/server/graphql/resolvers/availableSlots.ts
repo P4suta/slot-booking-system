@@ -11,11 +11,19 @@ import {
 } from "@booking/core"
 import { Temporal } from "@js-temporal/polyfill"
 import { Effect } from "effect"
+import {
+  type GraphQLFieldConfig,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLObjectType,
+  GraphQLString,
+} from "graphql"
 import { makeD1ServiceCatalog } from "../../adapters/D1ServiceCatalogLive.js"
 import { businessTimeZoneFromEnv, readWorldSnapshot } from "../../adapters/D1WorldSnapshot.js"
 import { signSlot } from "../../auth/slotToken.js"
-import { builder, type GraphQLContext } from "../builder.js"
+import type { GraphQLContext } from "../context.js"
 import { BookingError } from "../errors.js"
+import { instantScalar, plainDateScalar } from "../resolver.js"
 
 /**
  * `availableSlots` query — Phase 0.9 wires
@@ -51,7 +59,8 @@ type AvailableSlotShape = {
   readonly token: string
 }
 
-const AvailableSlotType = builder.objectRef<AvailableSlotShape>("AvailableSlot").implement({
+const availableSlotType = new GraphQLObjectType({
+  name: "AvailableSlot",
   description:
     "A bookable time interval with a tentative provider/resources assignment. The " +
     "`token` field is an HMAC-signed envelope over the slot fields; clients MUST " +
@@ -59,13 +68,13 @@ const AvailableSlotType = builder.objectRef<AvailableSlotShape>("AvailableSlot")
     "resolver verifies the token before reaching the DO RPC, so a tampered slot " +
     "cannot bypass the world-consistency check that justifies the brand on " +
     "`AvailableSlot`.",
-  fields: (t) => ({
-    serviceId: t.exposeString("serviceId"),
-    start: t.field({ type: "Instant", resolve: (s) => s.start }),
-    end: t.field({ type: "Instant", resolve: (s) => s.end }),
-    providerId: t.exposeString("providerId"),
-    resourceIds: t.exposeStringList("resourceIds"),
-    token: t.exposeString("token"),
+  fields: () => ({
+    serviceId: { type: GraphQLString },
+    start: { type: instantScalar },
+    end: { type: instantScalar },
+    providerId: { type: GraphQLString },
+    resourceIds: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
+    token: { type: GraphQLString },
   }),
 })
 
@@ -135,24 +144,28 @@ const slotsBody = (
     },
   )
 
-builder.queryFields((t) => ({
-  availableSlots: t.field({
-    type: [AvailableSlotType],
+export const availableSlotsQueryFields = (): Record<
+  string,
+  GraphQLFieldConfig<unknown, GraphQLContext>
+> => ({
+  availableSlots: {
+    type: new GraphQLList(new GraphQLNonNull(availableSlotType)),
     description:
       "Bookable slots for a service on a given date. Pure result of " +
       "`computeAvailableSlots(world, query)` against the catalog snapshot.",
     args: {
-      serviceId: t.arg.string({ required: true }),
-      date: t.arg({ type: "PlainDate", required: true }),
+      serviceId: { type: new GraphQLNonNull(GraphQLString) },
+      date: { type: new GraphQLNonNull(plainDateScalar) },
     },
     resolve: async (_root, args, ctx) => {
+      const { serviceId, date } = args as { readonly serviceId: string; readonly date: string }
       const tz = businessTimeZoneFromEnv(ctx.env.DEPLOYMENT_TIMEZONE)
       if (tz._tag === "Failure") {
         throw new BookingError(errorToGraphQLPayload(tz.failure))
       }
       return runQuery(ctx.env, (cat) =>
-        slotsBody(cat, ctx.env.DB, args.serviceId, args.date, tz.success, ctx.env.SLOT_HMAC_SECRET),
+        slotsBody(cat, ctx.env.DB, serviceId, date, tz.success, ctx.env.SLOT_HMAC_SECRET),
       )
     },
-  }),
-}))
+  },
+})
