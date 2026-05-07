@@ -7,11 +7,12 @@ import type { AvailableSlot } from "../../domain/slot/computeAvailableSlots.js"
 import type { FreeText } from "../../domain/value-objects/FreeText.js"
 import type { NameKana } from "../../domain/value-objects/NameKana.js"
 import type { PhoneLast4 } from "../../domain/value-objects/PhoneLast4.js"
-import { Clock } from "../ports/Clock.js"
-import { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
-import { IdGenerator } from "../ports/IdGenerator.js"
-import { Logger } from "../ports/Logger.js"
+import type { Clock } from "../ports/Clock.js"
+import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
+import type { IdGenerator } from "../ports/IdGenerator.js"
+import type { Logger } from "../ports/Logger.js"
 import { infoPayload } from "./_log.js"
+import { useCaseEnv } from "./_withUseCaseEnv.js"
 
 /**
  * Place a 5-minute hold on a previously-listed available slot.
@@ -57,10 +58,7 @@ export const HoldSlot = (
   Clock | IdGenerator | BookingEventSourcedRepository | Logger
 > =>
   Effect.gen(function* () {
-    const clock = yield* Clock
-    const idgen = yield* IdGenerator
-    const repo = yield* BookingEventSourcedRepository
-    const logger = yield* Logger
+    const { clock, idgen, repo, logger } = yield* useCaseEnv
 
     const now = yield* clock.nowInstant
     const expiresAt = now.add({ milliseconds: Duration.toMillis(HOLD_TTL) })

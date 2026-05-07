@@ -6,13 +6,14 @@ import type { BookingEvent } from "../../domain/events/BookingEvent.js"
 import type { AvailableSlot } from "../../domain/slot/computeAvailableSlots.js"
 import type { BookingCode } from "../../domain/value-objects/BookingCode.js"
 import type { PhoneLast4 } from "../../domain/value-objects/PhoneLast4.js"
-import { Clock } from "../ports/Clock.js"
+import type { Clock } from "../ports/Clock.js"
 import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../ports/IdGenerator.js"
-import { Logger } from "../ports/Logger.js"
+import type { Logger } from "../ports/Logger.js"
 import { applyAndPersist } from "./_applyAndPersist.js"
 import { authenticateCustomer } from "./_authenticate.js"
 import { infoPayload } from "./_log.js"
+import { useCaseEnv } from "./_withUseCaseEnv.js"
 
 /**
  * Move a `Confirmed` booking to a different `AvailableSlot`. Same
@@ -44,8 +45,7 @@ export const RescheduleBooking = (
   Clock | IdGenerator | BookingEventSourcedRepository | Logger
 > =>
   Effect.gen(function* () {
-    const clock = yield* Clock
-    const logger = yield* Logger
+    const { clock, logger } = yield* useCaseEnv
 
     const loaded = yield* authenticateCustomer(input.code, input.phoneLast4)
     const at = yield* clock.nowInstant

@@ -4,12 +4,13 @@ import type { ConcurrencyError, DomainError, StorageError } from "../../domain/e
 import type { TraceId } from "../../domain/errors/TraceId.js"
 import type { BookingEvent } from "../../domain/events/BookingEvent.js"
 import type { BookingId } from "../../domain/types/EntityId.js"
-import { Clock } from "../ports/Clock.js"
-import { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
+import type { Clock } from "../ports/Clock.js"
+import type { BookingEventSourcedRepository } from "../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../ports/IdGenerator.js"
-import { Logger } from "../ports/Logger.js"
+import type { Logger } from "../ports/Logger.js"
 import { applyAndPersist } from "./_applyAndPersist.js"
 import { infoPayload } from "./_log.js"
+import { useCaseEnv } from "./_withUseCaseEnv.js"
 
 /**
  * System-driven expiry of a `Held` booking. Issued by the
@@ -40,9 +41,7 @@ export const ExpireBooking = (
   Clock | IdGenerator | BookingEventSourcedRepository | Logger
 > =>
   Effect.gen(function* () {
-    const clock = yield* Clock
-    const repo = yield* BookingEventSourcedRepository
-    const logger = yield* Logger
+    const { clock, repo, logger } = yield* useCaseEnv
 
     const loaded = yield* repo.load(input.bookingId)
     const at = yield* clock.nowInstant
