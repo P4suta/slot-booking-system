@@ -3,11 +3,12 @@ import type { Brand } from "effect"
 import { type Booking, isActive } from "../booking/Booking.js"
 import type { BusinessHours } from "../entities/BusinessHours.js"
 import type { Closure } from "../entities/Closure.js"
-import { type Provider, providerSatisfies } from "../entities/Provider.js"
+import { type Provider, providerIdentifiable, providerSatisfies } from "../entities/Provider.js"
 import type { ProviderAbsence } from "../entities/ProviderAbsence.js"
-import type { Resource } from "../entities/Resource.js"
+import { type Resource, resourceIdentifiable } from "../entities/Resource.js"
 import type { Service } from "../entities/Service.js"
 import type { Weekday } from "../entities/Weekday.js"
+import * as Identifiable from "../typeclass/Identifiable.js"
 import type { ProviderId, ResourceId, ServiceId } from "../types/EntityId.js"
 import { MINUTES_PER_DAY } from "../types/Temporal.js"
 import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
@@ -74,7 +75,8 @@ export type AvailableSlot = AvailableSlotShape & Brand.Brand<"AvailableSlot">
 export const mintAvailableSlot = (shape: AvailableSlotShape): AvailableSlot =>
   shape as AvailableSlot
 
-const idAsc = <T extends { readonly id: string }>(a: T, b: T): number => a.id.localeCompare(b.id)
+const providerIdAsc = Identifiable.toOrder(providerIdentifiable)
+const resourceIdAsc = Identifiable.toOrder(resourceIdentifiable)
 
 /** Minute-of-day in a target day for an Instant. Negative if before, ≥1440 if after. */
 const minuteOfTargetDay = (instant: Temporal.Instant, dayStart: Temporal.ZonedDateTime): number => {
@@ -149,7 +151,7 @@ const computeProviderAvailabilities = (
 ): readonly ProviderAvailability[] =>
   providers
     .filter((p) => p.enabled && providerSatisfies(p, service.requiredSkills))
-    .toSorted(idAsc)
+    .toSorted(providerIdAsc)
     .map((p) => {
       const fromAbsences = absences
         .filter((a) => a.providerId === p.id)
@@ -216,7 +218,7 @@ const computeResourceAvailabilities = (
 ): readonly ResourceAvailability[] =>
   resources
     .filter((r) => r.enabled && service.requiredResourceTypes.has(r.type))
-    .toSorted(idAsc)
+    .toSorted(resourceIdAsc)
     .map((r) => {
       const relevant = bookings.filter(({ booking }) => booking.resourceIds.includes(r.id))
       const impacts = relevant.map((rb) => resourceImpact(rb, date, dayStart, timeZone))

@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import * as Identifiable from "../typeclass/Identifiable.js"
 import { ProviderIdSchema } from "../types/EntityId.js"
 import type { Skill } from "../value-objects/Skill.js"
 import { SkillSchema } from "../value-objects/Skill.js"
@@ -10,6 +11,10 @@ export const ProviderSchema = Schema.Struct({
   enabled: Schema.Boolean,
 })
 export type Provider = Schema.Schema.Type<typeof ProviderSchema>
+
+export const providerIdentifiable: Identifiable.Identifiable<Provider> = Identifiable.make(
+  (p) => p.id,
+)
 
 /** True iff the provider holds every skill the service requires. */
 export const providerSatisfies = (p: Provider, required: ReadonlySet<Skill>): boolean => {

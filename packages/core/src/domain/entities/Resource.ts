@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import * as Identifiable from "../typeclass/Identifiable.js"
 import { ResourceIdSchema } from "../types/EntityId.js"
 import { ResourceTypeSchema } from "../value-objects/ResourceType.js"
 
@@ -15,3 +16,7 @@ export const ResourceSchema = Schema.Struct({
   enabled: Schema.Boolean,
 })
 export type Resource = Schema.Schema.Type<typeof ResourceSchema>
+
+export const resourceIdentifiable: Identifiable.Identifiable<Resource> = Identifiable.make(
+  (r) => r.id,
+)
