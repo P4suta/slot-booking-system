@@ -50,14 +50,17 @@ GraphQL request                 ┌───────────────
 ```
 
 - **Writes**: GraphQL mutation → `env.DAY_SCHEDULE.idFromName(date)`
-  → `stub.holdSlot(input)` direct RPC method call (ADR-0030 /
-  Phase 0.6) → use case (`HoldSlot` / `ConfirmBooking` /
-  `CancelBooking` / `RescheduleBooking`). The RPC returns
-  `Either<EncodedDomainError, EncodedResult>` so the discriminated
-  union survives `structuredClone` across the actor boundary.
-- **Reads (mutation acks)**: the resolver narrows the `Either`,
-  returns the encoded success, and maps `Either.Left` to the typed
-  GraphQL error union.
+  → `stub.dispatch(envelope)` typed RPC over `effect/unstable/rpc`
+  (ADR-0037, plus the cross-realm structured-clone sanitiser of
+  ADR-0044) → DO-side use case (`HoldSlot` / `ConfirmBooking` /
+  `CancelBooking` / `RescheduleBooking`). The dispatch envelope is
+  passed through `sanitiseForStructuredClone` to normalise the two
+  workerd-incompatible shapes (BigInt request id, null-prototype
+  headers); response replies travel through the inverse on the
+  client side.
+- **Reads (mutation acks)**: the resolver consumes the typed RPC
+  result `Effect<BookingResult, DomainError>` and the
+  `errorEnvelope` combinator narrows it to the GraphQL error union.
 - **Reads (availability)**: GraphQL query → D1 directly via
   `D1WorldSnapshot` reader (Phase 0.9).
 - **Outbox**: every `EventSourcedRepository.save()` enqueues one
@@ -267,14 +270,22 @@ curl http://localhost:8787/__scheduled?cron=0+4+*+*+*
 
 ## Schema drift
 
-**Symptoms**: Pothos GraphQL schema differs between deployments, or
+**Symptoms**: GraphQL schema differs between deployments, or
 introspection returns fields the resolvers don't implement.
 
 **Diagnosis**:
 
-- The schema is built at module load via `builder.toSchema()`. If a
-  resolver file is missing from the side-effect imports in
-  `apps/default/src/server/graphql/schema.ts`, its types disappear.
+- Phase 3 (ADR-0041) replaced the Pothos builder with the
+  `derive/graphql.ts` Schema-to-GraphQL functor: every wire type is
+  *generated* from `Effect.Schema` declarations, then sorted via
+  `lexicographicSortSchema` and printed. The CI gate
+  `just schema-drift-check` re-derives, re-prints, and diffs against
+  `apps/default/schema.graphql` byte-for-byte. Any drift fails the
+  pre-push gate.
+- If the schema-drift gate fires locally, run
+  `just gen-error-docs` (the i18n / error-tag side-effect of the
+  same registry) and re-print the schema; commit both files in the
+  same PR.
 - Re-run `just typecheck` to catch missing resolver registrations.
 
 ---

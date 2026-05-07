@@ -1,10 +1,22 @@
 # GraphQL API reference
 
-The booking system speaks one GraphQL endpoint, served by Pothos +
-GraphQL Yoga inside `apps/default/src/server/graphql/`. The schema
-is the **only** wire surface — no REST, no admin endpoint. This
-document is the consumer-facing reference; the resolvers themselves
-are the source of truth.
+The booking system speaks one GraphQL endpoint, served by GraphQL Yoga
+inside `apps/default/src/server/graphql/`. The schema is **derived**
+from `Effect.Schema` via the `derive/graphql.ts` functor (ADR-0041)
+and pinned by a byte-equal SDL invariant against
+`apps/default/schema.graphql`. The schema is the **only** wire
+surface — no REST, no admin endpoint. This document is the
+consumer-facing reference; the Schema declarations + resolvers are
+the source of truth.
+
+Every mutation result is a discriminated union
+`Mutation<Verb>Success | BookingError`. `BookingError` carries the
+four downstream projections (`tag`, `code`, `i18nKey`, `message`) of
+the `errorClassRegistry` taxonomy (ADR-0017); the i18n key is
+identifier-safe (`error_<Tag>`) so the SvelteKit page renders
+directly through paraglide-js. The full tag table lives at
+[`docs/error-codes.md`](../error-codes.md), drift-gated against the
+registry.
 
 ## Endpoint
 
