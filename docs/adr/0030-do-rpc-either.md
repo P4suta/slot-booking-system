@@ -1,9 +1,13 @@
 # 0030. DurableObject RPC methods returning `Either<E, R>`
 
-- Status: accepted
+- Status: superseded by [ADR-0037](./0037-effect-rpc-do-transport.md)
 - Date: 2026-05-05
 - Deciders: Yasunobu
 - Tags: durable-object, rpc, error-handling
+
+> **Note (2026-05-08, ADR-0039):** Effect 4 migration renamed `Either` to
+> `Result`. ADR-0037 is now the active transport ADR; the wire-channel split
+> below survives but is expressed as `Result.Result<R, E>` in code.
 
 ## Context
 
