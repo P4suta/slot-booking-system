@@ -6,6 +6,7 @@ import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
 import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
 import type { DaySchedule } from "./server/durableObjects/DaySchedule.js"
 import { yoga } from "./server/graphql/yoga.js"
+import { buildOpenAPISpec } from "./server/rest/openapiSpec.js"
 
 export { DaySchedule } from "./server/durableObjects/DaySchedule.js"
 
@@ -56,9 +57,15 @@ const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === "/healthz") {
-      return new Response("ok", {
+      return new Response(JSON.stringify({ ok: true }), {
         status: 200,
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers: { "content-type": "application/json; charset=utf-8" },
+      })
+    }
+    if (url.pathname === "/api/v1/openapi.json") {
+      return new Response(JSON.stringify(buildOpenAPISpec(), null, 2), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
       })
     }
     if (url.pathname === "/graphql" || url.pathname.startsWith("/graphql?")) {

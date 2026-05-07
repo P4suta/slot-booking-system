@@ -5,5 +5,6 @@
 import "@total-typescript/ts-reset"
 
 export * from "./application/index.js"
+export * from "./derive/index.js"
 export * from "./domain/index.js"
 export * from "./infrastructure/index.js"
