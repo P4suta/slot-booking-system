@@ -1,11 +1,11 @@
-import { codeOf, type DomainError, severityOf } from "@booking/core"
+import { type DomainError, errorToGraphQLPayload } from "@booking/core"
 import { Effect, Result } from "effect"
 import { BookingError } from "./errors.js"
 
 /**
- * Phase 2.8 / BI-4 — adapter that runs an `effect/unstable/rpc` client program
- * inside a GraphQL resolver, narrowing the typed `DomainError` channel
- * onto the Pothos errors plugin's `BookingError` envelope.
+ * Phase 2.8 / BI-4 — adapter that runs an `effect/unstable/rpc` client
+ * program inside a GraphQL resolver, narrowing the typed `DomainError`
+ * channel onto the Pothos errors plugin's `BookingError` envelope.
  *
  * The transport-level error channel from `RpcClient.makeNoSerialization`
  * is `RpcClientError` (network / dispatch failures); the application
@@ -14,15 +14,12 @@ import { BookingError } from "./errors.js"
  * into a single `Effect.Effect<A, DomainError | RpcClientError>` —
  * this helper distinguishes them by the discriminator.
  *
- *   - `instanceof Error` for `DomainError` instances (every
- *     `Schema.TaggedError` subclass extends `Error`).
- *   - `RpcClientError` (`_tag === "RpcClientError"`) is recoded as a
- *     synthetic `BookingError` carrying an `E_INF_TRANSPORT` code so
- *     the resolver surface stays uniform — all errors take the same
- *     shape on the wire.
- *
- * Throwing `BookingError` is what `@pothos/plugin-errors` consumes to
- * render the typed `BookingError` arm of the GraphQL union.
+ * Both arms route through the same {@link BookingError} envelope,
+ * which carries the canonical {@link errorToGraphQLPayload} shape from
+ * core — the only place that knows how a `DomainError` projects onto a
+ * GraphQL field response. The transport synthetic stays local because
+ * it isn't a `DomainError` (no registry entry, no `_tag` discriminator
+ * inside `errorClassRegistry`).
  */
 export const runRpcOrThrow = async <A>(
   program: Effect.Effect<
@@ -34,15 +31,14 @@ export const runRpcOrThrow = async <A>(
   if (Result.isSuccess(result)) return result.success
   const err = result.failure
   if (err._tag === "RpcClientError") {
+    // Synthetic GraphQLErrorPayload — TransportError is a wire-only
+    // synthetic (no `errorClassRegistry` entry on this tag).
     throw new BookingError({
-      _tag: "TransportError",
+      __typename: "TransportError",
       code: "E_INF_TRANSPORT",
       severity: "infrastructure",
+      i18nKey: "error.TransportError" as never,
     })
   }
-  throw new BookingError({
-    _tag: err._tag,
-    code: codeOf(err),
-    severity: severityOf(err),
-  })
+  throw new BookingError(errorToGraphQLPayload(err))
 }

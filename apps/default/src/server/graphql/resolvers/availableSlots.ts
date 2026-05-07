@@ -1,14 +1,13 @@
 import {
   type BusinessTimeZone,
-  codeOf,
   computeAvailableSlots,
   type DomainError,
+  errorToGraphQLPayload,
   ServiceCatalog,
   type ServiceCatalogOps,
   type SlotCalcEnv,
   type SlotCalcQuery,
   StorageError,
-  severityOf,
 } from "@booking/core"
 import { Temporal } from "@js-temporal/polyfill"
 import { Effect } from "effect"
@@ -89,11 +88,7 @@ const runQuery = async (
     ),
   )
   if (result._tag === "Success") return result.success
-  throw new BookingError({
-    _tag: result.failure._tag,
-    code: codeOf(result.failure),
-    severity: severityOf(result.failure),
-  })
+  throw new BookingError(errorToGraphQLPayload(result.failure))
 }
 
 const slotsBody = (
@@ -153,11 +148,7 @@ builder.queryFields((t) => ({
     resolve: async (_root, args, ctx) => {
       const tz = businessTimeZoneFromEnv(ctx.env.DEPLOYMENT_TIMEZONE)
       if (tz._tag === "Failure") {
-        throw new BookingError({
-          _tag: "Storage",
-          code: "E_INF_STORAGE",
-          severity: "infrastructure",
-        })
+        throw new BookingError(errorToGraphQLPayload(tz.failure))
       }
       return runQuery(ctx.env, (cat) =>
         slotsBody(cat, ctx.env.DB, args.serviceId, args.date, tz.success, ctx.env.SLOT_HMAC_SECRET),

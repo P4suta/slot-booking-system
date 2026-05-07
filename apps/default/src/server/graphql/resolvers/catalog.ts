@@ -1,12 +1,14 @@
 import {
   BusinessHoursFromRow,
   ClosureFromRow,
+  errorToI18nKey,
   ProviderAbsenceFromRow,
   ProviderFromRow,
   ResourceFromRow,
   ServiceCatalog,
   type ServiceCatalogOps,
   ServiceFromRow,
+  type StorageError,
 } from "@booking/core"
 import { Effect, Schema } from "effect"
 import { makeD1ServiceCatalog } from "../../adapters/D1ServiceCatalogLive.js"
@@ -42,11 +44,15 @@ const runCatalog = async <A>(
   if (result._tag === "Success") return result.success
   // Catalog reads can fail with `StorageError`; surface as a typed
   // BookingError so the existing client error union covers it without
-  // a second arm.
+  // a second arm. The synthetic GraphQLErrorPayload mirrors what
+  // `errorToGraphQLPayload(new StorageError(...))` would produce
+  // without forcing the Effect.result failure type to widen back to
+  // a concrete StorageError instance.
   throw new BookingError({
-    _tag: "Storage",
+    __typename: "Storage",
     code: "E_INF_STORAGE",
     severity: "infrastructure",
+    i18nKey: errorToI18nKey({ _tag: "Storage" } as StorageError),
   })
 }
 

@@ -56,10 +56,14 @@ const dayDoFor = (env: GraphQLContext["env"], date: string): DurableObjectStub<D
 const verifyOrRefuse = async (env: GraphQLContext["env"], token: string): Promise<DecodedSlot> => {
   const slot = await verifySlotToken(env.SLOT_HMAC_SECRET, token)
   if (slot === null) {
+    // Synthetic GraphQLErrorPayload — `InvalidSlotToken` is a wire-only
+    // tag (no `errorClassRegistry` entry, since the verify step refuses
+    // tampered tokens before any DomainError is even reachable).
     throw new BookingError({
-      _tag: "InvalidSlotToken",
+      __typename: "InvalidSlotToken",
       code: "E_VAL_INVALID_SLOT_TOKEN",
       severity: "validation",
+      i18nKey: "error.InvalidSlotToken" as never,
     })
   }
   return slot

@@ -3,8 +3,8 @@ import {
   type Capability,
   CapabilitySchema,
   ClosureSchema,
-  codeOf,
   type DomainError,
+  errorToGraphQLPayload,
   hasScope,
   InsufficientCapabilityError,
   InvalidCatalogInputError,
@@ -23,7 +23,6 @@ import {
   ServiceSchema,
   type StaffCapability,
   type StaffScope,
-  severityOf,
   summarizeParse,
 } from "@booking/core"
 import { Effect, Schema } from "effect"
@@ -63,8 +62,7 @@ const decodeCapability = Schema.decodeUnknownResult(CapabilitySchema)
  * (`InsufficientCapability`) vs Infrastructure (`Storage`) — rather
  * than seeing every refusal collapse into a single tag.
  */
-const liftDomainError = (e: DomainError): BookingError =>
-  new BookingError({ _tag: e._tag, code: codeOf(e), severity: severityOf(e) })
+const liftDomainError = (e: DomainError): BookingError => new BookingError(errorToGraphQLPayload(e))
 
 /** Refuse a missing or malformed `StaffCapability` envelope. */
 const refuseHeader = (reason: "absent" | "malformed" | "wrong_kind"): BookingError =>
