@@ -1,3 +1,4 @@
+import { fixedBackoff, nextAttemptAt } from "@booking/core"
 import { asc, eq, lte } from "drizzle-orm"
 import { drizzle as drizzleD1 } from "drizzle-orm/d1"
 import { drizzle } from "drizzle-orm/durable-sqlite"
@@ -32,25 +33,14 @@ import { bookingEvents, bookings, doTables, outbox, outboxDead } from "../schema
 
 const BATCH_SIZE = 100
 
-/** Backoff schedule for outbox retries, in milliseconds. */
-const BACKOFF_MS: readonly number[] = [
-  1_000, // attempt 1 -> 1s
-  5_000, // attempt 2 -> 5s
-  30_000, // attempt 3 -> 30s
-  300_000, // attempt 4 -> 5min
-  1_800_000, // attempt 5 -> 30min
-] as const
-
-/** Number of attempts after which the row is dead-lettered. */
-const MAX_ATTEMPTS = BACKOFF_MS.length + 1
-
-const computeNextAttempt = (attempts: number, nowMs: number): string => {
-  const idx = Math.min(attempts, BACKOFF_MS.length - 1)
-  /* `idx` is bounded by `BACKOFF_MS.length - 1` so the access is in-range;
-   * the fallback is unreachable but satisfies `noUncheckedIndexedAccess`. */
-  const delay = BACKOFF_MS[idx] ?? BACKOFF_MS[BACKOFF_MS.length - 1] ?? 1_000
-  return new Date(nowMs + delay).toISOString()
-}
+/**
+ * Outbox retry schedule: 1s / 5s / 30s / 5min / 30min, then
+ * dead-letter on the 6th failure. Authored as a `BackoffPolicy`
+ * value so the schedule is testable and swappable without touching
+ * the drain loop below — the algorithm-data separation core
+ * documents in `application/runtime/BackoffPolicy.ts`.
+ */
+const RELAY_BACKOFF = fixedBackoff([1_000, 5_000, 30_000, 300_000, 1_800_000])
 
 type DrainResult = {
   readonly drained: number
@@ -130,7 +120,7 @@ export const drainOutbox = async (
       const attempts = row.attempts + 1
       const errMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
 
-      if (attempts >= MAX_ATTEMPTS) {
+      if (attempts >= RELAY_BACKOFF.maxAttempts) {
         /* Dead-letter: move to outbox_dead, drop from outbox. The
          * snapshot is intentionally not carried — operators inspecting
          * a dead-lettered row read the live `bookings` row directly. */
@@ -159,7 +149,7 @@ export const drainOutbox = async (
           .set({
             attempts,
             lastError: errMsg,
-            nextAttemptAt: computeNextAttempt(attempts - 1, nowMs),
+            nextAttemptAt: nextAttemptAt(RELAY_BACKOFF, attempts - 1, nowMs),
           })
           .where(eq(outbox.id, row.id))
           .run()
