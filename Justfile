@@ -25,8 +25,9 @@ default:
 # ---------------------------------------------------------------------------
 
 # Build the dev image, install workspace deps, compile generated
-# code (paraglide messages), register git hooks.
-bootstrap: image install paraglide hooks
+# code (paraglide messages, gql.tada introspection), register git
+# hooks.
+bootstrap: image install codegen hooks
 
 image:
     docker compose build dev
@@ -41,6 +42,23 @@ install:
 # message functions consumed by `apps/web/src/lib/i18n.ts`.
 paraglide:
     {{DEV}} bash -c "cd apps/web && {{PNPM}} run paraglide"
+
+# Print the apps/default Pothos GraphQL schema to SDL
+# (`apps/default/schema.graphql`) — the source of truth gql.tada
+# walks against to type the apps/web query catalogue.
+print-schema:
+    {{DEV}} bash -c "cd apps/default && {{PNPM}} run print-schema"
+
+# Regenerate apps/web's gql.tada introspection from the freshly
+# printed SDL. Chains print-schema (server-side schema export) and
+# graphql-env (client-side type emission).
+graphql-env: print-schema
+    {{DEV}} bash -c "cd apps/web && {{PNPM}} run graphql-env"
+
+# Aggregate codegen for apps/web — paraglide messages plus the
+# gql.tada schema introspection. Bootstrap and CI invoke this so
+# typecheck has every generated artefact in place.
+codegen: paraglide graphql-env
 
 hooks:
     {{DEV}} lefthook install
@@ -90,7 +108,8 @@ markdownlint:
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**" \
         "#apps/web/src/paraglide/**" \
-        "#apps/web/project.inlang/**"
+        "#apps/web/project.inlang/**" \
+        "#apps/web/src/graphql-env.d.ts"
 
 lint: lint-biome lint-eslint markdownlint
 

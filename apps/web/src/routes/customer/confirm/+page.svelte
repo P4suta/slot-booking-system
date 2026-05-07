@@ -44,8 +44,13 @@
         { date: held.date, code: bookingCode, phoneLast4: held.phoneLast4 },
         { endpoint: graphqlEndpoint() },
       )
-      if (data.confirmBooking.__typename === "BookingError") {
-        error = localiseBookingError(data.confirmBooking)
+      const result = data.confirmBooking
+      if (result === null) {
+        error = "失敗しました。"
+        return
+      }
+      if (result.__typename === "BookingError") {
+        error = localiseBookingError(result)
         return
       }
       confirmedAt = new Date().toISOString()

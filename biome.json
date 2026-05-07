@@ -22,7 +22,9 @@
       "!**/.wrangler",
       "!**/coverage",
       "!**/migrations/*.sql",
-      "!**/*.svelte"
+      "!**/*.svelte",
+      "!apps/web/src/paraglide",
+      "!apps/web/src/graphql-env.d.ts"
     ]
   },
   "formatter": {

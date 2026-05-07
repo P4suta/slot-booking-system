@@ -41,3 +41,5 @@ coverage/
 # Drizzle local SQLite
 *.sqlite
 *.sqlite3
+apps/default/schema.graphql
+apps/web/src/graphql-env.d.ts

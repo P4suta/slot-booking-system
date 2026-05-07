@@ -6,11 +6,13 @@
   "description": "SvelteKit frontend (customer + staff) for the booking system.",
   "scripts": {
     "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy globalVariable baseLocale --is-server 'import.meta.env.SSR' --emit-ts-declarations --no-emit-readme --silent",
-    "dev": "pnpm run paraglide && vite dev",
-    "build": "pnpm run paraglide && vite build",
+    "graphql-env": "gql.tada generate-output --tsconfig ./tsconfig.json --output ./src/graphql-env.d.ts",
+    "codegen": "pnpm run paraglide && pnpm run graphql-env",
+    "dev": "pnpm run codegen && vite dev",
+    "build": "pnpm run codegen && vite build",
     "preview": "vite preview",
-    "check": "pnpm run paraglide && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "check:watch": "pnpm run paraglide && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "check": "pnpm run codegen && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:watch": "pnpm run codegen && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "echo 'no tests in web app yet'",
     "test:coverage": "echo 'no tests in web app yet'"
   },
@@ -18,12 +20,14 @@
     "@booking/core": "workspace:*"
   },
   "devDependencies": {
+    "@0no-co/graphqlsp": "latest",
     "@cloudflare/workers-types": "latest",
     "@inlang/paraglide-js": "latest",
     "@sveltejs/adapter-cloudflare": "latest",
     "@sveltejs/kit": "latest",
     "@sveltejs/vite-plugin-svelte": "latest",
     "@types/node": "latest",
+    "gql.tada": "latest",
     "graphql": "latest",
     "svelte": "latest",
     "svelte-check": "latest",

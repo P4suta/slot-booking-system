@@ -1,30 +1,21 @@
-import { gql } from "./client.js"
+import { graphql, type ResultOf } from "gql.tada"
 
 /**
- * Query / mutation literals used by the customer + staff flows. The
- * shape types live alongside the queries so the call-site reads
- * exactly the fields it asks for.
+ * Phase 3 / gql.tada-typed query catalogue. Each `graphql(...)`
+ * literal is parsed by gql.tada in the TypeScript type system
+ * against the introspected schema (`src/graphql-env.d.ts`, regenerated
+ * from `apps/default/schema.graphql`); the result and variable types
+ * fall out of the literal text itself, so a typo in a field name or
+ * a missing argument surfaces as a compile error rather than a
+ * runtime `null`.
  *
- * The result types mirror the GraphQL schema's encoded form (ISO-8601
- * strings for Temporal, base64url strings for tokens). Higher-level
- * pages convert to display strings; we intentionally do not re-thread
- * Temporal through the page state to avoid pulling the polyfill into
- * every chunk.
+ * Higher-level pages convert the encoded `Instant` / `PlainDate`
+ * scalars (still typed as `string` on the wire) to display strings;
+ * we intentionally do not re-thread Temporal through the page state
+ * to avoid pulling the polyfill into every chunk.
  */
 
-export type AvailableSlot = {
-  readonly serviceId: string
-  readonly start: string
-  readonly end: string
-  readonly providerId: string
-  readonly resourceIds: readonly string[]
-  readonly token: string
-}
-
-export const AvailableSlotsQuery = gql<
-  { readonly availableSlots: readonly AvailableSlot[] },
-  { readonly serviceId: string; readonly date: string }
->(/* GraphQL */ `
+export const AvailableSlotsQuery = graphql(`
   query AvailableSlots($serviceId: String!, $date: PlainDate!) {
     availableSlots(serviceId: $serviceId, date: $date) {
       serviceId
@@ -37,15 +28,7 @@ export const AvailableSlotsQuery = gql<
   }
 `)
 
-export type Service = {
-  readonly id: string
-  readonly name: string
-  readonly description: string
-  readonly durationMinutes: number
-  readonly enabled: boolean
-}
-
-export const ServicesQuery = gql<{ readonly services: readonly Service[] }>(/* GraphQL */ `
+export const ServicesQuery = graphql(`
   query Services {
     services {
       id
@@ -57,34 +40,7 @@ export const ServicesQuery = gql<{ readonly services: readonly Service[] }>(/* G
   }
 `)
 
-export type BookingResult = {
-  readonly __typename: "BookingResult"
-  readonly bookingId: string
-  readonly state: string
-  readonly eventType: string
-}
-
-export type BookingErrorPayload = {
-  readonly __typename: "BookingError"
-  readonly tag: string
-  readonly code: string
-  readonly i18nKey: string
-  readonly message: string
-}
-
-export type HoldOrError = BookingResult | BookingErrorPayload
-
-export const HoldSlotMutation = gql<
-  { readonly holdSlot: HoldOrError },
-  {
-    readonly date: string
-    readonly slotToken: string
-    readonly nameKana: string
-    readonly phoneLast4: string
-    readonly source: string
-    readonly freeText?: string
-  }
->(/* GraphQL */ `
+export const HoldSlotMutation = graphql(`
   mutation HoldSlot(
     $date: PlainDate!
     $slotToken: String!
@@ -102,10 +58,12 @@ export const HoldSlotMutation = gql<
       freeText: $freeText
     ) {
       __typename
-      ... on BookingResult {
-        bookingId
-        state
-        eventType
+      ... on MutationHoldSlotSuccess {
+        data {
+          bookingId
+          state
+          eventType
+        }
       }
       ... on BookingError {
         tag
@@ -117,17 +75,16 @@ export const HoldSlotMutation = gql<
   }
 `)
 
-export const ConfirmBookingMutation = gql<
-  { readonly confirmBooking: HoldOrError },
-  { readonly date: string; readonly code: string; readonly phoneLast4: string }
->(/* GraphQL */ `
+export const ConfirmBookingMutation = graphql(`
   mutation ConfirmBooking($date: PlainDate!, $code: String!, $phoneLast4: PhoneLast4!) {
     confirmBooking(date: $date, code: $code, phoneLast4: $phoneLast4) {
       __typename
-      ... on BookingResult {
-        bookingId
-        state
-        eventType
+      ... on MutationConfirmBookingSuccess {
+        data {
+          bookingId
+          state
+          eventType
+        }
       }
       ... on BookingError {
         tag
@@ -139,15 +96,7 @@ export const ConfirmBookingMutation = gql<
   }
 `)
 
-export const CancelBookingMutation = gql<
-  { readonly cancelBooking: HoldOrError },
-  {
-    readonly date: string
-    readonly code: string
-    readonly phoneLast4: string
-    readonly reason: string
-  }
->(/* GraphQL */ `
+export const CancelBookingMutation = graphql(`
   mutation CancelBooking(
     $date: PlainDate!
     $code: String!
@@ -156,10 +105,12 @@ export const CancelBookingMutation = gql<
   ) {
     cancelBooking(date: $date, code: $code, phoneLast4: $phoneLast4, reason: $reason) {
       __typename
-      ... on BookingResult {
-        bookingId
-        state
-        eventType
+      ... on MutationCancelBookingSuccess {
+        data {
+          bookingId
+          state
+          eventType
+        }
       }
       ... on BookingError {
         tag
@@ -170,3 +121,13 @@ export const CancelBookingMutation = gql<
     }
   }
 `)
+
+/* -------------------------------------------------------------------------- */
+/* Type re-exports — let call sites stay query-shape-agnostic.                */
+/* -------------------------------------------------------------------------- */
+
+type AvailableSlotsResult = NonNullable<ResultOf<typeof AvailableSlotsQuery>["availableSlots"]>
+export type AvailableSlot = NonNullable<AvailableSlotsResult[number]>
+
+type ServicesResult = NonNullable<ResultOf<typeof ServicesQuery>["services"]>
+export type Service = NonNullable<ServicesResult[number]>

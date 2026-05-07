@@ -66,7 +66,7 @@ module.exports = {
           "|^apps/web/src/routes/.*\\.svelte$" +
           "|^apps/web/src/(app\\.d\\.ts|app\\.html|app\\.css)$" +
           // Imported by .svelte files which dep-cruiser does not parse.
-          "|^apps/web/src/lib/(graphql/endpoint|i18n)\\.ts$)",
+          "|^apps/web/src/lib/(graphql/endpoint|graphql/client|graphql/queries|i18n)\\.ts$)",
       },
       to: {},
     },

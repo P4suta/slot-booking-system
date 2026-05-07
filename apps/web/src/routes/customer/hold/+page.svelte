@@ -25,6 +25,11 @@
   const submit = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
     if (!selected) return
+    if (selected.slot.token === null) {
+      error = "枠トークンが見つかりません。再度検索してください。"
+      return
+    }
+    const slotToken = selected.slot.token
     submitting = true
     error = null
     try {
@@ -32,7 +37,7 @@
         HoldSlotMutation,
         {
           date: selected.date,
-          slotToken: selected.slot.token,
+          slotToken,
           nameKana,
           phoneLast4,
           source: "online",
@@ -40,13 +45,18 @@
         },
         { endpoint: graphqlEndpoint() },
       )
-      if (data.holdSlot.__typename === "BookingError") {
-        error = localiseBookingError(data.holdSlot)
+      const result = data.holdSlot
+      if (result === null) {
+        error = "失敗しました。"
+        return
+      }
+      if (result.__typename === "BookingError") {
+        error = localiseBookingError(result)
         return
       }
       sessionStorage.setItem(
         "booking.held",
-        JSON.stringify({ bookingId: data.holdSlot.bookingId, ...selected, phoneLast4 }),
+        JSON.stringify({ bookingId: result.data.bookingId, ...selected, phoneLast4 }),
       )
       void goto("/customer/confirm")
     } catch (e) {
@@ -63,9 +73,14 @@
   <p>選択された枠がありません。<a href="/customer/search">検索に戻る</a>。</p>
 {:else}
   <p>
-    {new Date(selected.slot.start).toLocaleString("ja-JP")}
+    {selected.slot.start === null ? "—" : new Date(selected.slot.start).toLocaleString("ja-JP")}
     〜
-    {new Date(selected.slot.end).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}
+    {selected.slot.end === null
+      ? "—"
+      : new Date(selected.slot.end).toLocaleTimeString("ja-JP", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}
   </p>
 
   <form onsubmit={submit} aria-label="仮予約フォーム">

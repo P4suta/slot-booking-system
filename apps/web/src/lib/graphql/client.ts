@@ -1,35 +1,20 @@
-/**
- * Minimal GraphQL client for the booking system. Two design points:
- *
- *   1. **Type-safe** without a codegen step — each query is wrapped in
- *      a typed `gql<TResult, TVars>(...)` template that pins the
- *      response and variable shapes from the call-site Schema. The
- *      compiled `.js` is a noop tagger that returns the literal string;
- *      typing is the only payload.
- *   2. **Zero runtime deps** — this is a fetch wrapper, not a full
- *      cache. The customer flow is request/response with no
- *      subscription channel, so Apollo / urql would buy us nothing.
- *      A future version can swap in `gql.tada` for cross-package
- *      schema introspection without touching call sites.
- */
-
-declare const PhantomQuery: unique symbol
-
-export type TypedQuery<TResult, TVars> = string & {
-  readonly [PhantomQuery]: { result: TResult; vars: TVars }
-}
+import type { TadaDocumentNode } from "gql.tada"
+import { print } from "graphql"
 
 /**
- * Tag a GraphQL string literal with its result and variables types.
- * Call sites annotate explicitly:
+ * Phase 3 / gql.tada-driven GraphQL client. Each query is authored
+ * via `graphql(...)` (see `./queries.ts`); gql.tada's TypeScript
+ * type-system parser walks the document literal against the
+ * introspected schema (`src/graphql-env.d.ts`, regenerated from
+ * `apps/default/schema.graphql` on every build) and infers the
+ * result + variables types directly. The fetch wrapper below is the
+ * thin runtime around that — no cache, no subscription channel,
+ * just request/response.
  *
- *   const Q = gql<{ availableSlots: Slot[] }, { date: string }>(
- *     `query ($date: PlainDate!) { availableSlots(date: $date) { ... } }`
- *   )
+ * Re-print the schema and regenerate the env d.ts via
+ * `pnpm -F web run codegen`; the prebuild hooks in `dev` / `build` /
+ * `check` already chain it.
  */
-export const gql = <TResult, TVars = Record<string, never>>(
-  query: string,
-): TypedQuery<TResult, TVars> => query as TypedQuery<TResult, TVars>
 
 export type GraphQLError = {
   readonly message: string
@@ -48,27 +33,27 @@ export type RequestOptions = {
 }
 
 /**
- * Execute a typed query and surface either the data or a thrown
- * error containing the GraphQL `errors[]` payload. The thrown
- * error carries the raw error array verbatim — typed `BookingError`
- * arms reach the UI through `data.<field>` already, so re-shaping
- * here would lose information.
+ * Execute a typed `gql.tada` document and surface either the data or
+ * a thrown error containing the GraphQL `errors[]` payload. The
+ * thrown error carries the raw error array verbatim — typed
+ * `BookingError` arms reach the UI through `data.<field>` already, so
+ * re-shaping here would lose information.
  */
-export const execute = async <TResult, TVars>(
-  query: TypedQuery<TResult, TVars>,
-  variables: TVars,
+export const execute = async <Result, Variables>(
+  query: TadaDocumentNode<Result, Variables>,
+  variables: Variables,
   opts: RequestOptions,
-): Promise<TResult> => {
+): Promise<Result> => {
   const f = opts.fetchImpl ?? fetch
   const response = await f(opts.endpoint, {
     method: "POST",
     headers: { "content-type": "application/json", ...(opts.headers ?? {}) },
-    body: JSON.stringify({ query: query as string, variables }),
+    body: JSON.stringify({ query: print(query), variables }),
   })
   if (!response.ok) {
     throw new Error(`GraphQL HTTP ${String(response.status)}`)
   }
-  const body = (await response.json()) as GraphQLResponse<TResult>
+  const body = (await response.json()) as GraphQLResponse<Result>
   if (body.errors && body.errors.length > 0) {
     const messages = body.errors.map((e) => e.message).join("; ")
     throw new Error(`GraphQL: ${messages}`)

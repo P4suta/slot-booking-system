@@ -57,11 +57,13 @@ pre-push:
   skip:
     - rebase
   commands:
-    paraglide:
-      # Compile inlang message catalogues so generated types under
-      # `apps/web/src/paraglide/` are present for typecheck. The
-      # directory is git-ignored, so a fresh checkout has no copy.
-      run: docker compose run --rm dev bash -c "cd apps/web && corepack pnpm run paraglide"
+    codegen:
+      # Compile generated code (paraglide messages + gql.tada
+      # introspection) so typecheck sees every generated artefact.
+      # Both targets are git-ignored, so a fresh checkout has no copy.
+      run: |
+        docker compose run --rm dev bash -c "cd apps/default && corepack pnpm run print-schema"
+        docker compose run --rm dev bash -c "cd apps/web && corepack pnpm run codegen"
     typecheck:
       run: docker compose run --rm dev ./node_modules/.bin/tsc -b --pretty
     biome-full:

@@ -65,14 +65,23 @@ jobs:
             slot-booking-system-ci:latest \
             corepack pnpm install --frozen-lockfile=false
 
-      - name: Compile paraglide message catalogues
+      - name: Print GraphQL SDL
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace/apps/default \
+            slot-booking-system-ci:latest \
+            corepack pnpm run print-schema
+
+      - name: Compile codegen (paraglide + gql.tada)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
             -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
             -w /workspace/apps/web \
             slot-booking-system-ci:latest \
-            corepack pnpm run paraglide
+            corepack pnpm run codegen
 
       - name: Lint (biome)
         run: |

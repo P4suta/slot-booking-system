@@ -19,9 +19,9 @@ import { m } from "../paraglide/messages.js"
 type Locale = "ja" | "en"
 
 type LocalisableError = {
-  readonly tag: string
-  readonly i18nKey?: string
-  readonly message?: string
+  readonly tag: string | null
+  readonly i18nKey?: string | null
+  readonly message?: string | null
 }
 
 type MessageFn = (inputs?: Record<string, never>, options?: { locale?: Locale }) => string
@@ -42,8 +42,10 @@ const messageFor = (tag: string, locale: Locale): string | undefined => {
  *   3. `m.error_unknown` — the locale-appropriate "unexpected" string.
  */
 export const localiseBookingError = (error: LocalisableError, locale: Locale = "ja"): string => {
-  const fromCatalogue = messageFor(error.tag, locale)
-  if (fromCatalogue !== undefined) return fromCatalogue
-  if (error.message !== undefined && error.message.length > 0) return error.message
+  if (error.tag !== null) {
+    const fromCatalogue = messageFor(error.tag, locale)
+    if (fromCatalogue !== undefined) return fromCatalogue
+  }
+  if (error.message != null && error.message.length > 0) return error.message
   return messageFor("unknown", locale) ?? "An unexpected error occurred"
 }

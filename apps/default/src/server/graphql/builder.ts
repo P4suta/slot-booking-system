@@ -67,6 +67,13 @@ const expectString =
     return v
   }
 
+// Pothos 4.x requires the Query root to be declared explicitly before
+// `queryFields(...)` can attach to it. Resolvers in this directory
+// add their fields through `queryFields` / `mutationFields`; the two
+// roots themselves are registered here so the builder has the bare
+// types ready at side-effect-import time.
+builder.queryType({})
+
 builder.scalarType("PlainDate", {
   description: "ISO-8601 calendar date (e.g. 2026-05-05).",
   serialize: (v) => v,

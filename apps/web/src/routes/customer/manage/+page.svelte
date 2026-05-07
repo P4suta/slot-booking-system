@@ -23,10 +23,13 @@
         { date, code: bookingCode, phoneLast4, reason: reason || "customer-request" },
         { endpoint: graphqlEndpoint() },
       )
-      if (data.cancelBooking.__typename === "BookingError") {
-        error = localiseBookingError(data.cancelBooking)
+      const cancel = data.cancelBooking
+      if (cancel === null) {
+        error = "失敗しました。"
+      } else if (cancel.__typename === "BookingError") {
+        error = localiseBookingError(cancel)
       } else {
-        result = `キャンセル完了 (state=${data.cancelBooking.state})`
+        result = `キャンセル完了 (state=${cancel.data.state})`
       }
     } catch (e) {
       error = e instanceof Error ? e.message : "failed"

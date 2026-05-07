@@ -20,9 +20,11 @@
     void (async () => {
       try {
         const data = await execute(ServicesQuery, {}, { endpoint: graphqlEndpoint() })
-        services = data.services.filter((s) => s.enabled)
+        services = (data.services ?? [])
+          .filter((s): s is Service => s !== null && s.enabled === true)
         if (services.length > 0 && serviceId === "") {
-          serviceId = services[0]!.id
+          const first = services[0]
+          if (first?.id != null) serviceId = first.id
         }
       } catch (e) {
         error = e instanceof Error ? e.message : "failed to load services"
@@ -40,7 +42,7 @@
         { serviceId, date },
         { endpoint: graphqlEndpoint() },
       )
-      slots = data.availableSlots
+      slots = (data.availableSlots ?? []).filter((s): s is AvailableSlot => s !== null)
     } catch (e) {
       error = e instanceof Error ? e.message : "search failed"
     } finally {
@@ -53,7 +55,8 @@
     void goto("/customer/hold")
   }
 
-  const formatTime = (iso: string): string => {
+  const formatTime = (iso: string | null): string => {
+    if (iso === null) return "—"
     const dt = new Date(iso)
     return dt.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })
   }

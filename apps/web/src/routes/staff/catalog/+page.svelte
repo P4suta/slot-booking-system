@@ -12,7 +12,7 @@
     void (async () => {
       try {
         const data = await execute(ServicesQuery, {}, { endpoint: graphqlEndpoint() })
-        services = data.services
+        services = (data.services ?? []).filter((s): s is Service => s !== null)
       } catch (e) {
         error = e instanceof Error ? e.message : "failed"
       } finally {
