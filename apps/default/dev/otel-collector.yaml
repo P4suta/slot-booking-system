@@ -1,0 +1,36 @@
+# OpenTelemetry Collector config for the local-dev observability
+# stack (Phase 3 PR#8). Brought up by `just dev-up` under the
+# `observability` docker-compose profile.
+#
+# The collector accepts OTLP/HTTP from the wrangler dev container
+# (env.OTEL_EXPORTER_URL = "http://otel-collector:4318/v1/traces"
+# in [env.dev.vars]) and forwards everything to the all-in-one
+# Jaeger image, which exposes the search UI on http://localhost:16686.
+#
+# The pipeline is intentionally minimal — no sampler, no batch
+# overrides, no auth. Adding either is a deploy concern, not a
+# local-dev one (production uses managed collectors instead).
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 64
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]

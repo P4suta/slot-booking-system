@@ -33,6 +33,12 @@ DEPLOYMENT_TIMEZONE = "UTC"
 # `wrangler deploy` lands in production mode; `wrangler dev -e dev`
 # overrides through `[env.dev.vars]` below.
 IS_DEV = "0"
+# OTel exporter triage (ADR-0042 + ADR-0044): `"disabled"` drops
+# spans through a NoopSpanExporter so the worker never opens a
+# network round-trip to a non-existent collector. Override with a
+# concrete OTLP URL when wiring an actual deploy-side collector;
+# `"console"` falls back to `ConsoleSpanExporter` (stdout, dev local).
+OTEL_EXPORTER_URL = "disabled"
 # Local-dev secret used by `signSlot` / `verifySlotToken`. The value
 # is a deterministic 32-byte hex string so the local fixtures (curl
 # smoke, SvelteKit dev) can sign and verify without coordinating an
@@ -44,9 +50,12 @@ SLOT_HMAC_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab
 # script appends `-e dev`) flips `IS_DEV` so the worker can switch
 # adapters off the `RuntimeMode` port — verbose error extensions,
 # permissive log sampling, console OTel exporter — without leaking
-# those affordances into deploy targets.
+# those affordances into deploy targets. The OTel endpoint points
+# to `otel-collector` because `just dev-up` brings the container up
+# under the `observability` docker-compose profile (Phase 3 PR#8).
 [env.dev.vars]
 IS_DEV = "1"
+OTEL_EXPORTER_URL = "http://otel-collector:4318/v1/traces"
 
 # Daily cron at 04:00 UTC. Drives the `scheduled` handler in
 # `src/worker.ts` which NULLs PII fields on bookings whose terminal

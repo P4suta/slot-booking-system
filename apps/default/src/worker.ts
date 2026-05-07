@@ -7,6 +7,7 @@ import { makeRuntimeModeLayer } from "./server/adapters/RuntimeModeLive.js"
 import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
 import type { DaySchedule } from "./server/durableObjects/DaySchedule.js"
 import { yoga } from "./server/graphql/yoga.js"
+import { chooseExporter } from "./server/observability/otelConfig.js"
 import { buildOpenAPISpec } from "./server/rest/openapiSpec.js"
 
 export { DaySchedule } from "./server/durableObjects/DaySchedule.js"
@@ -24,7 +25,16 @@ type Env = {
    * so `wrangler dev -e dev` is the only entry point that sees `"1"`.
    */
   IS_DEV?: string
-  /** Optional — when set, OTLP traces are POSTed to this endpoint. */
+  /**
+   * Three-way exporter triage (Phase 3 PR#8):
+   *   - `"console"`              → `ConsoleSpanExporter` (stdout, dev local)
+   *   - `"disabled"` (or empty in prod) → `NoopSpanExporter` (no traffic)
+   *   - any other string         → OTLP HTTP endpoint URL
+   * Plus default: dev mode → `console`, prod mode → `disabled`. The
+   * disabled path replaces the previous hard-coded `localhost:4318`
+   * fallback, which spammed `Network connection lost` for every dev
+   * run that did not have a collector standing by.
+   */
   OTEL_EXPORTER_URL?: string
   /** Optional — vendor-specific auth header (e.g. Honeycomb / Axiom). */
   OTEL_EXPORTER_KEY?: string
@@ -117,16 +127,7 @@ const handler = {
 
 const otelConfig: ResolveConfigFn<Env> = (env) => ({
   service: { name: env.DEPLOYMENT_NAME, version: "0.0.0" },
-  exporter:
-    env.OTEL_EXPORTER_URL !== undefined
-      ? {
-          url: env.OTEL_EXPORTER_URL,
-          headers:
-            env.OTEL_EXPORTER_KEY !== undefined
-              ? { authorization: `Bearer ${env.OTEL_EXPORTER_KEY}` }
-              : {},
-        }
-      : { url: "http://localhost:4318/v1/traces" },
+  exporter: chooseExporter(env),
 })
 
 export default instrument(handler, otelConfig)
