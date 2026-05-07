@@ -1,4 +1,4 @@
-import { type DomainError, errorClassRegistry } from "@booking/core"
+import { DomainErrorSchema } from "@booking/core"
 import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/unstable/rpc"
 import {
@@ -34,20 +34,11 @@ import { BookingResultSchema } from "./resultSchema.js"
  * is whatever `Schema.encodeSync(...)` emits at the boundary.
  */
 
-/**
- * Discriminated union of every `DomainError` the core emits, expressed
- * as an `Effect.Schema` that the RPC error channel decodes back into a
- * concrete TaggedError instance on the client side. The structural
- * cast through `readonly Schema.Schema.All[]` is sound at runtime —
- * each entry is a class whose `Schema.TaggedError` factory yields a
- * full `Schema.Schema.All` — but TypeScript cannot prove the variadic
- * tuple shape from a `readonly ErrorClass[]`, hence the assertion.
- */
-const DomainErrorSchema = Schema.Union(
-  errorClassRegistry as readonly unknown[] as readonly Schema.Top[],
-) as unknown as Schema.Codec<DomainError>
-
-/* The four RPC payload schemas are the *encoded* (string-only) form of
+/* `DomainErrorSchema` is exported by `@booking/core` (the registry-side
+ * cast lives there once) so each RPC's error channel just imports the
+ * union without restating it.
+ *
+ * The four RPC payload schemas are the *encoded* (string-only) form of
  * the per-method input wire codecs. Cloudflare's `structuredClone`
  * envelope can carry only JSON-shaped values, so the boundary speaks
  * the encoded shape; the DO's handler re-decodes via `decode*Input`

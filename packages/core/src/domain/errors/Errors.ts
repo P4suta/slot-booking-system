@@ -606,3 +606,21 @@ export const errorClassRegistry: readonly ErrorClass[] = [
   ConcurrencyError,
   StorageError,
 ]
+
+/**
+ * Schema codec union over every {@link DomainError} variant. The
+ * structural cast through `readonly Schema.Top[]` is sound at runtime
+ * — each {@link errorClassRegistry} entry is a `Schema.TaggedErrorClass`
+ * factory result, which is a Schema by construction — but TypeScript
+ * cannot bridge from `readonly ErrorClass[]` (the metadata-typed view)
+ * to the variadic Union input without a local cast.
+ *
+ * Encapsulating the cast here lets every consumer (RPC error channel,
+ * GraphQL error wire codec, log payload registry) import a
+ * `Schema.Codec<DomainError>` without restating the assertion. The
+ * day Effect's typings let `Schema.Union(readonly ErrorClass[])`
+ * resolve directly, this file is the one place to delete the cast.
+ */
+export const DomainErrorSchema: Schema.Codec<DomainError> = Schema.Union(
+  errorClassRegistry as readonly unknown[] as readonly Schema.Top[],
+) as unknown as Schema.Codec<DomainError>
