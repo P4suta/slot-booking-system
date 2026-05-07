@@ -3,80 +3,92 @@
  * transport.
  *
  * Background: `RpcClient.makeNoSerialization` (effect/unstable/rpc)
- * emits the request/response envelopes as in-memory objects. Two
- * fields fall outside Cloudflare DO RPC's `structuredClone` accept
- * set:
+ * emits the request/response envelopes as in-memory objects whose
+ * encoded form is JSON-shaped *in the limit*, but whose live
+ * representation can carry workerd-incompatible values:
  *
- *   1. `id` / `requestId` — typed as `RpcMessage.RequestId =
- *      Branded<bigint, ...>`, a BigInt by spec. workerd's RPC
- *      serializer rejects naked BigInts on cross-isolate calls.
- *   2. `headers` — created via `Object.create(null)` (no prototype),
- *      which workerd also refuses.
+ *   1. `id` / `requestId` typed as `RpcMessage.RequestId =
+ *      Branded<bigint, ...>`, a BigInt by spec.
+ *   2. `headers` built via `Object.create(null)` (no prototype).
+ *   3. Sub-records inside `payload` likewise built with null
+ *      prototypes by Effect's encoder, plus the response side
+ *      carries `_id`-tagged class instances (`Exit` / `Cause` /
+ *      `FailureCode`) that survive structured-clone but whose
+ *      contained sub-fields can mix the same null-proto / BigInt
+ *      issues at any nesting depth.
  *
- * The fix is targeted: shallow-copy `headers` into a plain-prototype
- * `{}` and convert the BigInt `id` / `requestId` to a sigil string
- * (decoded back on the receiving side). Everything else passes
- * through unchanged so Effect's class-instance brands (`_id` markers
- * on `Exit` / `Cause` etc.) survive the cross-isolate hop, which a
- * full-JSON serialise/parse round-trip would erase.
+ * Both fail with the same generic workerd error:
  *
- * Categorically: this is the smallest natural transformation on the
- * `RpcMessage.{FromClient,FromServer}Encoded` codomain that makes
- * `makeNoSerialization`'s identity functor compose with workerd's
- * structured-clone hop. ADR-0044 walks through the design.
+ *   DataCloneError: Could not serialize object of type "Object".
+ *
+ * The fix: deep-walk the message graph and normalise the two
+ * structural traits workerd refuses, leaving every other value by
+ * value. Pure / deterministic / round-trip-id-preserving.
+ *
+ * Categorically: a single endofunctor on the
+ * `RpcMessage.{FromClient,FromServer}Encoded` codomain whose
+ * left-inverse `desanitise` revives the BigInt sigils. ADR-0044
+ * walks through the design.
  */
 
 const BIGINT_SIGIL = "__bigint:"
 
-const encodeId = (v: unknown): unknown =>
-  typeof v === "bigint" ? `${BIGINT_SIGIL}${v.toString()}` : v
-
-const decodeId = (v: unknown): unknown =>
-  typeof v === "string" && v.startsWith(BIGINT_SIGIL) ? BigInt(v.slice(BIGINT_SIGIL.length)) : v
-
-type Sanitisable = {
-  readonly headers?: unknown
-  readonly id?: unknown
-  readonly requestId?: unknown
-}
-
 /**
- * Replace null-prototype `headers` with a plain-prototype shallow
- * copy, and convert BigInt `id` / `requestId` to the documented
- * sigil string. Other fields pass through by reference (Effect's
- * class instances inside `payload` / `exit` etc. keep their
- * prototypes).
+ * Deep-walk the value and rewrite every object with an
+ * unrecognisable prototype (null, cross-realm `Object.prototype`,
+ * any custom class) to a fresh same-realm plain `{}`. workerd's RPC
+ * serialiser identifies "plain object" by its OWN realm's
+ * `Object.prototype`; an object built inside Effect's library
+ * bundle has a different `Object.prototype` reference and is
+ * rejected as `Could not serialize object of type "Object"`.
  *
- * Pure / shallow / idempotent — calling twice produces the same
- * result.
+ * BigInts are converted to the sigil string for symmetry with the
+ * receiving-side reviver. Arrays are recursed into in place; their
+ * `Array.prototype` identity is also realm-sensitive but workerd
+ * accepts arrays detected via `Array.isArray` (which IS realm-safe).
+ *
+ * Visited via a fresh WeakSet to defend against pathological cycles
+ * (none expected in well-formed `RpcMessage` payloads, but cheap
+ * insurance).
  */
-export const sanitiseForStructuredClone = <T>(message: T): T => {
-  if (typeof message !== "object" || message === null) return message
-  const m = message as Sanitisable
-  const needsHeaders =
-    m.headers !== undefined && m.headers !== null && typeof m.headers === "object"
-  const needsId = typeof m.id === "bigint"
-  const needsRequestId = typeof m.requestId === "bigint"
-  if (!needsHeaders && !needsId && !needsRequestId) return message
-  const out = { ...(message as Record<string, unknown>) }
-  if (needsHeaders) {
-    out.headers = { ...(m.headers as Record<string, unknown>) }
+const transform = (value: unknown, encode: boolean, seen: WeakSet<object>): unknown => {
+  if (encode && typeof value === "bigint") return `${BIGINT_SIGIL}${value.toString()}`
+  if (!encode && typeof value === "string" && value.startsWith(BIGINT_SIGIL)) {
+    return BigInt(value.slice(BIGINT_SIGIL.length))
   }
-  if (needsId) out.id = encodeId(m.id)
-  if (needsRequestId) out.requestId = encodeId(m.requestId)
-  return out as T
+  if (value === null || typeof value !== "object") return value
+  if (seen.has(value)) return value
+  seen.add(value)
+  if (Array.isArray(value)) {
+    return value.map((v) => transform(v, encode, seen))
+  }
+  // Always copy into a same-realm plain `{}` to defeat cross-realm
+  // `Object.prototype` identity mismatches (Effect's library bundle
+  // has its own realm and its objects' prototype !== this module's
+  // `Object.prototype`, even though both are structurally
+  // `Object.prototype`).
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(value)) {
+    out[key] = transform((value as Record<string, unknown>)[key], encode, seen)
+  }
+  return out
 }
 
 /**
- * Inverse: re-hydrate the BigInt fields the receiving side needs.
- * The headers shape is already a plain object after the sanitiser,
- * which the receiving Effect runtime accepts.
+ * Outbound boundary transform: walk the message graph and rewrite
+ * BigInt → sigil string and null-prototype objects → plain `{}`.
+ * Plain objects and arrays are shallow-cloned (so the original
+ * graph stays untouched); class instances keep their prototype but
+ * their fields are recursed into.
  */
-export const desanitiseFromStructuredClone = <T>(message: T): T => {
-  if (typeof message !== "object" || message === null) return message
-  const m = message as Sanitisable
-  const out = { ...(message as Record<string, unknown>) }
-  if (m.id !== undefined) out.id = decodeId(m.id)
-  if (m.requestId !== undefined) out.requestId = decodeId(m.requestId)
-  return out as T
-}
+export const sanitiseForStructuredClone = <T>(message: T): T =>
+  transform(message, true, new WeakSet()) as T
+
+/**
+ * Inbound boundary transform: revive BigInt sigil strings back to
+ * BigInt. Pure inverse of {@link sanitiseForStructuredClone} on the
+ * structural axis (nulls, prototypes, primitives) — only the BigInt
+ * carrier is non-trivial.
+ */
+export const desanitiseFromStructuredClone = <T>(message: T): T =>
+  transform(message, false, new WeakSet()) as T

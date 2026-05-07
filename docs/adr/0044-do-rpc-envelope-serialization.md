@@ -49,6 +49,30 @@ discriminator) survive `structuredClone` but not `JSON.parse`. The
 fail Schema validation against plain objects, with downstream
 "Fiber.runLoop: Not a valid effect" defects.
 
+**Phase 11 finding** — running the same dispatch under
+Miniflare's in-process workerd (`@cloudflare/vitest-pool-workers`)
+narrowed the cause one layer further. A direct `stub.dispatch`
+probe matrix in
+`apps/default/test/integration/holdSlot.integration.test.ts`
+showed:
+
+| Argument                                 | Result    |
+|------------------------------------------|-----------|
+| string                                   | passes    |
+| plain object, primitive fields           | passes    |
+| nested plain object                      | passes    |
+| field of type `bigint`                   | passes    |
+| `Object.create(null)`-rooted object      | fails     |
+
+So workerd actually *does* accept BigInt under the current
+`compatibility_date`. The single structural rejection is "object
+whose prototype is not the calling realm's `Object.prototype`",
+which catches both null-prototype objects and any object built
+inside a different JS realm — Effect's library bundle has its own
+`Object.prototype` reference, distinct from the consuming module's.
+The sanitiser must therefore strip prototype identity entirely on
+the way out.
+
 ## Decision
 
 Introduce a *targeted shallow* sanitiser at the

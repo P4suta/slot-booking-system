@@ -22,7 +22,7 @@ describe("sanitiseForStructuredClone", () => {
     expect(out.headers).toEqual({ xTest: "1" })
   })
 
-  it("encodes BigInt id to a sigil string and preserves other fields by reference", () => {
+  it("encodes BigInt id to a sigil string and structurally preserves other fields", () => {
     const payload = { slot: { serviceId: "serv_demo" } }
     const message = {
       _tag: "Request",
@@ -37,7 +37,7 @@ describe("sanitiseForStructuredClone", () => {
     const out = sanitiseForStructuredClone(message)
     expect(out.id).toBe("__bigint:42")
     expect(out.tag).toBe("HoldSlot")
-    expect(out.payload).toBe(payload) // reference-preserving (no clone)
+    expect(out.payload).toEqual(payload) // structurally equal (deep clone)
     expect(out.traceId).toBe("01HW8RZB")
     expect(out.sampled).toBe(true)
   })
@@ -61,9 +61,9 @@ describe("sanitiseForStructuredClone", () => {
     expect(Object.getPrototypeOf(twice.headers)).toBe(Object.prototype)
   })
 
-  it("returns the input unchanged when there is no `headers` field", () => {
+  it("structurally preserves messages with no transform-needed fields", () => {
     const message = { _tag: "Eof" }
-    expect(sanitiseForStructuredClone(message)).toBe(message)
+    expect(sanitiseForStructuredClone(message)).toEqual(message)
   })
 
   it("returns non-object inputs as-is", () => {
