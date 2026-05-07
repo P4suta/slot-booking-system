@@ -6,7 +6,7 @@ Accepted (2026-05-08).
 
 ## Context
 
-`docs/migration/effect-4.md` (Phase 2.2 / BI-10) had been deferred since
+`docs/migration/_archive/effect-4.md` (Phase 2.2 / BI-10) had been deferred since
 2026-05-06 with `effect@4.0.0-beta.60` + `drizzle-orm@1.0.0-rc.2`
 producing 1224 type errors on first attempt. Re-start was gated behind
 **any one** of: effect 4 stable release, `@pothos/plugin-errors`
@@ -190,8 +190,8 @@ off the channel tag.
 
 - Plan: `~/.claude/plans/lovely-drifting-galaxy.md` (BI-10 + carry-overs)
 - Pre-migration drift catalogue: memory `reference_effect4_drift_catalogue.md`
-- Pre-migration deferral: `docs/migration/effect-4.md` (now superseded
-  by this ADR; kept as historical notes).
+- Pre-migration deferral: `docs/migration/_archive/effect-4.md` (now
+  superseded by this ADR; kept as historical notes).
 - Mega-commit: `c172e71` `refactor(all): Effect 4 + drizzle 1 (BI-10 mega)`
 - Carry-over closure: `4e59a4b` `test(default): OTel span emission + DO crash recovery`
 - Tag: `bi-10-mega` (commit `c172e71`).

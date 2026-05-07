@@ -49,7 +49,7 @@ import { baseEnv, baseQuery } from "../_fixtures/index.js"
  * Union with branded refinement chains generates a heavy shrinker
  * tree per case, and 100 runs alone exceed the session-wide
  * test-budget envelope. The carry-over note in
- * `docs/migration/effect-4.md` records the followup.
+ * `docs/migration/_archive/effect-4.md` records the followup.
  */
 
 const decodeBookingUnknown = Schema.decodeUnknownResult(BookingSchema)
