@@ -508,23 +508,29 @@ const extractCausePreview = (raw: unknown): LogPayload["cause"] => {
 }
 
 /**
- * Enumerate the payload fields declared on the error's class, excluding
- * the discriminator (`_tag`) and any infrastructure-only carrier
- * (`cause`, surfaced separately via {@link extractCausePreview}). The
+ * Keys present in the Schema fields record that are *not* part of the
+ * domain payload — `_tag` is the discriminator the
+ * `Schema.TaggedErrorClass` factory installs on every class, and
+ * `cause` is the underlying-exception carrier surfaced separately
+ * via {@link extractCausePreview}. Hoisted so the filter rule lives
+ * in one place rather than as two equality checks inside `dataOf`.
+ */
+const INFRASTRUCTURE_FIELDS: ReadonlySet<string> = new Set(["_tag", "cause"])
+
+/**
+ * Enumerate the payload fields declared on the error's class. The
  * iteration is driven by `e.constructor.fields` — the Schema fields
- * static the `Schema.TaggedError` factory installs on the class — so
- * adding a new field to a class instantly shows up in log payloads with
- * no separate registration.
+ * static the `Schema.TaggedErrorClass` factory installs on the class —
+ * so adding a new field to a class instantly shows up in log payloads
+ * with no separate registration.
  */
 const dataOf = (e: DomainError): Readonly<Record<string, unknown>> => {
-  const klass = metadataOf(e)
-  const out: Record<string, unknown> = {}
   const view = e as unknown as Readonly<Record<string, unknown>>
-  for (const key of Object.keys(klass.fields)) {
-    if (key === "_tag" || key === "cause") continue
-    out[key] = view[key]
-  }
-  return out
+  return Object.fromEntries(
+    Object.keys(metadataOf(e).fields)
+      .filter((key) => !INFRASTRUCTURE_FIELDS.has(key))
+      .map((key) => [key, view[key]]),
+  )
 }
 
 export type ToLogPayloadOptions = {
