@@ -1,31 +1,41 @@
 # Integration suite (Miniflare-backed, vitest-pool-workers)
 
 This directory hosts integration tests that boot a workerd isolate per
-test file via `@cloudflare/vitest-pool-workers` (`cloudflarePool(...)`
+test file via `@cloudflare/vitest-pool-workers` (`cloudflareTest()`
 in `apps/default/vitest.integration.config.ts`).
 
-**Status (2026-05-08): scaffold only.** The dep + config + pnpm script
-are wired, but `cloudflare:test`'s `runInDurableObject` import resolves
-in node land before vitest's poolRunner kicks in (vitest 4 +
-vitest-pool-workers 0.16 incompatibility — the pool registers
-`cloudflare:test` as a virtual module but vitest 4's transform pipeline
-doesn't yet honour the registration). The first integration test will
-land once one of:
+**Status (2026-05-08): live.** The first test
+(`doCrashRecovery.integration.test.ts`) asserts the transport-level
+invariant that `ctx.storage.put` + `ctx.storage.sync()` survives
+`ctx.abort()` — the production event-source replay precondition.
 
-- vitest-pool-workers ships a vitest-4-compatible release that
-  registers `cloudflare:test` as a virtual module via vitest's
-  pool plugin lifecycle
-- vitest 4 stabilises a public `poolRunner` extension API that the
-  pool can hook into for module resolution
+## Running
 
-Until then, the OTel shape contracts in `../effectRpc/` cover the
-node-level invariants and the in-memory `BookingEventSourcedRepository`
-property tests (`packages/core/test/property/`) cover the domain-level
-correctness of event-source replay.
+```bash
+docker compose run --rm dev sh -c 'cd apps/default && corepack pnpm test:integration'
+```
 
-When the upstream gap closes, the first test under this directory
-will assert: a held booking persists across `ctx.abort()` (via
-`runInDurableObject`), and the replayed snapshot emits the same OTel
-span shape on the second dispatch as the first.
+Workerd boot adds ~3-9s per file, so the suite is gated behind a
+separate `pnpm test:integration` script. The fast inner loop
+(`pnpm test`) runs the node-environment shape contracts in
+`../effectRpc/`.
 
-Run when ready: `pnpm -F default test:integration`.
+## Wiring notes
+
+- **`cloudflareTest()` plugin** (not `cloudflarePool()` alone) wires
+  the `cloudflare:test` virtual module via Vite's `resolveId` hook.
+  `cloudflarePool()` alone only sets `poolRunner` and the virtual
+  module never resolves at the test transform stage in vitest 4.
+- **`main` override** points at `worker.entry.ts` instead of
+  `src/worker.ts`. The production worker imports the full Yoga /
+  Pothos schema build; for integration tests we only need the
+  `DaySchedule` DO export, so the minimal entry sidesteps Pothos's
+  Query reference resolution race.
+
+## Adding tests
+
+The pool config inherits the `wrangler.toml` bindings (`DAY_SCHEDULE`
+DurableObject + `DB` D1). Tests import `env` and helpers like
+`runInDurableObject` / `createExecutionContext` from
+`cloudflare:test`. Each test file owns a fresh isolate, so tests do
+not need to clean up state between files.
