@@ -182,21 +182,23 @@ export class QueueShop extends DurableObject<Env> {
   }
 
   override async webSocketClose(
-    ws: WebSocket,
-    code: number,
+    _ws: WebSocket,
+    _code: number,
     _reason: string,
     _wasClean: boolean,
   ): Promise<void> {
-    // Honour the client-initiated close with the same code so
-    // downstream proxies stay in sync. Hibernating runtime detaches
-    // the socket from `ctx.getWebSockets()` automatically.
-    ws.close(code, "client closed")
+    // No-op: by the time this lifecycle handler fires the socket is
+    // already in a closing state, and the Hibernating runtime has
+    // already removed it from `ctx.getWebSockets()`. Calling
+    // `ws.close(...)` here throws because the socket is no longer
+    // mutable from server code.
   }
 
-  override async webSocketError(ws: WebSocket, _err: unknown): Promise<void> {
-    // 1011 = unexpected condition; the runtime will likewise drop
-    // the socket from `ctx.getWebSockets()`.
-    ws.close(1011, "internal error")
+  override async webSocketError(_ws: WebSocket, _err: unknown): Promise<void> {
+    // No-op: same lifecycle invariant as webSocketClose. The runtime
+    // surfaces the underlying error via the close handshake; we have
+    // no recovery path inside the DO that does not race with
+    // hibernation.
   }
 
   /**

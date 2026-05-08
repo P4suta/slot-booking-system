@@ -21,9 +21,30 @@ const SECURITY_HEADERS: Readonly<Record<string, string>> = {
 
 export const securityHeaders = async (c: Context, next: Next): Promise<void> => {
   await next()
+  const original = c.res
+  // WebSocket upgrade responses come back with status 101 + a
+  // platform-special `webSocket` field; the `new Response()`
+  // constructor disallows status outside 200..599 and would
+  // otherwise drop the webSocket attachment. Skip the rewrap —
+  // HTTP-only security headers do not apply to WebSocket frames
+  // anyway. Same logic applies to any other 1xx info response
+  // a future handler might emit.
+  if (original.status < 200 || original.status >= 600) return
+  // Hono's response Headers are immutable once a handler returns a
+  // pre-built `Response` (the failResponse path). Clone the
+  // response into a fresh one with mutable headers, copy the
+  // existing entries, layer the security baseline on top, and
+  // re-attach via `c.res`. The body stream is forwarded by reference
+  // so this is O(1) — no buffering happens.
+  const headers = new Headers(original.headers)
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
-    c.res.headers.set(k, v)
+    headers.set(k, v)
   }
+  c.res = new Response(original.body, {
+    status: original.status,
+    statusText: original.statusText,
+    headers,
+  })
 }
 
 /**
@@ -52,10 +73,21 @@ export const corsAllowlist = (
       })
     }
     await next()
-    if (allowOrigin !== "") {
-      c.res.headers.set("access-control-allow-origin", allowOrigin)
-      c.res.headers.set("vary", "origin")
-    }
+    if (allowOrigin === "") return undefined
+    const original = c.res
+    // Skip non-2xx..5xx (the WebSocket 101 upgrade case — see the
+    // comment on `securityHeaders`).
+    if (original.status < 200 || original.status >= 600) return undefined
+    // Same Headers-immutable workaround as `securityHeaders`. The
+    // body forwards by reference; only the header surface is rebuilt.
+    const headers = new Headers(original.headers)
+    headers.set("access-control-allow-origin", allowOrigin)
+    headers.set("vary", "origin")
+    c.res = new Response(original.body, {
+      status: original.status,
+      statusText: original.statusText,
+      headers,
+    })
     return undefined
   }
 }
