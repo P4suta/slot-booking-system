@@ -1,8 +1,5 @@
-import { Effect, Layer, Result, Schema } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import type { Clock } from "../../../../src/application/ports/Clock.js"
-import type { TicketRepository } from "../../../../src/application/ports/EventSourcedRepository.js"
-import type { Logger } from "../../../../src/application/ports/Logger.js"
 import {
   CallNext,
   CancelTicket,
@@ -30,75 +27,95 @@ const env = Layer.mergeAll(
   SilentLoggerLive,
 )
 
-const run = <A, E>(
-  eff: Effect.Effect<A, E, Clock | typeof Logger.Service | typeof TicketRepository.Service | never>,
-) => Effect.runPromise(eff.pipe(Effect.provide(env)) as unknown as Effect.Effect<A, E, never>)
+type Outcome<A, E> = { ok: true; value: A } | { ok: false; error: E }
+
+/**
+ * `Effect.either` is not exported in Effect 4.0.0-beta.64, so we
+ * reach the same shape via `Effect.matchEffect` — the success / failure
+ * branches both succeed with a tagged record. The generic `R` is
+ * provided through `env` so the caller passes plain
+ * `Effect<A, E, R>`-shaped use-case effects.
+ */
+const run = <A, E, R>(eff: Effect.Effect<A, E, R>): Promise<Outcome<A, E>> =>
+  Effect.runPromise(
+    Effect.matchEffect(eff, {
+      onSuccess: (value) => Effect.succeed({ ok: true as const, value }),
+      onFailure: (error) => Effect.succeed({ ok: false as const, error }),
+    }).pipe(Effect.provide(env)) as unknown as Effect.Effect<Outcome<A, E>>,
+  )
+
+const expectOk = <A, E>(r: Outcome<A, E>): A => {
+  if (!r.ok) throw new Error(`expected ok, got error ${JSON.stringify(r.error)}`)
+  return r.value
+}
 
 describe("queue lifecycle round-trip", () => {
   it("issue → callNext → markServed", async () => {
-    const t1 = await run(IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null }))
+    const t1 = expectOk(
+      await run(IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })),
+    )
     expect(t1.state).toBe("Waiting")
-    const called = await run(CallNext())
+    const called = expectOk(await run(CallNext()))
     expect(called.state).toBe("Called")
-    const served = await run(MarkServed(t1.id))
+    const served = expectOk(await run(MarkServed(t1.id)))
     expect(served.state).toBe("Served")
   })
 
   it("issue → callNext → markNoShow (system actor)", async () => {
-    const t1 = await run(IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null }))
+    const t1 = expectOk(
+      await run(IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })),
+    )
     await run(CallNext())
-    const ns = await run(MarkNoShow(t1.id, "system"))
+    const ns = expectOk(await run(MarkNoShow(t1.id, "system")))
     expect(ns.state).toBe("NoShow")
   })
 
   it("issue → cancel by customer (handle verified)", async () => {
     const h = handle("ヤマダ タロウ", "1234")
-    const t1 = await run(IssueTicket({ handle: h, freeText: null }))
-    const cancelled = await run(CancelTicket(t1.id, "customer", "changed plans", h))
+    const t1 = expectOk(await run(IssueTicket({ handle: h, freeText: null })))
+    const cancelled = expectOk(await run(CancelTicket(t1.id, "customer", "changed plans", h)))
     expect(cancelled.state).toBe("Cancelled")
   })
 
   it("cancel with mismatched handle yields PhoneMismatch", async () => {
-    const t1 = await run(IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null }))
-    const wrong = handle("サトウ ジロウ", "1234")
-    const r = await Effect.runPromise(
-      Effect.either(CancelTicket(t1.id, "customer", "x", wrong).pipe(Effect.provide(env))),
+    const t1 = expectOk(
+      await run(IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })),
     )
-    expect(Result.isFailure(r) || r._tag === "Left").toBe(true)
-    if ("left" in r) {
-      const err = r.left as { _tag: string }
+    const wrong = handle("サトウ ジロウ", "1234")
+    const r = await run(CancelTicket(t1.id, "customer", "x", wrong))
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      const err = r.error as { _tag: string }
       expect(err._tag).toBe("PhoneMismatch")
     }
   })
 
   it("CallNext on empty queue yields QueueEmpty", async () => {
-    const r = await Effect.runPromise(Effect.either(CallNext().pipe(Effect.provide(env))))
-    expect("left" in r).toBe(true)
-    if ("left" in r) {
-      const err = r.left as { _tag: string }
+    const r = await run(CallNext())
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      const err = r.error as { _tag: string }
       expect(err._tag).toBe("QueueEmpty")
     }
   })
 
   it("MarkServed against a Waiting ticket yields InvalidStateTransition", async () => {
-    const t1 = await run(IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null }))
-    const r = await Effect.runPromise(Effect.either(MarkServed(t1.id).pipe(Effect.provide(env))))
-    expect("left" in r).toBe(true)
-    if ("left" in r) {
-      const err = r.left as { _tag: string }
+    const t1 = expectOk(
+      await run(IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })),
+    )
+    const r = await run(MarkServed(t1.id))
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      const err = r.error as { _tag: string }
       expect(err._tag).toBe("InvalidStateTransition")
     }
   })
 
   it("MarkServed on a non-existent ticket yields TicketNotFound", async () => {
-    const r = await Effect.runPromise(
-      Effect.either(
-        MarkServed("tkt_00000000000000000000000000" as never).pipe(Effect.provide(env)),
-      ),
-    )
-    expect("left" in r).toBe(true)
-    if ("left" in r) {
-      const err = r.left as { _tag: string }
+    const r = await run(MarkServed("tkt_00000000000000000000000000" as never))
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      const err = r.error as { _tag: string }
       expect(err._tag).toBe("TicketNotFound")
     }
   })

@@ -16,9 +16,16 @@ import { hasScope as setHasScope } from "../../../src/domain/auth/ScopeSet.js"
 import { newStaffId, newTicketId } from "../../../src/domain/types/EntityId.js"
 
 const decodeOrThrow = <S extends Schema.Top>(schema: S, value: unknown): Schema.Schema.Type<S> => {
-  const r = Schema.decodeUnknownResult(schema)(value)
+  // Schema.decodeUnknownResult requires a Codec at the type level; the
+  // generic `Schema.Top` upper bound is widened via `as unknown as` so
+  // callers can pass a struct schema literal without restating the codec.
+  const r = (
+    Schema.decodeUnknownResult as unknown as (
+      s: S,
+    ) => (v: unknown) => Result.Result<Schema.Schema.Type<S>, unknown>
+  )(schema)(value)
   if (Result.isSuccess(r)) return r.success
-  throw new Error(`decode failed: ${r.failure}`)
+  throw new Error(`decode failed: ${String(r.failure)}`)
 }
 
 const customerCap = (ticketId: string = newTicketId()): CustomerCapability =>
