@@ -4,6 +4,7 @@ import { Hono } from "hono"
 import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
 import { DEFECT_STATUS, statusForTag } from "./errorEnvelope.js"
+import { openApiDocument } from "./openapi.js"
 import { rateLimitMiddleware } from "./rateLimit.js"
 import { corsAllowlist, parseAllowlist, securityHeaders } from "./securityHeaders.js"
 import type { Env } from "./types.js"
@@ -285,6 +286,17 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         actor: "staff",
       }),
     )
+  })
+
+  // GET /api/v1/openapi.json — OpenAPI 3.1 document
+  app.get("/api/v1/openapi.json", (_c) => {
+    return new Response(JSON.stringify(openApiDocument), {
+      status: 200,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "public, max-age=300",
+      },
+    })
   })
 
   // GET /api/v1/queue/events — SSE projection feed (Workers stream
