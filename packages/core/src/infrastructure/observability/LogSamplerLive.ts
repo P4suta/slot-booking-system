@@ -35,25 +35,48 @@ const decideAtRate = (rate: number): boolean => {
   return Math.random() < rate
 }
 
-const prodShouldEmit = (severity: ErrorSeverity): boolean => decideAtRate(PROD_RATES[severity])
 const devShouldEmit = (_severity: ErrorSeverity): boolean => true
 
+const prodEmitter =
+  (rates: Readonly<Record<ErrorSeverity, number>>) =>
+  (severity: ErrorSeverity): boolean =>
+    decideAtRate(rates[severity])
+
 /**
- * Env-indexed adapter selecting `devShouldEmit` / `prodShouldEmit`
- * from the resolved {@link RuntimeMode}. The selection is the
- * categorical bind of `Reader RuntimeMode (Layer LogSampler)`
- * lifted through `Layer.unwrap`. ADR-0042 / ADR-0043 are the
- * write-ups (the same pattern already powers ErrorRedaction).
+ * Env-indexed adapter factory selecting `devShouldEmit` /
+ * rates-based `prodEmitter` from the resolved {@link RuntimeMode}.
+ * The selection is the categorical bind of
+ * `Reader RuntimeMode (Layer LogSampler)` lifted through
+ * `Layer.unwrap` (ADR-0042 / ADR-0043).
+ *
+ * Currying the prod rates lets a worker entrypoint feed env-derived
+ * sampling rates (`LOG_SAMPLE_VALIDATION`, `LOG_SAMPLE_DOMAIN`,
+ * `LOG_SAMPLE_INFRA`) into the layer at construction time without
+ * baking the values into the source tree.
  */
-export const LogSamplerLive: Layer.Layer<LogSampler, never, RuntimeMode> = Layer.unwrap(
-  Effect.gen(function* () {
-    const m = yield* RuntimeMode
-    return Layer.succeed(
-      LogSampler,
-      LogSampler.of({ shouldEmit: m.mode === "dev" ? devShouldEmit : prodShouldEmit }),
-    )
-  }),
-)
+export const makeLogSamplerLive = (
+  prodRates: Readonly<Record<ErrorSeverity, number>>,
+): Layer.Layer<LogSampler, never, RuntimeMode> =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const m = yield* RuntimeMode
+      return Layer.succeed(
+        LogSampler,
+        LogSampler.of({
+          shouldEmit: m.mode === "dev" ? devShouldEmit : prodEmitter(prodRates),
+        }),
+      )
+    }),
+  )
+
+/**
+ * Default layer wired with {@link PROD_RATES}. Existing call sites
+ * keep their `Effect.provide(LogSamplerLive)` shape; a worker that
+ * needs env-driven rates calls `makeLogSamplerLive(envRates)`
+ * instead.
+ */
+export const LogSamplerLive: Layer.Layer<LogSampler, never, RuntimeMode> =
+  makeLogSamplerLive(PROD_RATES)
 
 /**
  * Pure-passthrough sampler exported for test fixtures and the
