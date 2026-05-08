@@ -380,14 +380,14 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 /* -------------------------------------------------------------------------- */
 
 /**
- * Module-level structural assertion that every concrete error class
- * carries the {@link ErrorClass} class-side contract: `code`,
- * `severity`, and `fields` (the latter inherited from
- * `Schema.TaggedError`'s factory). Type-checking this array compiles
- * iff every leaf class declares the metadata; the cast in
- * {@link metadataOf} is sound exactly when this list type-checks.
+ * Every concrete error class carries the {@link ErrorClass}
+ * class-side contract (`code`, `severity`, `fields`) AND extends
+ * `Schema.TaggedErrorClass` so the class itself is a `Schema.Top`.
+ * The tuple keeps both views: the Schema.Union codec below reads
+ * the structural side, `codeOf` / `severityOf` read the metadata
+ * side via {@link metadataOf}.
  */
-export const errorClassRegistry: readonly ErrorClass[] = [
+export const errorClassRegistry = [
   InvalidPhoneLast4Error,
   InvalidNameKanaError,
   InvalidFreeTextError,
@@ -405,8 +405,8 @@ export const errorClassRegistry: readonly ErrorClass[] = [
   AggregateNotFoundError,
   ConcurrencyError,
   StorageError,
-]
+] as const satisfies ReadonlyArray<ErrorClass & Schema.Top>
 
-export const DomainErrorSchema: Schema.Codec<DomainError> = Schema.Union(
-  errorClassRegistry as readonly unknown[] as readonly Schema.Top[],
+export const DomainErrorSchema = Schema.Union(errorClassRegistry).pipe(
+  Schema.toTaggedUnion("_tag"),
 ) as unknown as Schema.Codec<DomainError>
