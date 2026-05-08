@@ -1,6 +1,6 @@
 # 0030. DurableObject RPC methods returning `Either<E, R>`
 
-- Status: superseded by [ADR-0037](./0037-effect-rpc-do-transport.md)
+- Status: superseded by [ADR-0037](./0037-effect-rpc-do-transport.md), then by [ADR-0050](./0050-queue-pivot.md) — the queue dispatch is a plain DurableObjectNamespace stub method (`dispatch(action)`); no `Either` envelope, no @effect/rpc transport.
 - Superseded-By: ADR-0037
 - Date: 2026-05-05
 - Deciders: Yasunobu

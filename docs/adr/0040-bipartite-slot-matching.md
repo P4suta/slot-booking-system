@@ -1,6 +1,6 @@
 # 0040. Bipartite matching for slot resource assignment
 
-- Status: accepted
+- Status: superseded by [ADR-0050](./0050-queue-pivot.md) — the bipartite matcher is unused; the queue domain has no provider/resource pairing.
 - Date: 2026-05-07
 - Deciders: Yasunobu
 - Tags: algorithm, slot-search, supersedes-0034
