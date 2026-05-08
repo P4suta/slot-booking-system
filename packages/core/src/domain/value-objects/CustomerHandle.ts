@@ -1,4 +1,5 @@
-import { type NonEmptyReadonlyArray, Result, Schema } from "effect"
+import { Result, Schema } from "effect"
+import type { NonEmptyReadonlyArray } from "effect/Array"
 import type { DomainError } from "../errors/Errors.js"
 import { type NameKana, NameKanaSchema, parseNameKana } from "./NameKana.js"
 import { type PhoneLast4, PhoneLast4Schema, parsePhoneLast4 } from "./PhoneLast4.js"
@@ -32,21 +33,19 @@ export type CustomerHandle = Schema.Schema.Type<typeof CustomerHandleSchema>
 export const parseCustomerHandle = (
   nameKana: string,
   phoneLast4: string,
-): Result.Result<CustomerHandle, NonEmptyReadonlyArray.NonEmptyReadonlyArray<DomainError>> => {
+): Result.Result<CustomerHandle, NonEmptyReadonlyArray<DomainError>> => {
   const kanaR = parseNameKana(nameKana)
   const phoneR = parsePhoneLast4(phoneLast4)
-  const failures: DomainError[] = []
-  if (Result.isFailure(kanaR)) failures.push(kanaR.failure)
-  if (Result.isFailure(phoneR)) failures.push(phoneR.failure)
-  if (failures.length > 0) {
-    return Result.fail(
-      failures as unknown as NonEmptyReadonlyArray.NonEmptyReadonlyArray<DomainError>,
-    )
+  if (Result.isFailure(kanaR) && Result.isFailure(phoneR)) {
+    return Result.fail([kanaR.failure, phoneR.failure])
   }
-  return Result.succeed({
-    nameKana: (kanaR as Result.Success<NameKana, DomainError>).success,
-    phoneLast4: (phoneR as Result.Success<PhoneLast4, DomainError>).success,
-  })
+  if (Result.isFailure(kanaR)) {
+    return Result.fail([kanaR.failure])
+  }
+  if (Result.isFailure(phoneR)) {
+    return Result.fail([phoneR.failure])
+  }
+  return Result.succeed({ nameKana: kanaR.success, phoneLast4: phoneR.success })
 }
 
 /**

@@ -76,6 +76,11 @@ const drive = (
         continue
       }
       case "call": {
+        // Model the `CallNext` use case's "at most one serving" guard:
+        // skip if anyone is already in `Called`, otherwise pick the
+        // lowest-seq Waiting ticket (queue head).
+        const anyCalled = [...tickets.values()].some((t) => t.state === "Called")
+        if (anyCalled) continue
         const head = [...tickets.values()]
           .filter((t): t is Waiting => t.state === "Waiting")
           .sort((a, b) => a.seq - b.seq)[0]
@@ -104,7 +109,7 @@ const drive = (
       case "noShow": {
         const called = [...tickets.values()].find((t): t is Called => t.state === "Called")
         if (called === undefined) continue
-        const out = applyMarkNoShow(called, "system", at(tick), newTicketEventId())
+        const out = applyMarkNoShow(called, at(tick), newTicketEventId(), "system")
         events.push(out.event)
         tickets.set(out.ticket.id, out.ticket)
         continue
@@ -116,10 +121,10 @@ const drive = (
         if (cancellable === undefined) continue
         const out = applyCancel(
           cancellable as Waiting | Called,
-          "customer",
-          "user-cancelled",
           at(tick),
           newTicketEventId(),
+          "customer",
+          "user-cancelled",
         )
         events.push(out.event)
         tickets.set(out.ticket.id, out.ticket)
