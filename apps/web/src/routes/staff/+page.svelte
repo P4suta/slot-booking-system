@@ -66,16 +66,17 @@
    * even on fetch reject; surfaces the error tag/code in `error` so
    * stalls are debuggable from the UI alone.
    *
-   * Generic-free signature on purpose: Svelte's TS preprocessor was
-   * treating `<A>` as JSX-like and silently dropping the argument
-   * list, surfacing as `ReferenceError: label is not defined` at
-   * runtime. `ApiResult<unknown>` is sufficient — runAction never
-   * touches the success `value`, only `ok` / `error`.
+   * Written as a `function` declaration (not an arrow) on purpose:
+   * Svelte's `<script lang="ts">` preprocessor parses
+   * `async <A>(args) => …` as JSX and silently drops the arg list
+   * (`label is not defined` at runtime). Function declarations carry
+   * no parser ambiguity, so the generic survives — and we get the
+   * full type-narrowed `ApiResult<A>` back.
    */
-  const runAction = async (
+  async function runAction<A>(
     label: string,
-    fn: () => Promise<ApiResult<unknown>>,
-  ): Promise<void> => {
+    fn: () => Promise<ApiResult<A>>,
+  ): Promise<void> {
     busy = true
     error = null
     try {
