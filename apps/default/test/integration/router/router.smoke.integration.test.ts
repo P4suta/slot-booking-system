@@ -133,4 +133,21 @@ describe("router smoke (HTTP shape contract)", () => {
     // upgrade succeeds with 101 + webSocket attached.
     expect(res.status).toBe(101)
   })
+
+  it("every non-WS response carries an X-Trace-Id header (Crockford ULID)", async () => {
+    const auth = await staffHeaders(SECRET)
+    const probes = [
+      worker().fetch(req.issueTicket({ handle: validHandle, freeText: null })),
+      worker().fetch(req.queueProjection()),
+      worker().fetch(req.openApiDocument()),
+      worker().fetch(req.staffLogin(SECRET)),
+      worker().fetch(req.callNext(auth.bearerHeaders)),
+      worker().fetch(req.markServed("tkt_doesnotexist", auth.bearerHeaders)),
+    ]
+    for (const r of await Promise.all(probes)) {
+      const trace = r.headers.get("x-trace-id")
+      expect(trace, `missing X-Trace-Id for ${r.url} (status=${String(r.status)})`).not.toBeNull()
+      expect(trace).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/)
+    }
+  })
 })

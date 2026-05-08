@@ -9,6 +9,7 @@ import { handleStaffLogin } from "./auth/login.js"
 import { DEFECT_STATUS, statusForTag } from "./errorEnvelope.js"
 import { openApiDocument } from "./openapi.js"
 import { rateLimitMiddleware } from "./rateLimit.js"
+import { requestLog } from "./requestLog.js"
 import { corsAllowlist, parseAllowlist, securityHeaders } from "./securityHeaders.js"
 import type { Env } from "./types.js"
 
@@ -157,6 +158,7 @@ const requireStaff = async (c: {
 export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   const app = new Hono<{ Bindings: Env }>()
 
+  app.use("*", requestLog)
   app.use("*", securityHeaders)
   app.use("*", async (c, next) => {
     const allowed = parseAllowlist(c.env.ALLOWED_ORIGINS)
