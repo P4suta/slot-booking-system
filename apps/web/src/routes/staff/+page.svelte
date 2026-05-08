@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte"
   import {
+    type ApiResult,
     callNext,
     markNoShow,
     markServed,
@@ -10,7 +11,7 @@
     type Ticket,
   } from "$lib/api.js"
 
-  let token = $state(typeof window === "undefined" ? "" : localStorage.getItem("queue.staffToken") ?? "")
+  let token = $state(typeof window === "undefined" ? "" : (localStorage.getItem("queue.staffToken") ?? ""))
   let authenticated = $state(token.length > 0)
   let waitingCount = $state(0)
   let serving: Ticket | null = $state(null)
@@ -19,39 +20,89 @@
   let error: string | null = $state(null)
   let source: EventSource | undefined
 
-  const refresh = async () => {
-    const r = await shopState()
-    if (!r.ok) return
-    const data = r.value as unknown as {
-      waitingCount: number
-      serving: Ticket | null
-      waitingPreview: ReadonlyArray<{ id: string; seq: number }>
+  /**
+   * Re-fetch the public shop state. Tolerant: a transient network
+   * error never throws — it just leaves the previous state on screen
+   * and surfaces the message in `error`.
+   */
+  const refresh = async (): Promise<void> => {
+    try {
+      const r = await shopState()
+      if (!r.ok) {
+        error = `refresh: ${r.error._tag}`
+        return
+      }
+      const data = r.value as unknown as {
+        waitingCount: number
+        serving: Ticket | null
+        waitingPreview: ReadonlyArray<{ id: string; seq: number }>
+      }
+      waitingCount = data.waitingCount
+      serving = data.serving
+      preview = data.waitingPreview
+    } catch (e) {
+      error = `refresh: ${String(e)}`
     }
-    waitingCount = data.waitingCount
-    serving = data.serving
-    preview = data.waitingPreview
   }
 
-  const startLiveFeed = async () => {
+  const startLiveFeed = async (): Promise<void> => {
     await refresh()
     if (source === undefined) {
       source = queueEventSource()
-      source.onmessage = () => refresh()
+      source.onmessage = () => {
+        void refresh()
+      }
+      source.onerror = () => {
+        // EventSource auto-reconnects; the error event fires per
+        // failed connection attempt. Surface it once so a stalled
+        // backend is visible, but do not throw.
+        error = "live feed: connection lost (retrying…)"
+      }
     }
   }
 
-  const onLogin = async (event: SubmitEvent) => {
+  /**
+   * Run an action against the worker. Guarantees `busy` is released
+   * even on fetch reject; surfaces the error tag/code in `error` so
+   * stalls are debuggable from the UI alone.
+   */
+  const runAction = async <A>(
+    label: string,
+    fn: () => Promise<ApiResult<A>>,
+  ): Promise<void> => {
+    busy = true
+    error = null
+    try {
+      const r = await fn()
+      if (!r.ok) {
+        error = `${label}: ${r.error._tag} (${r.error.code})`
+        if (r.error._tag === "MissingStaffCapability") {
+          onLogout()
+          return
+        }
+      }
+    } catch (e) {
+      error = `${label}: ${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      busy = false
+    }
+    // Refresh after every action — successful or not — so the queue
+    // counters reflect any concurrent change. Failures inside refresh
+    // are themselves swallowed by the helper.
+    void refresh()
+  }
+
+  const onLogin = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
     if (token.length === 0) return
     localStorage.setItem("queue.staffToken", token)
     authenticated = true
-    // onMount は component mount 時に 1 回しか走らないので、
-    // ログイン直後 (authenticated false → true) にも live feed を
-    // 起動する。 さもないと preview が空のまま固定される。
+    // onMount only runs on component mount; arriving here means the
+    // user just typed the token, so kick off the live feed manually.
     await startLiveFeed()
   }
 
-  const onLogout = () => {
+  const onLogout = (): void => {
     localStorage.removeItem("queue.staffToken")
     token = ""
     authenticated = false
@@ -60,35 +111,31 @@
     waitingCount = 0
     serving = null
     preview = []
-  }
-
-  const wrap = async <A>(fn: () => Promise<{ ok: boolean; error?: { _tag: string } }>) => {
-    busy = true
     error = null
-    const r = await fn()
-    busy = false
-    if (!r.ok && r.error !== undefined) {
-      error = r.error._tag
-      if (r.error._tag === "MissingStaffCapability") onLogout()
-    }
-    await refresh()
   }
 
-  const onCallNext = () => wrap(() => callNext(token))
-  const onMarkServed = () => {
-    if (serving === null) return Promise.resolve()
-    return wrap(() => markServed(token, serving.id))
+  const onCallNext = (): Promise<void> =>
+    runAction("call-next", () => callNext(token))
+
+  const onMarkServed = (): Promise<void> => {
+    const target = serving
+    if (target === null) return Promise.resolve()
+    return runAction("mark-served", () => markServed(token, target.id))
   }
-  const onMarkNoShow = () => {
-    if (serving === null) return Promise.resolve()
-    return wrap(() => markNoShow(token, serving.id))
+
+  const onMarkNoShow = (): Promise<void> => {
+    const target = serving
+    if (target === null) return Promise.resolve()
+    return runAction("mark-no-show", () => markNoShow(token, target.id))
   }
-  const onCancel = (id: string) => wrap(() => staffCancel(token, id, "staff cancel"))
+
+  const onCancel = (id: string): Promise<void> =>
+    runAction("cancel", () => staffCancel(token, id, "staff cancel"))
 
   onMount(async () => {
-    // token を localStorage 復元済の場合は authenticated = true で
-    // mount される。 その場合のみ即 live feed 起動。 token 未入力で
-    // mount された場合は onLogin 内で startLiveFeed が走る。
+    // Token restored from localStorage → `authenticated = true` at
+    // construction → start the live feed. Otherwise wait until the
+    // login form fires `onLogin`.
     if (authenticated) await startLiveFeed()
   })
 
@@ -199,6 +246,7 @@
   }
   button:disabled {
     opacity: 0.5;
+    cursor: not-allowed;
   }
   button.primary {
     background: #0071e3;
@@ -259,6 +307,9 @@
     padding: 0.75rem;
     border-radius: 8px;
     margin: 1rem 0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.85rem;
+    word-break: break-word;
   }
   h2 {
     margin: 1.5rem 0 0.75rem;
