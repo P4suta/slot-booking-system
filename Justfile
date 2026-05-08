@@ -349,6 +349,15 @@ error-docs-drift-check:
     just gen-error-docs
     git diff --exit-code -- docs/error-codes.md
 
+# End-to-end queue smoke against a running `wrangler dev` (port
+# 8787 by default). Drives Issue -> CallNext -> Recall -> CallNext
+# -> MarkServed and asserts the wire envelope at each step. The
+# staff token is sourced from $STAFF_SESSION_SECRET on the host;
+# wrangler dev reads `apps/default/.dev.vars` for the same value
+# (see `apps/default/.dev.vars.example`).
+smoke-queue:
+    bash apps/default/scripts/smoke-queue-flow.sh
+
 # Full CI gate: check + build (and the apps/default dev smoke happens
 # externally on demand via `just dev-default`).
 ci: check build
