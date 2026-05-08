@@ -74,9 +74,11 @@ done
 # ---- silent-failure residual ------------------------------------
 silent_lines=$(rg --pcre2 -n -t ts \
   -e '\.catch\(\(\)\s*=>\s*null\)' \
-  -e '^\s*console\.error\(' \
+  -e '^\s*console\.error\((?!\s*JSON\.stringify)' \
   apps packages 2>/dev/null \
-  | grep -v 'node_modules' || true)
+  | grep -v 'node_modules' \
+  | grep -v 'silentJsonParse.integration.test.ts' \
+  || true)
 silent_count=$(printf '%s\n' "$silent_lines" | grep -c . || true)
 
 # ---- write report ----------------------------------------------

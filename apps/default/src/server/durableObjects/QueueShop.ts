@@ -113,12 +113,25 @@ export class QueueShop extends DurableObject<Env> {
         onSuccess: (ticket) =>
           Effect.succeed({ ok: true, ticket: encodeTicket(ticket) } satisfies QueueResult),
         onFailure: (cause) => {
-          console.error("[QueueShop] dispatch cause:", cause)
           const fails = cause.reasons.filter(Cause.isFailReason)
           const first = fails[0]?.error
-          if (first?._tag === "Storage") {
-            console.error("[QueueShop] Storage reason:", first.reason, "cause:", first.cause)
-          }
+          console.error(
+            JSON.stringify({
+              _tag: "DispatchFailure",
+              code: "I_DO_DISPATCH_FAILURE",
+              severity: "infrastructure",
+              actionType: action.type,
+              errorTag: first?._tag ?? "Defect",
+              errorCode: first !== undefined ? codeOf(first) : "E_DEFECT",
+              storageReason: first?._tag === "Storage" ? first.reason : undefined,
+              storageCause:
+                first?._tag === "Storage"
+                  ? first.cause instanceof Error
+                    ? first.cause.message
+                    : String(first.cause)
+                  : undefined,
+            }),
+          )
           return Effect.succeed({
             ok: false,
             error: {
