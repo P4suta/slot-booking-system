@@ -29,20 +29,28 @@ recorded here as future work.
   `ReadonlySet<StaffScope>` since 1-bit lattices do not benefit from
   the bitmap layout.
 
-### Future work (recorded but not shipped)
+### Phase 5 follow-up (shipped)
 
-- Replace the shared header with a cookie-backed session: `scrypt`
-  password hashing, `jose` HS256 JWT signed under
-  `STAFF_SESSION_SECRET`, `__Host-staff_session` cookie with
-  `SameSite=Strict; HttpOnly; Secure`.
-- D1 `staff_session` table: `(staff_id, password_hash,
-  capability_scopes, created_at, updated_at)`.
-- `Mutation.staffLogin` (or REST `POST /api/v1/auth/staff-login`)
-  exchanging credentials for a session token.
-
-The Iron-Principles "zero external deps" rule already permits
-`@noble/hashes` (scrypt) and `jose` (JWT) as workers-compatible
-mainstream packages.
+- `POST /api/v1/staff/login` exchanges the deployment secret for
+  two surfaces in one round trip: an HS256 JWT in the response
+  body (`Authorization: Bearer <token>` for API consumers) and an
+  HMAC-signed `__Host-staff_session` cookie (HttpOnly, Secure,
+  SameSite=Strict, Path=/) for the staff dashboard. Both share an
+  8-hour TTL.
+- `requireStaff` (`apps/default/src/server/http/router.ts`)
+  accepts three credential surfaces: the legacy `x-staff-token`
+  header, a Bearer JWT, or the cookie session. Each is verified
+  through a constant-time path (`timingSafeEqual` for the legacy
+  header, `jose.jwtVerify` for the JWT, `verifySession` —
+  itself folding through `timingSafeEqual` — for the cookie).
+- The JWT carries `{ sub: "staff", capabilities:
+  ["operate-queue"], iss, aud, exp, iat }`; the cookie carries
+  the same shape minus the JWT-specific iss / aud claims.
+- The D1 `staff_session` table + scrypt password hashing are
+  still future work; the current login compares against the
+  deployment-wide `STAFF_SESSION_SECRET` rotated through
+  `wrangler secret put`. A multi-staff catalog with per-account
+  capabilities lands when the operational surface needs it.
 
 ## Consequences
 

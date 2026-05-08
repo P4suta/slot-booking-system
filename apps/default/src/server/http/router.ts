@@ -2,7 +2,10 @@ import { codeOf, parseCustomerHandleStrict, parseTicketId } from "@booking/core"
 import { Result, Schema } from "effect"
 import { Hono } from "hono"
 import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
+import { verifyStaffJwt } from "../security/jwt.js"
+import { readSessionCookie, verifySession } from "../security/session.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
+import { handleStaffLogin } from "./auth/login.js"
 import { DEFECT_STATUS, statusForTag } from "./errorEnvelope.js"
 import { openApiDocument } from "./openapi.js"
 import { rateLimitMiddleware } from "./rateLimit.js"
@@ -86,12 +89,31 @@ const failResponse = (
     headers: { "content-type": "application/json; charset=utf-8" },
   })
 
-const requireStaff = (c: {
+/**
+ * Staff capability guard — accepts three credential surfaces:
+ *
+ *   1. `x-staff-token: <secret>` header. Legacy shape kept for
+ *      curl scripts + the local-dev workflow; constant-time
+ *      compared with `STAFF_SESSION_SECRET` (ADR-0058).
+ *   2. `Authorization: Bearer <jwt>` header. HS256 JWT issued
+ *      by `POST /api/v1/staff/login`; verified through
+ *      `jose.jwtVerify` (ADR-0055 follow-up).
+ *   3. `Cookie: __Host-staff_session=<token>`. HMAC-signed
+ *      cookie issued by the same login endpoint; verified
+ *      through `verifySession` which itself folds the MAC
+ *      check through `timingSafeEqual`.
+ *
+ * Any one of the three is sufficient. Failures uniformly return
+ * 401 + `MissingStaffCapability` so an attacker cannot
+ * distinguish "wrong header form" from "expired JWT" from
+ * "wrong cookie sig".
+ */
+const requireStaff = async (c: {
   req: { header: (k: string) => string | undefined }
   env: Env
-}): { ok: true } | { ok: false; res: Response } => {
+}): Promise<{ ok: true } | { ok: false; res: Response }> => {
   const secret = c.env.STAFF_SESSION_SECRET
-  if (secret === undefined) {
+  if (secret === undefined || secret === "") {
     return {
       ok: false,
       res: failResponse(503, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
@@ -99,28 +121,37 @@ const requireStaff = (c: {
       }),
     }
   }
-  const presented = c.req.header("x-staff-token")
-  if (presented === undefined) {
-    return {
-      ok: false,
-      res: failResponse(401, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
-        reason: "absent",
-      }),
+  // Header-token path (legacy + curl-friendly).
+  const headerToken = c.req.header("x-staff-token")
+  if (headerToken !== undefined && timingSafeEqual(headerToken, secret)) {
+    return { ok: true }
+  }
+  // Bearer JWT path.
+  const auth = c.req.header("authorization")
+  if (auth?.startsWith("Bearer ") === true) {
+    const jwt = auth.slice("Bearer ".length).trim()
+    if (jwt.length > 0) {
+      const result = await verifyStaffJwt(secret, jwt)
+      if (result.ok) return { ok: true }
     }
   }
-  // Constant-time comparison: `presented !== secret` short-circuits
-  // on the first mismatching byte, leaking the secret prefix via
-  // response timing (CWE-208). timingSafeEqual folds an XOR
-  // accumulator over the full encoded byte length.
-  if (!timingSafeEqual(presented, secret)) {
-    return {
-      ok: false,
-      res: failResponse(401, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
-        reason: "wrong_kind",
-      }),
-    }
+  // Cookie session path.
+  const cookieValue = readSessionCookie(c.req.header("cookie"))
+  if (cookieValue !== null) {
+    const result = await verifySession(secret, cookieValue)
+    if (result.ok) return { ok: true }
   }
-  return { ok: true }
+  // Nothing matched — uniform failure envelope so the surface
+  // does not leak which credential shape was attempted.
+  return {
+    ok: false,
+    res: failResponse(401, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
+      reason:
+        headerToken === undefined && auth === undefined && cookieValue === null
+          ? "absent"
+          : "wrong_kind",
+    }),
+  }
 }
 
 export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
@@ -132,6 +163,11 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const cors = corsAllowlist(c.env.IS_DEV === "1", allowed)
     return cors(c as never, next)
   })
+
+  // Staff login — exchanges the deployment secret for a JWT
+  // (response body) + an HMAC-signed cookie session. Bearer +
+  // cookie are both honoured by requireStaff.
+  app.post("/api/v1/staff/login", (c) => handleStaffLogin(c))
 
   // Issue is rate-limited per CF-Connecting-IP (60 / min).
   app.post("/api/v1/tickets", rateLimitMiddleware("RL_ISSUE"), async (c) => {
@@ -181,7 +217,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const raw: unknown = await c.req.json().catch(() => null)
     const isStaff = c.req.header("x-staff-token") !== undefined
     if (isStaff) {
-      const guard = requireStaff(c)
+      const guard = await requireStaff(c)
       if (!guard.ok) return guard.res
       const decoded = Schema.decodeUnknownResult(StaffCancelBodySchema)(raw)
       if (Result.isFailure(decoded)) return failResponse(422, "InvalidBody", "E_VAL_BODY")
@@ -242,14 +278,14 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
 
   // Staff mutations rate-limited per token hash (300 / min).
   app.post("/api/v1/queue/call-next", rateLimitMiddleware("RL_OPERATE"), async (c) => {
-    const guard = requireStaff(c)
+    const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
     return dispatchEnvelope(await stub(c.env).dispatch({ type: "CallNext", actor: "staff" }))
   })
 
   // POST /api/v1/tickets/:id/served — staff
   app.post("/api/v1/tickets/:id/served", async (c) => {
-    const guard = requireStaff(c)
+    const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
     const idR = parseTicketId(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
@@ -260,7 +296,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
 
   // POST /api/v1/tickets/:id/no-show — staff
   app.post("/api/v1/tickets/:id/no-show", async (c) => {
-    const guard = requireStaff(c)
+    const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
     const idR = parseTicketId(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
@@ -275,7 +311,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
 
   // POST /api/v1/tickets/:id/recall — staff
   app.post("/api/v1/tickets/:id/recall", async (c) => {
-    const guard = requireStaff(c)
+    const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
     const idR = parseTicketId(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")

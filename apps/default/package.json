@@ -29,7 +29,8 @@
     "@opentelemetry/api": "latest",
     "drizzle-orm": "rc",
     "effect": "beta",
-    "hono": "latest"
+    "hono": "latest",
+    "jose": "latest"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "latest",

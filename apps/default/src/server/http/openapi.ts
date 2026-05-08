@@ -260,6 +260,51 @@ export const openApiDocument = {
         },
       },
     },
+    "/staff/login": {
+      post: {
+        tags: ["staff"],
+        summary: "Exchange the staff secret for a JWT + cookie session",
+        description:
+          "Accepts `{ password }`. On success returns `{ ok: true, " +
+          "token, expiresIn }` and sets the `__Host-staff_session` " +
+          "cookie. The Bearer token + the cookie are both honoured " +
+          "by requireStaff; clients pick whichever fits their " +
+          "transport.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["password"],
+                properties: { password: { type: "string" } },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Login succeeded",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["ok", "token", "expiresIn"],
+                  properties: {
+                    ok: { const: true },
+                    token: { type: "string" },
+                    expiresIn: { type: "integer", minimum: 1 },
+                  },
+                },
+              },
+            },
+          },
+          "401": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+          "503": ERROR_RESPONSE,
+        },
+      },
+    },
     "/openapi.json": {
       get: {
         tags: ["projection"],
