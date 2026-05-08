@@ -1,0 +1,146 @@
+import { graphqlEndpoint } from "./graphql/endpoint.js"
+
+/**
+ * Resolve the queue REST base URL. The slot-graph era pointed
+ * `/graphql` at the worker; the queue pivot's REST surface lives
+ * under `/api/v1/`. The same env-driven endpoint resolver applies —
+ * `PUBLIC_GRAPHQL_ENDPOINT` is overloaded as the worker base, with
+ * the trailing `/graphql` segment trimmed if present.
+ */
+const baseUrl = (): string => {
+  const raw = graphqlEndpoint()
+  return raw.replace(/\/graphql\/?$/, "")
+}
+
+export type ErrorEnvelope = {
+  readonly _tag: string
+  readonly code: string
+  readonly reason?: string
+}
+
+export type Ticket = {
+  readonly id: string
+  readonly seq: number
+  readonly state: "Waiting" | "Called" | "Served" | "NoShow" | "Cancelled"
+  readonly nameKana: string | null
+  readonly phoneLast4: string | null
+  readonly freeText: string | null
+  readonly issuedAt: string
+  readonly calledAt?: string
+  readonly servedAt?: string
+  readonly cancelledAt?: string
+  readonly markedAt?: string
+}
+
+export type ShopState = {
+  readonly waitingCount: number
+  readonly serving: Ticket | null
+  readonly waitingPreview: ReadonlyArray<{ id: string; seq: number }>
+}
+
+export type ApiResult<A> = { ok: true; value: A } | { ok: false; error: ErrorEnvelope }
+
+const json = async <A>(res: Response): Promise<ApiResult<A>> => {
+  const body = (await res.json().catch(() => null)) as { ok: boolean; error?: ErrorEnvelope }
+  if (res.ok && body?.ok === true) return { ok: true, value: body as unknown as A }
+  return {
+    ok: false,
+    error: body?.error ?? { _tag: "Network", code: `E_NET_${res.status}` },
+  }
+}
+
+export const issueTicket = async (input: {
+  nameKana: string
+  phoneLast4: string
+  freeText: string | null
+}): Promise<ApiResult<{ ticket: Ticket }>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/tickets`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  return json(res)
+}
+
+export const myTicket = async (input: {
+  ticketId: string
+  nameKana: string
+  phoneLast4: string
+}): Promise<ApiResult<{ ticket: Ticket }>> => {
+  const params = new URLSearchParams(input)
+  const res = await fetch(`${baseUrl()}/api/v1/tickets/me?${params}`)
+  return json(res)
+}
+
+export const cancelTicket = async (
+  ticketId: string,
+  body: { nameKana: string; phoneLast4: string; reason: string },
+): Promise<ApiResult<{ ticket: Ticket }>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return json(res)
+}
+
+export const shopState = async (): Promise<ApiResult<ShopState>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/queue`)
+  return json(res)
+}
+
+/** Connect to the SSE projection feed. The caller closes the source. */
+export const queueEventSource = (): EventSource =>
+  new EventSource(`${baseUrl()}/api/v1/queue/events`)
+
+/* -------------------------------------------------------------------------- */
+/* Staff actions — protected by x-staff-token (Phase 4 future-work for cookie). */
+/* -------------------------------------------------------------------------- */
+
+const staffHeaders = (token: string) => ({
+  "content-type": "application/json",
+  "x-staff-token": token,
+})
+
+export const callNext = async (token: string): Promise<ApiResult<{ ticket: Ticket }>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/queue/call-next`, {
+    method: "POST",
+    headers: staffHeaders(token),
+  })
+  return json(res)
+}
+
+export const markServed = async (
+  token: string,
+  ticketId: string,
+): Promise<ApiResult<{ ticket: Ticket }>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/served`, {
+    method: "POST",
+    headers: staffHeaders(token),
+  })
+  return json(res)
+}
+
+export const markNoShow = async (
+  token: string,
+  ticketId: string,
+): Promise<ApiResult<{ ticket: Ticket }>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/no-show`, {
+    method: "POST",
+    headers: staffHeaders(token),
+  })
+  return json(res)
+}
+
+export const staffCancel = async (
+  token: string,
+  ticketId: string,
+  reason: string,
+): Promise<ApiResult<{ ticket: Ticket }>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/cancel`, {
+    method: "POST",
+    headers: staffHeaders(token),
+    body: JSON.stringify({ reason }),
+  })
+  return json(res)
+}
