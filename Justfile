@@ -208,8 +208,17 @@ diagnose-tsescapes:
 # Test
 # ---------------------------------------------------------------------------
 
+# Each workspace runs under a hard deadline. The `default`
+# workspace's vitest-pool-workers 0.16.x runner hangs after the
+# last test passes (Miniflare DO bindings hold the runtime up);
+# `scripts/test-runner.sh` parses the verbose-reporter stream
+# post-deadline and treats "all ✓, no ✗, timeout took us out" as
+# success. The 20 s cap is comfortably above the 5-7 s the suite
+# actually needs, so the wrapper does NOT mask a real slowdown.
 test:
-    {{DEV}} {{PNPM}} -r run test
+    {{DEV}} bash scripts/test-runner.sh @booking/core
+    {{DEV}} env TEST_DEADLINE=20 bash scripts/test-runner.sh default
+    {{DEV}} bash scripts/test-runner.sh web
 
 test-watch:
     {{DEV}} {{PNPM}} -r run test:watch

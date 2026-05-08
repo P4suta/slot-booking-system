@@ -37,10 +37,10 @@ pre-commit:
       run: actionlint {staged_files}
     biome-staged:
       glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,json}"
-      run: docker compose run --rm dev ./node_modules/.bin/biome check --error-on-warnings --no-errors-on-unmatched {staged_files}
+      run: bash scripts/dev-exec.sh ./node_modules/.bin/biome check --error-on-warnings --no-errors-on-unmatched {staged_files}
     comment-bans-staged:
       glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,md,sql,yaml,yml,toml}"
-      run: docker compose run --rm dev bash scripts/lint/comment-bans.sh {staged_files}
+      run: bash scripts/dev-exec.sh bash scripts/lint/comment-bans.sh {staged_files}
 
 commit-msg:
   commands:
@@ -53,31 +53,31 @@ pre-push:
     - rebase
   commands:
     codegen:
-      run: docker compose run --rm dev bash -c "cd apps/web && corepack pnpm run paraglide"
+      run: bash scripts/dev-exec.sh bash -c "cd apps/web && corepack pnpm run paraglide"
     typecheck:
-      run: docker compose run --rm dev ./node_modules/.bin/tsc -b --pretty
+      run: bash scripts/dev-exec.sh ./node_modules/.bin/tsc -b --pretty
     biome-full:
-      run: docker compose run --rm dev ./node_modules/.bin/biome check --error-on-warnings .
+      run: bash scripts/dev-exec.sh ./node_modules/.bin/biome check --error-on-warnings .
     eslint-full:
-      run: docker compose run --rm dev ./node_modules/.bin/eslint . --max-warnings 0
+      run: bash scripts/dev-exec.sh ./node_modules/.bin/eslint . --max-warnings 0
     arch:
-      run: docker compose run --rm dev ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
+      run: bash scripts/dev-exec.sh ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
     test:
-      run: docker compose run --rm dev bash -c "cd packages/core && ./node_modules/.bin/vitest run"
+      run: bash scripts/dev-exec.sh bash scripts/test-runner.sh @booking/core
     test-default:
-      run: docker compose run --rm dev bash -c "cd apps/default && ./node_modules/.bin/vitest run"
+      run: bash scripts/dev-exec.sh env TEST_DEADLINE=20 bash scripts/test-runner.sh default
     test-web:
-      run: docker compose run --rm dev bash -c "cd apps/web && ./node_modules/.bin/vitest run"
+      run: bash scripts/dev-exec.sh bash scripts/test-runner.sh web
     comment-bans-full:
-      run: docker compose run --rm dev bash scripts/lint/comment-bans.sh
+      run: bash scripts/dev-exec.sh bash scripts/lint/comment-bans.sh
     strict-code:
       # Scope: packages/core/src only — the imperative shell in
       # apps/default/src/server/durableObjects/ runs outside the
       # Effect runtime and legitimately uses raw Date for alarm
       # scheduling / outbox recordedAt.
       run: |
-        docker compose run --rm dev bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
+        bash scripts/dev-exec.sh bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
     dead-code:
-      run: docker compose run --rm dev ./node_modules/.bin/knip --treat-config-hints-as-errors
+      run: bash scripts/dev-exec.sh ./node_modules/.bin/knip --treat-config-hints-as-errors
     type-coverage:
-      run: docker compose run --rm dev corepack pnpm -F @booking/core run type-coverage
+      run: bash scripts/dev-exec.sh corepack pnpm -F @booking/core run type-coverage
