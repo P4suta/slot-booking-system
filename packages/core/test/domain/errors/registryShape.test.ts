@@ -8,13 +8,13 @@ import { describe, expect, it } from "vitest"
  * `just error-docs-drift-check`) and the prefix-grouping convention
  * the docs and ADR-0017 both rely on.
  *
- * Layout: 17 validation entries → 13 domain entries → 3 infrastructure.
- * The validity of `errorToGraphQLPayload` and the i18n-key generator
- * both rest on this contiguous severity ordering.
+ * Queue-pivot layout: 6 validation entries → 8 domain entries → 3
+ * infrastructure. The validity of `errorToGraphQLPayload` and the
+ * i18n-key generator both rest on this contiguous severity ordering.
  */
 describe("errorClassRegistry", () => {
-  it("has 33 entries", () => {
-    expect(errorClassRegistry).toHaveLength(33)
+  it("has 17 entries", () => {
+    expect(errorClassRegistry).toHaveLength(17)
   })
 
   const severitiesOf = (): readonly string[] =>
@@ -22,11 +22,11 @@ describe("errorClassRegistry", () => {
       (cls) => (cls as { readonly severity: "validation" | "domain" | "infrastructure" }).severity,
     )
 
-  it("groups severities in 17/13/3 contiguous blocks", () => {
+  it("groups severities in 6/8/3 contiguous blocks", () => {
     const seen = severitiesOf()
-    expect(seen.slice(0, 17).every((s) => s === "validation")).toBe(true)
-    expect(seen.slice(17, 30).every((s) => s === "domain")).toBe(true)
-    expect(seen.slice(30, 33).every((s) => s === "infrastructure")).toBe(true)
+    expect(seen.slice(0, 6).every((s) => s === "validation")).toBe(true)
+    expect(seen.slice(6, 14).every((s) => s === "domain")).toBe(true)
+    expect(seen.slice(14, 17).every((s) => s === "infrastructure")).toBe(true)
   })
 
   it("uses unique error codes", () => {
