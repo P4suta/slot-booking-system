@@ -38,6 +38,14 @@ export const CallNext = (
     for (const t of all) tickets.set(t.id, t)
     const next = head({ tickets })
     if (next === null) return yield* Effect.fail(new QueueEmptyError({}))
+    // `repo.load(next.id)` defensively maps a missing aggregate / a
+    // non-Waiting load result to QueueEmpty. Both arms cover a race
+    // window only the multi-writer DO can hit (head() saw the row,
+    // load() did not / saw it after a transition). The catchTag
+    // callback is exercised through a stub repo in the use-case
+    // tests; the `state !== Waiting` arm is genuinely unreachable
+    // through the InMemory adapter (head() already filtered) so
+    // sits behind `v8 ignore` until a DO-level race fixture lands.
     const loaded = yield* repo
       .load(next.id)
       .pipe(
@@ -45,19 +53,19 @@ export const CallNext = (
           Effect.fail<DomainError>(new QueueEmptyError({})),
         ),
       )
+    /* v8 ignore next 3 */
     if (loaded.state.state !== "Waiting") {
       return yield* Effect.fail(new QueueEmptyError({}))
     }
     const eventId = yield* idgen.newTicketEventId
     const at = yield* clock.nowInstant
-    const r = applyCallNext(loaded.state, at, eventId, actor)
-    if (r._tag === "Failure") return yield* Effect.fail(r.failure)
-    yield* repo.save(next.id, loaded.revision, [r.success.event], r.success.ticket)
+    const { ticket, event } = applyCallNext(loaded.state, at, eventId, actor)
+    yield* repo.save(next.id, loaded.revision, [event], ticket)
     yield* logger.info(
       infoPayload("CallNext", "I_USECASE_CALL_NEXT", {
         ticketId: next.id,
         seq: next.seq,
       }),
     )
-    return r.success.ticket
+    return ticket
   })

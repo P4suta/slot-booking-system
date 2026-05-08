@@ -6,6 +6,7 @@
     markNoShow,
     markServed,
     queueEventSource,
+    recall,
     staffCancel,
     staffShopState,
     type Ticket,
@@ -21,11 +22,21 @@
   let busy = $state(false)
   let error: string | null = $state(null)
   let source: EventSource | undefined
+  // 直前の待ち人数。 SSE refresh で増分を検出して、 タブが背面に
+  // ある間だけ Notification を発火する。 null = 初回 refresh 前
+  // (= ページロード直後の「5件溜まってます」では鳴らさない)。
+  let prevWaitingCount: number | null = null
 
   /**
    * Re-fetch the staff-side shop state. Tolerant: a transient network
    * error never throws — it just leaves the previous state on screen
    * and surfaces the message in `error`.
+   *
+   * After applying the new snapshot, compare `waitingCount` against
+   * the previously-observed value and fire a desktop notification when
+   * the queue grew while the tab was in the background. The first
+   * observation initialises the baseline (no notification fires for
+   * the queue that already existed at page-load time).
    */
   const refresh = async (): Promise<void> => {
     try {
@@ -40,12 +51,50 @@
         serving: Ticket | null
         waitingPreview: ReadonlyArray<Ticket>
       }
-      waitingCount = data.waitingCount
+      const nextCount = data.waitingCount
+      if (prevWaitingCount !== null && nextCount > prevWaitingCount) {
+        notifyArrival(nextCount - prevWaitingCount)
+      }
+      prevWaitingCount = nextCount
+      waitingCount = nextCount
       serving = data.serving
       preview = data.waitingPreview
     } catch (e) {
       error = `refresh: ${String(e)}`
     }
+  }
+
+  /**
+   * Fire a desktop Notification announcing newly-arrived tickets.
+   * Skipped when permission was declined, when the runtime has no
+   * Notification API (older mobile Safari, SSR), or when the tab is
+   * already in the foreground (the dashboard's own UI suffices).
+   * `tag` collapses repeated bursts into a single notification.
+   */
+  const notifyArrival = (delta: number): void => {
+    if (typeof Notification === "undefined") return
+    if (Notification.permission !== "granted") return
+    if (typeof document !== "undefined" && !document.hidden) return
+    const body = delta === 1 ? "新しい順番待ちが追加されました" : `${delta}件の新規順番待ち`
+    try {
+      new Notification("店舗管理", { body, tag: "queue-new-arrival" })
+    } catch {
+      // Some browsers (notably mobile) throw on direct construction
+      // outside ServiceWorker context. Swallow — the in-app counter
+      // is still updated.
+    }
+  }
+
+  /**
+   * Ask the user once for desktop-notification permission. Triggered
+   * from a user-gesture handler (login submit / mount when already
+   * authenticated) because Chrome / Safari reject `requestPermission`
+   * outside an interaction.
+   */
+  const ensureNotificationPermission = (): void => {
+    if (typeof Notification === "undefined") return
+    if (Notification.permission !== "default") return
+    void Notification.requestPermission()
   }
 
   const startLiveFeed = async (): Promise<void> => {
@@ -112,6 +161,10 @@
     if (token.length === 0) return
     localStorage.setItem("queue.staffToken", token)
     authenticated = true
+    // The submit click is the user gesture browsers require for
+    // `Notification.requestPermission` — request before kicking off
+    // the live feed so notifications are armed for the first arrival.
+    ensureNotificationPermission()
     // onMount only runs on component mount; arriving here means the
     // user just typed the token, so kick off the live feed manually.
     await startLiveFeed()
@@ -126,6 +179,7 @@
     waitingCount = 0
     serving = null
     preview = []
+    prevWaitingCount = null
     error = null
   }
 
@@ -144,6 +198,25 @@
     return runAction("mark-no-show", () => markNoShow(token, target.id))
   }
 
+  /**
+   * Take back an accidental "次を呼ぶ". Confirms first because the
+   * action is rare and usually a "oops"; canceling the dialog leaves
+   * the call in place. The worker emits a `Recalled` event alongside
+   * the original `Called`, so the audit log retains both — the UI
+   * promise of "なかったことに" never erases history.
+   */
+  const onRecall = (): Promise<void> => {
+    const target = serving
+    if (target === null) return Promise.resolve()
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("呼び出しを取消して列の先頭に戻しますか？")
+    ) {
+      return Promise.resolve()
+    }
+    return runAction("recall", () => recall(token, target.id))
+  }
+
   const onCancel = (id: string): Promise<void> =>
     runAction("cancel", () => staffCancel(token, id, "staff cancel"))
 
@@ -151,7 +224,10 @@
     // Token restored from localStorage → `authenticated = true` at
     // construction → start the live feed. Otherwise wait until the
     // login form fires `onLogin`.
-    if (authenticated) await startLiveFeed()
+    if (authenticated) {
+      ensureNotificationPermission()
+      await startLiveFeed()
+    }
   })
 
   onDestroy(() => source?.close())
@@ -191,7 +267,6 @@
           {#if serving.freeText !== null && serving.freeText !== ""}
             <p class="serving-meta">📝 {serving.freeText}</p>
           {/if}
-          <p class="ticket-id">{serving.id}</p>
         {:else}
           <strong class="muted">—</strong>
         {/if}
@@ -204,6 +279,9 @@
       {#if serving !== null}
         <button onclick={onMarkServed} disabled={busy}>対応完了</button>
         <button class="warn" onclick={onMarkNoShow} disabled={busy}>不在</button>
+        <button class="ghost" onclick={onRecall} disabled={busy} title="呼び出しを取消して列の先頭に戻す">
+          呼び出し取消
+        </button>
       {/if}
     </div>
     {#if error !== null}
@@ -225,7 +303,6 @@
                   <span class="free-text">— {t.freeText}</span>
                 {/if}
               </p>
-              <p class="info-id">{t.id.slice(-8)}</p>
             </div>
             <button class="warn small" onclick={() => onCancel(t.id)} disabled={busy}>キャンセル</button>
           </li>
@@ -287,6 +364,11 @@
   button.warn {
     background: #c11;
   }
+  button.ghost {
+    background: transparent;
+    color: #1d1d1f;
+    border: 1px solid #d2d2d7;
+  }
   button.small {
     padding: 0.4rem 0.8rem;
     font-size: 0.85rem;
@@ -320,13 +402,6 @@
   }
   .metric .muted {
     color: #d2d2d7;
-  }
-  .ticket-id {
-    margin: 0.25rem 0 0;
-    font-family: ui-monospace, monospace;
-    font-size: 0.8rem;
-    color: #86868b;
-    word-break: break-all;
   }
   .serving-name {
     margin: 0.25rem 0 0;
@@ -409,11 +484,5 @@
   }
   .free-text {
     color: #1d1d1f;
-  }
-  .info-id {
-    margin: 0;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 0.75rem;
-    color: #aeaeb2;
   }
 </style>

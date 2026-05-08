@@ -155,6 +155,24 @@ export const markNoShow = async (
   return json(res)
 }
 
+/**
+ * Recall a mistakenly-called ticket: Called → Waiting. The ticket
+ * keeps its original `seq` so it returns to the head of the queue;
+ * the worker emits a `Recalled` event alongside the original `Called`
+ * for audit. Surfaces the same `InvalidStateTransition` (409) the
+ * other staff actions do when racing with a colleague.
+ */
+export const recall = async (
+  token: string,
+  ticketId: string,
+): Promise<ApiResult<{ ticket: Ticket }>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/recall`, {
+    method: "POST",
+    headers: staffHeaders(token),
+  })
+  return json(res)
+}
+
 export const staffCancel = async (
   token: string,
   ticketId: string,

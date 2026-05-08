@@ -40,9 +40,8 @@ export const MarkServed = (
     }
     const eventId = yield* idgen.newTicketEventId
     const at = yield* clock.nowInstant
-    const r = applyMarkServed(loaded.state, at, eventId)
-    if (r._tag === "Failure") return yield* Effect.fail(r.failure)
-    yield* repo.save(ticketId, loaded.revision, [r.success.event], r.success.ticket)
+    const { ticket, event } = applyMarkServed(loaded.state, at, eventId)
+    yield* repo.save(ticketId, loaded.revision, [event], ticket)
     yield* logger.info(infoPayload("MarkServed", "I_USECASE_MARK_SERVED", { ticketId }))
-    return r.success.ticket
+    return ticket
   })

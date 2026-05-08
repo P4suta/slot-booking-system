@@ -31,12 +31,8 @@ import { summarizeParse } from "../errors/fromParseError.js"
  * })
  * ```
  */
-type BrandedStringConfig<B extends string, E extends DomainError> = {
+type BrandedStringCommon<B extends string, E extends DomainError> = {
   readonly brand: B
-  /** Regex refinement; lifts via `Schema.isPattern` so derive/ projections see it. */
-  readonly pattern?: RegExp
-  /** Opaque predicate refinement; lifts via `Schema.makeFilter`. Use when no regex applies. */
-  readonly predicate?: (s: string) => boolean
   /** Optional pre-decode normalisation (NFC/NFKC, trim, control-strip, …). */
   readonly normalize?: (s: string) => string
   /** Domain error constructor used to wrap the underlying parse failure. */
@@ -44,6 +40,24 @@ type BrandedStringConfig<B extends string, E extends DomainError> = {
     readonly reason: string
   }) => E
 }
+
+/**
+ * Discriminated-union config: every call site supplies exactly one of
+ * `pattern` (regex refinement, lifts via `Schema.isPattern` so the
+ * `derive/algebra.ts` predicate fold projects it to SQL) or
+ * `predicate` (opaque refinement, lifts via `Schema.makeFilter`).
+ * Forbidding "neither" at the type level removes the otherwise
+ * structurally-unreachable fallback arm in {@link brandedString}.
+ */
+type BrandedStringConfig<B extends string, E extends DomainError> =
+  | (BrandedStringCommon<B, E> & {
+      readonly pattern: RegExp
+      readonly predicate?: undefined
+    })
+  | (BrandedStringCommon<B, E> & {
+      readonly pattern?: undefined
+      readonly predicate: (s: string) => boolean
+    })
 
 type BrandedString<B extends string> = string & Brand.Brand<B>
 
@@ -55,12 +69,13 @@ export type BrandedStringResult<B extends string> = {
 export const brandedString = <B extends string, E extends DomainError>(
   config: BrandedStringConfig<B, E>,
 ): BrandedStringResult<B> => {
+  // The discriminated union above guarantees exactly one of `pattern`
+  // / `predicate` is defined; TS narrows the union into the matching
+  // arm and the indexed reads below are total.
   const refined =
     config.pattern !== undefined
       ? Schema.String.check(Schema.isPattern(config.pattern))
-      : config.predicate !== undefined
-        ? Schema.String.check(Schema.makeFilter((s) => config.predicate?.(s) ?? false))
-        : Schema.String
+      : Schema.String.check(Schema.makeFilter(config.predicate))
 
   const branded = refined.pipe(Schema.brand(config.brand)) as unknown as Schema.Codec<
     BrandedString<B>,

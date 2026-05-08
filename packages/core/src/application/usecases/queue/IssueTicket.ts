@@ -37,7 +37,7 @@ export const IssueTicket = (
     const eventId = yield* idgen.newTicketEventId
     const seq = yield* repo.nextSeq()
     const at = yield* clock.nowInstant
-    const r = applyIssue({
+    const { ticket, event } = applyIssue({
       id,
       seq,
       nameKana: input.handle.nameKana,
@@ -46,13 +46,12 @@ export const IssueTicket = (
       at,
       eventId,
     })
-    if (r._tag === "Failure") return yield* Effect.fail(r.failure)
-    yield* repo.issue(id, [r.success.event], r.success.ticket)
+    yield* repo.issue(id, [event], ticket)
     yield* logger.info(
       infoPayload("IssueTicket", "I_USECASE_ISSUE_TICKET", {
         ticketId: id,
         seq,
       }),
     )
-    return r.success.ticket
+    return ticket
   })

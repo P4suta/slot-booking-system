@@ -111,6 +111,12 @@ const astToOpenAPI = (
     const properties: Record<string, OpenAPISchemaObject> = {}
     const required: string[] = []
     for (const prop of ast.propertySignatures) {
+      // `Schema.Struct` only takes string keys via the public surface;
+      // symbol-keyed property signatures only appear when an internal
+      // AST is hand-built. The `continue` arm is therefore unreachable
+      // through the public API; the guard remains as a forward-compat
+      // safety net for future Schema additions that admit symbols.
+      /* v8 ignore next */
       if (typeof prop.name !== "string") continue
       properties[prop.name] = astToOpenAPI(prop.type, registry)
       required.push(prop.name)

@@ -102,6 +102,25 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
       tickets.set(event.ticketId, next)
       return { tickets }
     }
+    case "Recalled": {
+      const prior = tickets.get(event.ticketId)
+      if (prior === undefined || prior.state !== "Called") return snap
+      // Drop the Called-only fields by reconstructing the common
+      // shape verbatim — keeping `seq` is the point (the ticket
+      // returns to the head of the queue), but `calledAt` /
+      // `calledBy` must NOT leak into the Waiting variant.
+      const next: Ticket = {
+        id: prior.id,
+        seq: prior.seq,
+        nameKana: prior.nameKana,
+        phoneLast4: prior.phoneLast4,
+        freeText: prior.freeText,
+        issuedAt: prior.issuedAt,
+        state: "Waiting",
+      }
+      tickets.set(event.ticketId, next)
+      return { tickets }
+    }
   }
 }
 

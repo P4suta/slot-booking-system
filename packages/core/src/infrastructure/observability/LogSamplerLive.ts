@@ -28,7 +28,10 @@ const PROD_RATES: Readonly<Record<ErrorSeverity, number>> = {
 /** Rate-based decision — a fresh `Math.random()` per call. */
 const decideAtRate = (rate: number): boolean => {
   if (rate >= 1) return true
-  if (rate <= 0) return false
+  // `Math.random() < rate` already short-circuits to `false` for any
+  // `rate <= 0` (the RNG is in `[0, 1)` so the inequality cannot
+  // hold). No separate guard needed — the strict inequality carries
+  // both bounds.
   return Math.random() < rate
 }
 

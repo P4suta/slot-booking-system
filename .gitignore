@@ -19,6 +19,9 @@ Thumbs.db
 # Direnv
 .envrc.local
 
+# Claude Code runtime state (scheduled-task lock etc.)
+.claude/
+
 # Node / pnpm
 node_modules/
 .pnpm-store/

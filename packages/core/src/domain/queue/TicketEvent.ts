@@ -69,6 +69,22 @@ export const CancelledEventSchema = Schema.Struct({
 })
 export type CancelledEvent = Schema.Schema.Type<typeof CancelledEventSchema>
 
+/**
+ * Staff withdrew a {@link CalledEvent}: the customer was called by
+ * mistake and the ticket should be returned to the head of the
+ * waiting queue (its `seq` is preserved by the projection so the
+ * lattice's lowest-seq invariant is maintained). Distinct from
+ * {@link CancelledEvent} — the ticket is still active and will be
+ * re-called; the audit trail keeps both the original `Called` and
+ * its `Recalled` so "なかったことに" never erases history.
+ */
+export const RecalledEventSchema = Schema.Struct({
+  ...TicketEventBaseFields,
+  type: Schema.Literal("Recalled"),
+  recalledBy: ActorSchema,
+})
+export type RecalledEvent = Schema.Schema.Type<typeof RecalledEventSchema>
+
 /* -------------------------------------------------------------------------- */
 /* Top-level union                                                             */
 /* -------------------------------------------------------------------------- */
@@ -79,6 +95,7 @@ export const TicketEventSchema = Schema.Union([
   ServedEventSchema,
   NoShowedEventSchema,
   CancelledEventSchema,
+  RecalledEventSchema,
 ])
 export type TicketEvent = Schema.Schema.Type<typeof TicketEventSchema>
 
@@ -90,4 +107,5 @@ export const ALL_TICKET_EVENT_TYPES: readonly TicketEventType[] = [
   "Served",
   "NoShowed",
   "Cancelled",
+  "Recalled",
 ] as const

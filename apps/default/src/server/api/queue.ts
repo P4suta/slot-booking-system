@@ -275,6 +275,26 @@ export const routeQueueApi = async (request: Request, env: Env): Promise<Respons
     )
   }
 
+  // --- Staff: recall (undo accidental call-next) ---
+  // Called → Waiting; the audit log retains both events. The caller
+  // passes the ticket id so a stale click after a colleague already
+  // moved the ticket on fails with InvalidStateTransition (409)
+  // rather than recalling whoever happens to be Called now.
+  const recallMatch = path.match(/^\/api\/v1\/tickets\/([^/]+)\/recall$/)
+  if (recallMatch && request.method === "POST") {
+    const guard = requireOperateQueue(request, env.STAFF_SESSION_SECRET)
+    if (guard !== null) return guard
+    const idR = parseTicketId(recallMatch[1] as string)
+    if (Result.isFailure(idR)) return fail(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    return dispatchOk(
+      await stub(env).dispatch({
+        type: "Recall",
+        ticketId: idR.success,
+        actor: "staff",
+      }),
+    )
+  }
+
   // --- Subscription via SSE ---
   if (path === "/api/v1/queue/events" && request.method === "GET") {
     const stream = new ReadableStream<Uint8Array>({

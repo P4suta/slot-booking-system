@@ -8,6 +8,7 @@ import {
   IssueTicket,
   MarkNoShow,
   MarkServed,
+  Recall,
   SystemClockLive,
   type Ticket,
   type TicketId,
@@ -36,6 +37,7 @@ export type QueueAction =
   | { type: "CallNext"; actor: "staff" | "system" }
   | { type: "MarkServed"; ticketId: TicketId }
   | { type: "MarkNoShow"; ticketId: TicketId; actor: "staff" | "system" }
+  | { type: "Recall"; ticketId: TicketId; actor: "staff" | "system" }
   | {
       type: "CancelTicket"
       ticketId: TicketId
@@ -106,6 +108,8 @@ export class QueueShop extends DurableObject<Env> {
           return MarkServed(action.ticketId)
         case "MarkNoShow":
           return MarkNoShow(action.ticketId, action.actor)
+        case "Recall":
+          return Recall(action.ticketId, action.actor)
         case "CancelTicket":
           return CancelTicket(action.ticketId, action.actor, action.reason, action.handle)
       }

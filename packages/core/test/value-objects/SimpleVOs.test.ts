@@ -83,10 +83,16 @@ describe("FreeText", () => {
   })
 
   it("strips C0/DEL/C1 controls and keeps \\t and \\n", () => {
-    const raw = "abcdefg\thello\nworld"
+    // Mix of:
+    //   \x07 (BEL, C0)        — stripped
+    //   \x7f (DEL)             — stripped
+    //   \x80 (start of C1)     — stripped
+    //   \t (\x09)              — kept
+    //   \n (\x0a)              — kept
+    const raw = "abc\x07def\x7fghi\x80\thello\nworld"
     const r = parseFreeText(raw)
     expect(isRight(r)).toBe(true)
-    if (isRight(r)) expect(r.success).toBe("abcdefg\thello\nworld")
+    if (isRight(r)) expect(r.success).toBe("abcdefghi\thello\nworld")
   })
 
   it("counts surrogate pairs as one code point (multi-byte safety)", () => {

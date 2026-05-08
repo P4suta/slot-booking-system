@@ -49,12 +49,16 @@ export const fixedBackoff = (delaysMs: readonly number[]): BackoffPolicy => {
   if (delaysMs.length === 0) {
     return { nextDelayMs: () => 0, maxAttempts: 1 }
   }
-  const tail = delaysMs[delaysMs.length - 1] ?? 0
+  const last = delaysMs.length - 1
+  // Clamp the attempt counter into `[0, last]` so the indexed read is
+  // total. The trailing `?? 0` only exists because `noUncheckedIndexedAccess`
+  // widens the read to `number | undefined` — the clamp guarantees it
+  // never fires, so the branch is structurally unreachable.
   return {
     nextDelayMs: (attempts) => {
-      if (attempts < 0) return delaysMs[0] ?? 0
-      if (attempts >= delaysMs.length) return tail
-      return delaysMs[attempts] ?? tail
+      const i = attempts < 0 ? 0 : attempts > last ? last : attempts
+      /* v8 ignore next */
+      return delaysMs[i] ?? 0
     },
     maxAttempts: delaysMs.length + 1,
   }

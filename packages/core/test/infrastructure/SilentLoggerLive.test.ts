@@ -1,7 +1,10 @@
 import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
 import { Logger } from "../../src/application/ports/Logger.js"
-import { SilentLoggerLive } from "../../src/infrastructure/logger/SilentLoggerLive.js"
+import {
+  makeSilentLogger,
+  SilentLoggerLive,
+} from "../../src/infrastructure/logger/SilentLoggerLive.js"
 
 /**
  * SilentLoggerLive drops every payload. The use cases exercise `info`
@@ -34,5 +37,22 @@ describe("SilentLoggerLive", () => {
   it("composes with Layer.merge", () => {
     const merged = Layer.merge(SilentLoggerLive, SilentLoggerLive)
     expect(merged).toBeDefined()
+  })
+
+  it("makeSilentLogger retains the most recent emissions for assertions", async () => {
+    const program = Effect.gen(function* () {
+      const handle = yield* makeSilentLogger()
+      const child = Effect.gen(function* () {
+        const log = yield* Logger
+        yield* log.info(payload("I_HELLO"))
+        yield* log.warn(payload("W_HELLO"))
+        yield* log.error(payload("E_HELLO"))
+      })
+      yield* child.pipe(Effect.provide(handle.layer))
+      return yield* handle.emitted
+    })
+    const entries = await Effect.runPromise(program)
+    expect(entries.map((e) => e.level)).toEqual(["info", "warn", "error"])
+    expect(entries.map((e) => e.payload.code)).toEqual(["I_HELLO", "W_HELLO", "E_HELLO"])
   })
 })

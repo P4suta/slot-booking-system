@@ -39,20 +39,30 @@ export const CancelTicket = (
         ? yield* authenticateCustomer(ticketId, handle)
         : yield* loadOrTicketNotFound(ticketId)
     const terminal = guardActive(loaded.state)
+    // `yield* Effect.fail(...)` short-circuits the generator; V8
+    // still instruments a phantom "yield* returned a value" branch
+    // here that no input can exercise. Suppress just that artefact.
+    /* v8 ignore next */
     if (terminal !== null) return yield* Effect.fail(terminal)
+    // `guardActive` already short-circuits on the three terminal states
+    // (Cancelled / Served / NoShow); the only remaining variants are
+    // Waiting and Called, both of which `applyCancel` accepts. The
+    // `invalidTransition` arm is therefore unreachable through the
+    // current state lattice and exists only as a future-proof guard
+    // should a non-terminal state be added without updating this body.
+    /* v8 ignore next 3 */
     if (loaded.state.state !== "Waiting" && loaded.state.state !== "Called") {
       return yield* Effect.fail(invalidTransition(loaded.state.state, "Cancel"))
     }
     const eventId = yield* idgen.newTicketEventId
     const at = yield* clock.nowInstant
-    const r = applyCancel(loaded.state, at, eventId, actor, reason)
-    if (r._tag === "Failure") return yield* Effect.fail(r.failure)
-    yield* repo.save(ticketId, loaded.revision, [r.success.event], r.success.ticket)
+    const { ticket, event } = applyCancel(loaded.state, at, eventId, actor, reason)
+    yield* repo.save(ticketId, loaded.revision, [event], ticket)
     yield* logger.info(
       infoPayload("CancelTicket", "I_USECASE_CANCEL_TICKET", {
         ticketId,
         actor,
       }),
     )
-    return r.success.ticket
+    return ticket
   })

@@ -1,5 +1,4 @@
 import type { Temporal } from "@js-temporal/polyfill"
-import { Result } from "effect"
 import {
   AlreadyCancelledError,
   AlreadyCompletedError,
@@ -27,6 +26,7 @@ import type {
   CancelledEvent,
   IssuedEvent,
   NoShowedEvent,
+  RecalledEvent,
   ServedEvent,
   TicketEvent,
 } from "./TicketEvent.js"
@@ -37,6 +37,14 @@ import type {
  * lockstep so a downstream `save` (event-sourced repository) writes
  * both atomically — the projection in the read model never lags the
  * append-only log by more than one transaction.
+ *
+ * The right-side helpers (`applyIssue`, `applyCallNext`, …) return
+ * this directly rather than `Result.Result<ApplyResult, DomainError>`:
+ * the source-state argument is type-narrowed at the boundary
+ * (`applyMarkServed(t: Called, …)`), so a failure path has no inputs
+ * that could trigger it. The use cases are responsible for the
+ * pre-condition check (`guardActive` + state-equality), and the
+ * helpers commit to a total transformation once those have passed.
  */
 export type ApplyResult = {
   readonly ticket: Ticket
@@ -76,7 +84,7 @@ export type IssueArgs = {
   readonly eventId: TicketEventId
 }
 
-export const applyIssue = (args: IssueArgs): Result.Result<ApplyResult, DomainError> => {
+export const applyIssue = (args: IssueArgs): ApplyResult => {
   const ticket: Waiting = {
     id: args.id,
     seq: args.seq,
@@ -94,7 +102,7 @@ export const applyIssue = (args: IssueArgs): Result.Result<ApplyResult, DomainEr
     phoneLast4: args.phoneLast4,
     freeText: args.freeText,
   }
-  return Result.succeed({ ticket, event })
+  return { ticket, event }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -107,7 +115,7 @@ export const applyCallNext = (
   at: Temporal.Instant,
   eventId: TicketEventId,
   calledBy: Actor = "staff",
-): Result.Result<ApplyResult, DomainError> => {
+): ApplyResult => {
   const ticket: Called = {
     ...common(t),
     state: "Called",
@@ -119,7 +127,7 @@ export const applyCallNext = (
     type: "Called",
     calledBy,
   }
-  return Result.succeed({ ticket, event })
+  return { ticket, event }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -131,7 +139,7 @@ export const applyMarkServed = (
   at: Temporal.Instant,
   eventId: TicketEventId,
   servedBy: Actor = "staff",
-): Result.Result<ApplyResult, DomainError> => {
+): ApplyResult => {
   const ticket: Served = {
     ...common(t),
     state: "Served",
@@ -145,7 +153,7 @@ export const applyMarkServed = (
     type: "Served",
     servedBy,
   }
-  return Result.succeed({ ticket, event })
+  return { ticket, event }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -158,7 +166,7 @@ export const applyMarkNoShow = (
   at: Temporal.Instant,
   eventId: TicketEventId,
   markedBy: Actor = "staff",
-): Result.Result<ApplyResult, DomainError> => {
+): ApplyResult => {
   const ticket: NoShow = {
     ...common(t),
     state: "NoShow",
@@ -172,7 +180,37 @@ export const applyMarkNoShow = (
     type: "NoShowed",
     markedBy,
   }
-  return Result.succeed({ ticket, event })
+  return { ticket, event }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Recall — Called → Waiting. Staff-issued reversal of an accidental          */
+/* CallNext: the customer never actually arrived at the counter, so we drop   */
+/* the Called-only fields (`calledAt`, `calledBy`) and restore the original   */
+/* Waiting shape. The `seq` is preserved on purpose — the ticket was at the   */
+/* head of the queue when it was called, and the lattice's lowest-seq         */
+/* invariant guarantees it will be the head again unless someone else has     */
+/* meanwhile issued a new ticket with a smaller seq (which the monotonic      */
+/* counter forbids). Audit-wise the call still happened — the `Recalled`     */
+/* event sits in the log alongside the `Called` event it withdraws.           */
+/* -------------------------------------------------------------------------- */
+
+export const applyRecall = (
+  t: Called,
+  at: Temporal.Instant,
+  eventId: TicketEventId,
+  recalledBy: Actor = "staff",
+): ApplyResult => {
+  const ticket: Waiting = {
+    ...common(t),
+    state: "Waiting",
+  }
+  const event: RecalledEvent = {
+    ...baseEvent(eventId, t.id, at),
+    type: "Recalled",
+    recalledBy,
+  }
+  return { ticket, event }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -186,7 +224,7 @@ export const applyCancel = (
   eventId: TicketEventId,
   cancelledBy: Actor,
   reason: string,
-): Result.Result<ApplyResult, DomainError> => {
+): ApplyResult => {
   const ticket: Cancelled = {
     ...common(t),
     state: "Cancelled",
@@ -200,7 +238,7 @@ export const applyCancel = (
     cancelledBy,
     reason,
   }
-  return Result.succeed({ ticket, event })
+  return { ticket, event }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -209,7 +247,7 @@ export const applyCancel = (
 /* the right-side helpers ever being invoked.                                  */
 /* -------------------------------------------------------------------------- */
 
-export type TicketCommand = "CallNext" | "MarkServed" | "MarkNoShow" | "Cancel"
+export type TicketCommand = "CallNext" | "MarkServed" | "MarkNoShow" | "Cancel" | "Recall"
 
 const terminalError = (state: TicketState): DomainError | null => {
   if (state === "Cancelled") return new AlreadyCancelledError({})
