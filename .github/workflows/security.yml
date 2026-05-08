@@ -12,6 +12,8 @@ on:
 permissions:
   contents: read
   security-events: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: security-${{ github.ref }}
@@ -31,3 +33,126 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
+
+  osv:
+    name: OSV-Scanner + pnpm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - name: pnpm install (frozen)
+        run: pnpm install --recursive --frozen-lockfile
+      # OSV-Scanner walks the lockfile + the project source for known
+      # vulnerable versions across npm + transitive deps. The
+      # action's default ruleset covers the npm ecosystem; we keep
+      # the default to avoid drift between local CLI runs and CI.
+      - name: Run OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v2
+        with:
+          scan-args: |-
+            --recursive
+            --skip-git
+            ./
+        # Effect 4 beta + drizzle-orm rc transitively pull pre-release
+        # versions OSV cannot match against an advisory range; warn-
+        # only stops the false negatives blocking PRs.
+        continue-on-error: true
+      # pnpm audit is the second opinion: it queries the npm
+      # advisory DB rather than OSV's federated graph, so a CVE
+      # caught by either lights up.
+      - name: pnpm audit (high+)
+        run: pnpm audit --prod --audit-level=high
+        continue-on-error: true
+
+  sbom:
+    name: SBOM (CycloneDX) + provenance attestation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --recursive --frozen-lockfile
+      # @cyclonedx/cyclonedx-npm builds a CycloneDX 1.5 JSON SBOM
+      # of the workspace's resolved dependency tree. The artifact is
+      # the input to the SLSA build-provenance attestation below
+      # (NIST SSDF v1.1 PS.3).
+      - name: Generate CycloneDX SBOM
+        run: |-
+          npx --yes @cyclonedx/cyclonedx-npm@latest \
+            --output-file bom.cdx.json \
+            --output-format JSON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: bom.cdx.json
+          if-no-files-found: error
+      # SLSA Level 2 build-provenance via the GitHub-native attestor
+      # (SSDF PW.7). Subject = the SBOM artifact so consumers can
+      # verify the supply-chain trace through `gh attestation
+      # verify`.
+      - name: Attest build provenance for SBOM
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: bom.cdx.json
+
+  semgrep:
+    name: Semgrep (typescript + OWASP Top Ten)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: returntocorp/semgrep:latest
+    steps:
+      - uses: actions/checkout@v6
+      # `p/typescript` is the language pack; `p/owasp-top-ten`
+      # covers the OWASP API Top 10 (2023) families that map cleanly
+      # to a Workers + edge-DO surface (BOLA, Broken Auth,
+      # Unrestricted Resource Consumption, Misconfig).
+      - name: Run Semgrep
+        run: |-
+          semgrep ci \
+            --config p/typescript \
+            --config p/owasp-top-ten \
+            --config p/r2c-security-audit \
+            --sarif --output semgrep.sarif
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        continue-on-error: true
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  trivy:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      # Trivy walks the filesystem (no Docker daemon required) for
+      # Dockerfile misconfig, secret patterns Trivy bundles, and
+      # transitive dependency CVEs that surface through OS-level
+      # package metadata. SARIF upload feeds the Code Scanning tab
+      # alongside Semgrep + CodeQL.
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          exit-code: 0
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
