@@ -1,3 +1,4 @@
+export * from "./aggregateSnapshots.js"
 export * from "./auditLog.js"
 export * from "./outbox.js"
 export * from "./ticketEvents.js"

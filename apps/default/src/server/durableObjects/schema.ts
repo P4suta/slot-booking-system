@@ -1,3 +1,4 @@
+import { aggregateSnapshots } from "../schema/aggregateSnapshots.js"
 import { auditLog } from "../schema/auditLog.js"
 import { outbox, outboxDead } from "../schema/outbox.js"
 import { ticketEvents } from "../schema/ticketEvents.js"
@@ -17,7 +18,13 @@ import { tablesToDDL } from "./ddl.js"
  * `D1AuditLoggerLive`); `tickets` / `ticket_events` / `outbox` /
  * `outbox_dead` are the DO-local tables.
  */
-const DURABLE_OBJECT_DDL = tablesToDDL([tickets, ticketEvents, outbox, outboxDead])
+const DURABLE_OBJECT_DDL = tablesToDDL([
+  tickets,
+  ticketEvents,
+  outbox,
+  outboxDead,
+  aggregateSnapshots,
+])
 
 export const ensureDurableObjectSchema = (sql: SqlStorage): void => {
   for (const stmt of DURABLE_OBJECT_DDL) {

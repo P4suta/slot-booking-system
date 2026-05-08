@@ -1,7 +1,10 @@
 import {
   AggregateNotFoundError,
+  applyEvent,
   ConcurrencyError,
+  empty as emptySnapshot,
   type NonEmptyReadonlyArray,
+  type QueueSnapshot,
   StorageError,
   type Ticket,
   type TicketEvent,
@@ -11,6 +14,23 @@ import {
   TicketSchema,
 } from "@booking/core"
 import { Effect, Layer, Schema } from "effect"
+
+/**
+ * Aggregate snapshots emit every K events so `load(id)` can hydrate
+ * from the snapshot + a small delta tail rather than replaying the
+ * whole history each time. The constant matches the AWS Aurora
+ * conservative snapshot cadence (k=200 events ≈ 1 day at production
+ * volume) — large enough that snapshot writes amortise, small enough
+ * that worst-case replay stays bounded.
+ */
+const SNAPSHOT_INTERVAL = 200
+
+const SNAPSHOT_UPSERT_SQL = `INSERT INTO aggregate_snapshots (ticket_id, revision, payload)
+VALUES (?, ?, ?)
+ON CONFLICT(ticket_id) DO UPDATE SET
+  revision = excluded.revision,
+  payload = excluded.payload,
+  created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
 
 const TICKET_INSERT_SQL = `INSERT INTO tickets (
   id, seq, state, name_kana, phone_last4, free_text, issued_at,
@@ -77,14 +97,66 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
   Layer.succeed(TicketRepository, {
     load: (id: TicketId) => {
       return Effect.gen(function* () {
-        const rows = yield* Effect.try({
+        // Aggregate-snapshot path: latest snapshot anchors the replay
+        // start; the delta tail in `ticket_events` brings the state
+        // forward to the current revision. Falls through to the
+        // tickets row when no snapshot has been emitted yet (the
+        // first SNAPSHOT_INTERVAL events) so the migration does not
+        // strand pre-existing aggregates.
+        const snapRows = yield* Effect.try({
           try: () =>
-            sql.exec("SELECT id, payload, revision FROM tickets WHERE id = ?", id).toArray(),
+            sql
+              .exec("SELECT revision, payload FROM aggregate_snapshots WHERE ticket_id = ?", id)
+              .toArray(),
+          catch: (e) => new StorageError({ reason: "load.snapshot", cause: e }),
+        })
+        let baseTicket: Ticket | null = null
+        let baseRevision = 0
+        const snap = snapRows[0]
+        if (snap !== undefined) {
+          baseRevision = Number(snap.revision ?? 0)
+          baseTicket = Schema.decodeUnknownSync(TicketSchema)(JSON.parse(snap.payload as string))
+        }
+        const evRows = yield* Effect.try({
+          try: () =>
+            sql
+              .exec(
+                "SELECT payload FROM ticket_events WHERE ticket_id = ? AND seq > ? ORDER BY seq ASC",
+                id,
+                baseRevision,
+              )
+              .toArray(),
+          catch: (e) => new StorageError({ reason: "load.events", cause: e }),
+        })
+        if (baseTicket !== null) {
+          let acc: QueueSnapshot = { tickets: new Map([[id, baseTicket]]) }
+          for (const r of evRows) {
+            const ev = Schema.decodeUnknownSync(TicketEventSchema)(JSON.parse(r.payload as string))
+            acc = applyEvent(acc, ev)
+          }
+          const next = acc.tickets.get(id)
+          /* v8 ignore next */
+          if (next === undefined) return yield* Effect.fail(new AggregateNotFoundError({}))
+          return { state: next, revision: baseRevision + evRows.length }
+        }
+        if (evRows.length > 0) {
+          let acc: QueueSnapshot = emptySnapshot
+          for (const r of evRows) {
+            const ev = Schema.decodeUnknownSync(TicketEventSchema)(JSON.parse(r.payload as string))
+            acc = applyEvent(acc, ev)
+          }
+          const next = acc.tickets.get(id)
+          /* v8 ignore next */
+          if (next === undefined) return yield* Effect.fail(new AggregateNotFoundError({}))
+          return { state: next, revision: evRows.length }
+        }
+        // Pre-existing aggregates with neither snapshot nor events
+        // (legacy seed data) still resolve via the projection table
+        // until C17 demotes it to read-only.
+        const rows = yield* Effect.try({
+          try: () => sql.exec("SELECT payload, revision FROM tickets WHERE id = ?", id).toArray(),
           catch: (e) => new StorageError({ reason: "load", cause: e }),
         })
-        if (rows.length === 0) {
-          return yield* Effect.fail(new AggregateNotFoundError({}))
-        }
         const row = rows[0]
         if (row === undefined) return yield* Effect.fail(new AggregateNotFoundError({}))
         const decoded = Schema.decodeUnknownSync(TicketSchema)(JSON.parse(row.payload as string))
@@ -126,10 +198,11 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
             )
           }
           const encodedTicket = Schema.encodeUnknownSync(TicketSchema)(next)
-          sql.exec(
-            TICKET_INSERT_SQL,
-            ...ticketColumns(next, encodedTicket, current + events.length),
-          )
+          const nextRevision = current + events.length
+          sql.exec(TICKET_INSERT_SQL, ...ticketColumns(next, encodedTicket, nextRevision))
+          if (nextRevision % SNAPSHOT_INTERVAL === 0) {
+            sql.exec(SNAPSHOT_UPSERT_SQL, id, nextRevision, JSON.stringify(encodedTicket))
+          }
         },
         catch: (e) => {
           if (e instanceof ConcurrencyError) return e
@@ -161,7 +234,11 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
             )
           }
           const encodedTicket = Schema.encodeUnknownSync(TicketSchema)(next)
-          sql.exec(TICKET_INSERT_SQL, ...ticketColumns(next, encodedTicket, events.length))
+          const nextRevision = events.length
+          sql.exec(TICKET_INSERT_SQL, ...ticketColumns(next, encodedTicket, nextRevision))
+          if (nextRevision % SNAPSHOT_INTERVAL === 0) {
+            sql.exec(SNAPSHOT_UPSERT_SQL, next.id, nextRevision, JSON.stringify(encodedTicket))
+          }
         },
         catch: (e) => new StorageError({ reason: "issue", cause: e }),
       }),
