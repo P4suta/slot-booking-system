@@ -156,7 +156,26 @@ domain-purity:
 # raw `Date.now()` / `new Date().toISOString()`), so the rule applies
 # to the functional core, not the imperative shell.
 strict-code:
+    # packages/core/src は宣言的・Effect-only zone。 raw Date / @ts-* /
+    # : any 注釈を grep 禁止 (domain layer の総合品質担保)。
     {{DEV}} bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
+    # 全 workspace で `as any` / `<any>` cast を禁止。 ESLint の
+    # strict-type-checked が宣言的な `any` は既に弾くが、 cast は
+    # path によって checker の盲点になるので grep gate で補完する。
+    # `as unknown as X` は別 recipe で集計のみ (legitimate な upstream
+    # API workaround の判別が機械的にできないため hard gate しない、
+    # 'just diagnose-tsescapes' で件数を可視化して PR で議論)。
+    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -e "\bas any\b|<any>(?![A-Za-z])" packages apps 2>/dev/null'
+
+# 'as unknown as X' の使用箇所一覧。 hard gate ではなく diagnostic。
+# 件数が増えたら memory feedback_root_cause_over_unknown_cast に従って
+# Schema.Top vs Codec vs Decoder 等の型構造ミスマッチを root-cause fix。
+diagnose-tsescapes:
+    @echo "=== 'as unknown as' usage (root-cause fix candidates) ==="
+    @{{DEV}} bash -c 'rg -n --type-add "svelte:*.svelte" -t ts -t svelte "as unknown as" packages apps 2>/dev/null' || true
+    @echo
+    @echo "=== count by file (top 10) ==="
+    @{{DEV}} bash -c 'rg -l --type-add "svelte:*.svelte" -t ts -t svelte "as unknown as" packages apps 2>/dev/null | xargs -I{} sh -c "rg -c \"as unknown as\" {} | sed \"s|^|{}: |\"" | sort -t: -k2 -rn | head -10' || true
 
 # ---------------------------------------------------------------------------
 # Test
