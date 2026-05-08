@@ -50,13 +50,18 @@
     if (source === undefined) {
       source = queueEventSource()
       source.onmessage = () => {
+        // 直後に event = backend 健在、 過去の reconnect banner を解除
+        if (error?.startsWith("live feed:") === true) error = null
         void refresh()
       }
       source.onerror = () => {
-        // EventSource auto-reconnects; the error event fires per
-        // failed connection attempt. Surface it once so a stalled
-        // backend is visible, but do not throw.
-        error = "live feed: connection lost (retrying…)"
+        // SSE は 30 秒ごとに server 側で close し、 client が自動
+        // 再接続する設計 (Workers の stream 予算対策)。
+        // CONNECTING (readyState 0) は通常の再接続中なので表示しない。
+        // CLOSED (readyState 2) だけが本当の停止 — surface する。
+        if (source?.readyState === EventSource.CLOSED) {
+          error = "live feed: closed (再読み込みで再接続)"
+        }
       }
     }
   }
