@@ -52,31 +52,40 @@ for entry in "${GATES[@]}"; do
   pid_to_gate[$!]=$gate
 done
 
-remaining=${#pid_to_gate[@]}
 fail=0
 failed=()
 
 # `wait -n -p` (bash 5.1+) waits for the next-finished child and
 # stores its pid in the named variable, so we can fail-fast on the
-# first non-zero exit by killing the rest.
-while [ "$remaining" -gt 0 ]; do
-  pid=
+# first non-zero exit by killing the rest. The loop runs until the
+# pid_to_gate map is empty rather than over a fixed counter so a
+# missed wait-fill (signal interruption etc.) just retries.
+while [ "${#pid_to_gate[@]}" -gt 0 ]; do
+  pid=""
   if wait -n -p pid; then
-    gate=${pid_to_gate[$pid]:-unknown}
-    sed "s|^|[$gate] |" "$tmpdir/$gate.log"
-    unset 'pid_to_gate[$pid]'
+    status=0
   else
-    code=$?
-    gate=${pid_to_gate[$pid]:-unknown}
+    status=$?
+  fi
+  if [ -z "$pid" ]; then
+    # wait reported but didn't surface a pid (signal-interrupted
+    # wait, or all children already reaped). Spin once to let the
+    # zombie reaper land. Bounded by the per-gate timeout, so the
+    # outer just-recipe still has a hard deadline.
+    continue
+  fi
+  gate=${pid_to_gate[$pid]:-unknown}
+  unset "pid_to_gate[$pid]"
+  if [ -f "$tmpdir/$gate.log" ]; then
     sed "s|^|[$gate] |" "$tmpdir/$gate.log"
-    failed+=("$gate(exit=$code)")
+  fi
+  if [ "$status" -ne 0 ]; then
+    failed+=("$gate(exit=$status)")
     fail=1
-    unset 'pid_to_gate[$pid]'
     for other_pid in "${!pid_to_gate[@]}"; do
       kill -TERM "-$other_pid" 2>/dev/null || kill -TERM "$other_pid" 2>/dev/null || true
     done
   fi
-  remaining=$((remaining - 1))
 done
 
 if [ $fail -ne 0 ]; then
