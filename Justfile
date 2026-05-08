@@ -259,6 +259,19 @@ gen-error-docs:
     {{DEV}} bash -c "cd apps/default && corepack pnpm exec tsx scripts/gen-error-docs.ts" > docs/error-codes.md
 
 # ---------------------------------------------------------------------------
+# Diagnose — multi-gate snapshot (continue-on-fail, never gate)
+# ---------------------------------------------------------------------------
+
+# Run every quality gate `just check` would, but with `set +e` so a
+# failing gate does not short-circuit the rest. Markdown summary lands
+# in `.diagnose/last-run.md` and stdout. Phase A wraps `typecheck`
+# only; Phase B/C extend with biome / eslint / arch / test JSON
+# aggregation. Exit code is **always 0** — diagnose is a snapshot,
+# not a gate. Use `just check` for the fail-fast normative gate.
+diagnose:
+    bash scripts/diagnose.sh
+
+# ---------------------------------------------------------------------------
 # Aggregate gates
 # ---------------------------------------------------------------------------
 
