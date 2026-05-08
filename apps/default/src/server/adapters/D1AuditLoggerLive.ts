@@ -51,6 +51,17 @@ export const makeD1AuditLogger = (db: D1Database) =>
                   .run(),
               catch: (e) => e,
             }).pipe(
+              Effect.tap(() =>
+                logger.info({
+                  _tag: "AuditWriteOk",
+                  code: "I_INF_AUDIT_OK",
+                  severity: "infrastructure",
+                  data: {
+                    actor: entry.actor,
+                    errorTag: entry.errorTag,
+                  },
+                }),
+              ),
               Effect.catch((err) =>
                 logger.error({
                   _tag: "AuditWriteFailed",

@@ -63,11 +63,43 @@ const handler = {
       WorkersLoggerLive,
       makeRuntimeModeLayer(env),
     )
+    const startedAt = Date.now()
+    console.warn(
+      JSON.stringify({
+        _tag: "ScheduledStart",
+        code: "I_SCHEDULED_START",
+        severity: "infrastructure",
+        deployment: env.DEPLOYMENT_NAME,
+      }),
+    )
     const purge = Effect.gen(function* () {
       const purger = yield* PiiPurger
       yield* purger.purgeOlderThan(TWO_YEARS)
     })
-    await Effect.runPromise(purge.pipe(Effect.provide(layer)))
+    try {
+      await Effect.runPromise(purge.pipe(Effect.provide(layer)))
+      console.warn(
+        JSON.stringify({
+          _tag: "ScheduledEnd",
+          code: "I_SCHEDULED_END",
+          severity: "infrastructure",
+          deployment: env.DEPLOYMENT_NAME,
+          ms: Date.now() - startedAt,
+        }),
+      )
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          _tag: "ScheduledError",
+          code: "I_SCHEDULED_ERROR",
+          severity: "infrastructure",
+          deployment: env.DEPLOYMENT_NAME,
+          ms: Date.now() - startedAt,
+          message: err instanceof Error ? err.message : String(err),
+        }),
+      )
+      throw err
+    }
   },
 } satisfies ExportedHandler<Env>
 
