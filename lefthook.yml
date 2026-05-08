@@ -46,6 +46,10 @@ pre-commit:
       glob: "{packages,apps}/**/*.{ts,tsx,svelte,sql}"
       run: |
         docker compose run --rm dev bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" {staged_files}'
+    comment-bans-staged:
+      glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,md,sql,yaml,yml,toml}"
+      run: |
+        docker compose run --rm dev bash scripts/lint/comment-bans.sh {staged_files}
 
 commit-msg:
   commands:
@@ -79,6 +83,8 @@ pre-push:
     domain-purity-full:
       run: |
         docker compose run --rm dev bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
+    comment-bans-full:
+      run: docker compose run --rm dev bash scripts/lint/comment-bans.sh
     strict-code:
       # Scope: packages/core/src only — the imperative shell in
       # apps/default/src/server/durableObjects/ runs outside the

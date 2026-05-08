@@ -9,8 +9,7 @@ import {
 } from "../../../src/infrastructure/observability/ErrorRedactionLive.js"
 
 /**
- * Phase 3 PR#8 / commit 15 — pin the env-indexed error-cause redactor
- * (ADR-0043). Three axes:
+ * Pin the env-indexed error-cause redactor (ADR-0043). Three axes:
  *
  *   1. `devRedactCause` — surfaces `name` / `message` / capped stack
  *      preview / `originalTag` (when the error carries a `_tag`

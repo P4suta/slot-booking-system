@@ -7,14 +7,14 @@ import {
 } from "../../../src/application/runtime/BackoffPolicy.js"
 
 /**
- * Phase 3 PR#8 / commit 15 — coverage closure for the outbox-relay
- * backoff schedule. The policy is a pure value carrier with two
- * constructors and one composer; property-based tests cover every
- * branch (empty / negative / saturating / in-range) plus the
- * deterministic algebraic identities the relay relies on.
+ * Coverage closure for the outbox-relay backoff schedule. The policy
+ * is a pure value carrier with two constructors and one composer;
+ * property-based tests cover every branch (empty / negative /
+ * saturating / in-range) plus the deterministic algebraic identities
+ * the relay relies on.
  */
 
-describe("fixedBackoff (commit 15)", () => {
+describe("fixedBackoff", () => {
   it("an empty schedule saturates to a single attempt with zero delay", () => {
     const p = fixedBackoff([])
     expect(p.maxAttempts).toBe(1)

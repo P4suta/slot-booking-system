@@ -1,4 +1,4 @@
--- Phase 2 of the queue pivot — initial D1 schema.
+-- Initial D1 schema for the queue domain.
 -- Tables:
 --   - tickets:        read-mirror of the QueueShop DO's projection.
 --   - ticket_events:  append-only event log (5y retention per ADR-0009).

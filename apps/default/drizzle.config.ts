@@ -1,9 +1,7 @@
 import { defineConfig } from "drizzle-kit"
 
-// Drizzle config for the D1 binding. Phase 0 ships an empty migration
-// so `wrangler d1 migrations apply DB --local` is wired but does not
-// commit any schema yet — the real schema lands in Phase 1 along with
-// the DurableObject `DaySchedule`.
+// Drizzle config for the D1 binding. Migrations land under
+// `apps/default/migrations/`; the live schema is `src/server/schema/`.
 export default defineConfig({
   dialect: "sqlite",
   driver: "d1-http",

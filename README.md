@@ -1,34 +1,49 @@
 # slot-booking-system
 
-Industry-agnostic time-slot booking core (`packages/core`) plus a
-GraphQL Cloudflare Workers backend (`apps/default`) and a SvelteKit
-2 + Cloudflare Pages frontend (`apps/web`). Phase 0–3 builds a complete
-local-development reference: catalog management, slot search, customer
-hold / confirm / cancel, HMAC-signed slot tokens, OpenTelemetry-semconv-
-unified observability (trace + audit + log on the same trace ID), DO ↔
-D1 outbox-driven event sourcing, and a drift-gated `BookingError`
-catalogue. Production deploy / CI/CD / scale tuning are intentionally
-out of scope (the `0.x.y` track aims at a complete local-dev reference,
-not a 1.0 production SaaS).
+A walk-in queue for one in-person service business. The customer
+takes a number; the shop sees the queue advance — that is the
+entire shape of the product. One deployment serves one shop; the
+core (`packages/core`) stays industry-agnostic so future
+deployments (haircuts, repairs, consultations, …) can reuse it
+unchanged.
 
-The runtime stack tracks the 2026 Effect / Drizzle / Cloudflare wave:
+## Iron principles (non-negotiable)
 
-- **Effect 4** (beta line) — runtime, Schema, Layer, Tracer, RpcGroup
+1. **Number-tag model** — no accounts, no logins, no email, no SMS,
+   no notifications. The customer holds a `TicketId` plus the
+   `(nameKana, phoneLast4)` handle they typed in.
+2. **Minimum PII** — kana name, phone last 4, optional free text.
+   Never email, full phone, address, birthday, gender, IP, UA, or
+   persistent cookies (ADR-0054).
+3. **Zero external dependencies** beyond Cloudflare. No mail / SMS /
+   auth / payment / monitoring SaaS.
+4. **Architecturally impossible double-call** — concurrency runs
+   through the single-writer `QueueShop` Durable Object actor
+   (ADR-0053), not code-level locks.
+5. **Customer self-service** — every customer action lives behind
+   handle verification. Staff never types a customer's data.
+6. **Beauty over expedience** — the domain is the composition of
+   three classical structures (event-sourced log + type-state
+   machine + single-writer actor; ADR-0050). New code reuses the
+   existing vocabulary or proposes an ADR.
+7. **Operations as a feature** — observability (OTel), audit log
+   retention, PII purge cron, staff capability gating, and the
+   error-codes registry are first-class members of the contract.
+
+## Stack (2026 wave)
+
+- **Effect 4** (beta) — runtime, Schema, Layer, Tracer
 - **drizzle-orm 1.0-rc** — D1 + DurableObject SQLite schema, codecs
-- **graphql-js 16** + **lexicographicSortSchema** + GraphQL Yoga — the
-  schema is *derived* from `Effect.Schema` via `derive/graphql.ts`
-  (ADR-0041); a byte-equal SDL invariant pins drift on every commit
-- **@microlabs/otel-cf-workers 1.0-rc** + **OpenTelemetry semconv 1.27** —
-  one taxonomy projected onto three surfaces (GraphQL response,
-  structured logs, OTel spans) per ADR-0017 / ADR-0038
-- **paraglide-js 2** — i18n with identifier-safe message keys, drift-
-  gated against `errorClassRegistry`
+- **Cloudflare Workers + Durable Objects + D1** — the deployment
+- **SvelteKit 2** + Cloudflare Pages — the customer + staff UI
+- **REST + SSE** for the queue surface; live projection push moves
+  to **DO Hibernating WebSocket** (ADR-0057, on the queue-pivot
+  follow-up plan)
+- **paraglide-js 2** — i18n with identifier-safe message keys
 
 ## Architecture overview
 
-The codebase follows a **Functional Core / Imperative Shell** layering
-(ADR-0018). Each layer has a strict purity rule and an enforced
-import direction:
+Functional Core / Imperative Shell (ADR-0018):
 
 ```text
 +----------------+      +----------------------+      +-------------------+      +---------------+
@@ -37,54 +52,42 @@ import direction:
 |   ADTs +       |      |   use-cases return   |      |   typeid, Temporal,|      |   SvelteKit)  |
 |   Schemas      |      |   Effect<…, R>       |      |   D1 / DO bindings |      |               |
 +----------------+      +----------------------+      +-------------------+      +---------------+
-       Schema, Either, Data       Effect.Tag, Schema       Layer.succeed/effect       Effect.runPromise (× 1)
 ```
 
-- **domain** (`packages/core/src/domain/**`) — pure data and
-  combinators. Value objects, entities, and aggregates are declared
-  as `Effect.Schema` (ADR-0019). Errors are `Data.TaggedError` with
-  static `code` / `severity` fields (ADR-0017). State transitions
-  are total functions over a discriminated union (ADR-0013) and
-  emit a `BookingEvent` (Step 15 will move this to event sourcing).
+- **domain** (`packages/core/src/domain/**`) — pure ADTs and
+  combinators. The queue aggregate (`Ticket`) is a type-state
+  discriminated union, transitions are total functions, and
+  projections are monoid homomorphisms over the event log
+  (ADR-0050 / ADR-0052).
 - **application** (`packages/core/src/application/**`) — `Effect`
-  use cases and `Context.Tag` ports. Five ports today (`Clock`,
-  `IdGenerator`, `BookingRepository`, `EventStore`, `Logger`)
-  per ADR-0020. Boundary `Schema`s
-  (`application/schemas/HoldSlotRequest.ts`, more in Phase 1) live
-  here.
+  use cases (Issue / CallNext / Recall / MarkServed / MarkNoShow /
+  Cancel) and `Context.Service` ports (Clock / IdGenerator /
+  TicketRepository / Logger / AuditLogger / RuntimeMode /
+  ErrorRedaction / LogSampler).
 - **infrastructure** (`packages/core/src/infrastructure/**`) —
-  `Layer`s that implement the ports. Runtime-agnostic adapters
-  (Temporal-backed Clock, ULID-backed IdGenerator, deterministic
-  test fakes) live in core; Cloudflare-bound adapters live in
-  `apps/<name>/src/server/adapters/` (Phase 1).
+  runtime-agnostic Live layers (Temporal-backed Clock, ULID
+  IdGenerator, in-memory event-sourced repo for tests).
+  Cloudflare-bound adapters live under `apps/<name>/src/server/`.
 - **presentation** — two apps:
-  - `apps/default` (Cloudflare Worker): GraphQL Yoga + the
-    `derive/graphql.ts` Schema-to-GraphQL functor +
-    DurableObject `DaySchedule` over typed `effect/unstable/rpc`.
-    The only place that calls `Effect.runPromise`. Wraps the worker
+  - `apps/default` (Cloudflare Worker) — REST + SSE surface
+    (`/api/v1/...`) + the `QueueShop` Durable Object actor. The
+    only place that calls `Effect.runPromise`. Wraps the worker
     handler in `@microlabs/otel-cf-workers` `instrument(...)` so
-    every request is a W3C-Trace-Context root span.
-  - `apps/web` (Cloudflare Pages, SvelteKit 2.x): customer +
-    staff routes. Speaks the same GraphQL endpoint via a tiny
-    typed-string client (`apps/web/src/lib/graphql/`).
+    every request is a W3C Trace-Context root span.
+  - `apps/web` (Cloudflare Pages, SvelteKit 2) — customer +
+    staff routes (`/`, `/issue`, `/ticket`, `/staff`). Speaks
+    REST via a typed client (`apps/web/src/lib/api.ts`); SSE
+    keeps the live projection in sync.
+
+The pure-domain layer carries 300+ tests with C1-100 % branch
+coverage (vitest V8 + threshold), property-based fast-check tests
+on the type-state transitions and monoid homomorphism, and the
+`docs/error-codes.md` drift gate that rebuilds the registry from
+`Errors.ts` on every push.
 
 Architectural invariants are enforced by `dependency-cruiser`
-(`.dependency-cruiser.cjs`), the `domain-purity` and `pii-guard`
-ripgrep gates in `lefthook.yml`, and the Stryker mutation-testing
-workflow (`just mutation`).
-
-The pure-domain layer carries:
-
-- **370+ tests, C1 100 % branch coverage** (vitest V8 + threshold).
-- **Property-based tests** (`fast-check`) including `fc.commands`-
-  driven model-based tests for the booking state machine.
-- **Type-level brand assertions** (`test/type/Brands.test.ts`)
-  using `expect-type`.
-- A reproducible **bench baseline**
-  (`packages/core/test/slot/computeAvailableSlots.bench.ts`).
-
-For the deployment-side wiring see ADR-0008 (apps vs core layout)
-and ADR-0011 (core distribution shape).
+(`.dependency-cruiser.cjs`) and the `pii-guard` / `domain-purity` /
+`comment-bans` ripgrep gates in `lefthook.yml`.
 
 ## Development
 
@@ -95,30 +98,34 @@ host needs only `just`, `lefthook`, `committed`, `typos`,
 | Recipe | Purpose |
 |---|---|
 | `just bootstrap` | Build the dev image + install deps + register lefthook |
-| `just check` | Full pre-push gate (lint + typecheck + arch + vitest + coverage + knip + size-limit + schema/error-doc drift) |
-| `just dev-up` | Bring up the OTel collector + Jaeger + `wrangler dev` (apps/default) — the inner-loop dev stack |
+| `just check` | Full pre-push gate (lint + typecheck + arch + vitest + coverage + knip + drift) |
+| `just dev-up` | OTel collector + Jaeger UI + `wrangler dev` (apps/default) |
 | `just dev-default` | `wrangler dev` only (no observability stack) |
+| `just dev-web` | Vite for `apps/web` |
 | `just migrate-local` | Apply D1 migrations to the local fixture |
-| `just seed` | Populate the catalog with the demo entities |
-| `just smoke-all` | `migrate-local` → `seed` → `availableSlots` smoke → `holdSlot` end-to-end |
-| `just trigger-scheduled` | Fire the `PurgeStalePii` scheduled handler against `wrangler dev` |
-| `just test-integration` | Miniflare in-process integration suite (DO crash recovery + `holdSlot` round-trip) |
+| `just trigger-scheduled` | Fire the daily PII-purge handler against `wrangler dev` |
 | `just gen-error-docs` | Regenerate `docs/error-codes.md` from `errorClassRegistry` |
-| `just bench` | `computeAvailableSlots` performance baseline |
+| `just bench` | Vitest bench baselines |
 | `just mutation` | Stryker mutation testing (heavy; on demand) |
 | `just log-tail` | Tail `wrangler dev` JSON logs through `jq` for trace correlation |
 
-Per-recipe details live in [`Justfile`](./Justfile). The full
-GraphQL surface lives at [`docs/api/graphql.md`](./docs/api/graphql.md);
-the operator playbook for incident triage lives at
-[`docs/operator/runbook.md`](./docs/operator/runbook.md);
-the observability primer is [`docs/observability.md`](./docs/observability.md);
-the fresh-clone walkthrough is [`docs/dev-workflow.md`](./docs/dev-workflow.md).
+Per-recipe details live in [`Justfile`](./Justfile). Operator
+playbook for incident triage:
+[`docs/operator/runbook.md`](./docs/operator/runbook.md).
+Observability primer:
+[`docs/observability.md`](./docs/observability.md). Dev workflow
+walkthrough: [`docs/dev-workflow.md`](./docs/dev-workflow.md).
+
+## Production secrets
+
+`STAFF_SESSION_SECRET` is provisioned via `wrangler secret put`; the
+local-dev value lives in `apps/default/.dev.vars` (gitignored). The
+example template is `apps/default/.dev.vars.example`.
 
 ## License
 
 Dual-licensed under Apache-2.0 OR MIT, at your option. See
 [LICENSE-APACHE](./LICENSE-APACHE) and [LICENSE-MIT](./LICENSE-MIT).
 
-By contributing you agree that your contribution is dual-licensed under
-the same terms — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+By contributing you agree that your contribution is dual-licensed
+under the same terms — see [CONTRIBUTING.md](./CONTRIBUTING.md).

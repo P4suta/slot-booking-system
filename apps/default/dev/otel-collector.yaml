@@ -1,6 +1,6 @@
 # OpenTelemetry Collector config for the local-dev observability
-# stack (Phase 3 PR#8). Brought up by `just dev-up` under the
-# `observability` docker-compose profile.
+# stack. Brought up by `just dev-up` under the `observability`
+# docker-compose profile.
 #
 # The collector accepts OTLP/HTTP from the wrangler dev container
 # (env.OTEL_EXPORTER_URL = "http://otel-collector:4318/v1/traces"

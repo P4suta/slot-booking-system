@@ -18,10 +18,9 @@ for staff-action audit logs.
 The customer takes a number; the shop sees the queue advance. That
 is the entire shape of the product.
 
-The slot-graph framing (time-windowed bookings + provider/resource
-matching) was the original design and was scrapped under ADR-0050
-once the user reframed the domain as "the customer queues; the shop
-sees the queue."
+The original time-windowed booking design (provider/resource
+matching) was scrapped under ADR-0050 once the domain was reframed
+as "the customer queues; the shop sees the queue."
 
 ## Iron principles (non-negotiable)
 
@@ -63,8 +62,8 @@ sees the queue."
   (ADR-0054). No session, no cookie.
 - Staff credential: single `operate_queue` capability scope
   (ADR-0055), keyed off `STAFF_SESSION_SECRET` via the
-  `x-staff-token` header (Phase 4 future-work: scrypt + jose +
-  cookie session).
+  `x-staff-token` header. The follow-up plan replaces the shared
+  bearer with HS256 JWT + signed cookie session (ADR-0058).
 
 ## Lifecycle
 
@@ -106,7 +105,7 @@ default 300).
 | Runtime (edge)       | Cloudflare Workers (V8 isolates)             | infra                |
 | Persistence (auth.)  | DurableObject SQLite (single QueueShop)      | ADR-0053             |
 | Persistence (long)   | Cloudflare D1 + Drizzle ORM                  | ADR-0006 (refined)   |
-| UI / SSR             | SvelteKit 2 + Svelte 5 runes                 | Phase 5/6            |
+| UI / SSR             | SvelteKit 2 + Svelte 5 runes                 | apps/web             |
 | Service composition  | Effect — `Effect`, `Layer`, `Schema`         | ADR-0010             |
 | Schema / parsing     | Effect Schema                                | ADR-0010             |
 | Time                 | `Temporal` polyfill; `Date` forbidden        | ADR-0004             |
@@ -119,9 +118,9 @@ default 300).
 
 - Multi-shop / multi-tenant. Each deployment is one shop. (ADR-0053
   records this as a permanent non-goal.)
-- Time-slot reservation. The slot-graph framing was scrapped under
-  ADR-0050; future requests for "let me book 14:00 specifically"
-  belong in a different project.
+- Time-slot reservation. ADR-0050 scraps the original framing;
+  future requests for "let me book 14:00 specifically" belong in a
+  different project.
 - Provider / resource matching. The customer joins the line; the
   next available staff member serves them.
 - Reminders / notifications (email, SMS, push), customer
@@ -137,10 +136,8 @@ project".
 - This repo: `packages/core` (industry-agnostic library) +
   `apps/default` (generic, deployable demo). See ADR-0008, ADR-0011.
 - Each real business is a separate repo that depends on
-  `@booking/core` and supplies its own configuration. The package
-  name is preserved across the queue pivot for continuity (the
-  workspace root is still `@booking/core`); the public surface is
-  the queue domain.
+  `@booking/core` (the workspace root) and supplies its own
+  configuration. The public surface is the queue domain.
 
 ## Privacy lifecycle
 

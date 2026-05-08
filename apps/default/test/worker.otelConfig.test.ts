@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest"
 import { chooseExporter } from "../src/server/observability/otelConfig.js"
 
 /**
- * Pin the OTel exporter triage matrix for the `worker.fetch` boot
- * path (Phase 3 PR#8). Three explicit modes plus the dev/prod default
- * — the matrix should never lose a row silently because the
- * `Network connection lost` noise the previous behaviour produced was
- * the single biggest dev-loop friction.
+ * Pin the OTel exporter triage matrix for the worker boot path —
+ * three explicit modes plus the dev/prod default. The matrix must
+ * never lose a row silently because the `Network connection lost`
+ * noise the wrong default produces is the single biggest dev-loop
+ * friction.
  */
 
 describe("chooseExporter", () => {

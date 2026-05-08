@@ -7,10 +7,9 @@ import {
 } from "../../src/infrastructure/logger/SilentLoggerLive.js"
 
 /**
- * SilentLoggerLive drops every payload. The use cases exercise `info`
- * extensively, but `warn` and `error` are reserved for Phase 1's
- * observability surface — they need at-least-once coverage today so
- * the `100 %` C1 gate stays meaningful as new sinks are added.
+ * SilentLoggerLive drops every payload. Pin `warn` / `error` paths
+ * with at-least-once coverage so the 100% C1 gate stays meaningful
+ * as new sinks are added.
  */
 
 const payload = (code: string) =>

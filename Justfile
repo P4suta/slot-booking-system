@@ -143,6 +143,13 @@ pii-guard:
 domain-purity:
     {{DEV}} bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
 
+# Comment-bans: reject historical narrative tokens (queue-pivot
+# milestone names, scrapped framework names) outside the ADR archive
+# / CHANGELOG. Source describes the present; git log + ADRs own the
+# milestone trail.
+comment-bans:
+    {{DEV}} bash scripts/lint/comment-bans.sh
+
 # Forbidden constructs grep: Date, throw, @ts-ignore (ADR-0010).
 # Scope is `packages/core/src` only — the DO actor-model code in
 # `apps/default/src/server/durableObjects/` runs outside the Effect
@@ -342,7 +349,7 @@ error-docs-refresh:
 # binary is mise-managed and faster to invoke directly), plus the
 # core library size-limit gate. Skip mutation testing (heavy) and
 # bench (informational).
-check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
+check: lint typecheck arch pii-guard domain-purity comment-bans strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
 
 # Drift gate for `docs/error-codes.md`. Re-runs `gen-error-docs`
 # and fails if the working tree disagrees — adding a new error

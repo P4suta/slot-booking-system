@@ -45,11 +45,7 @@ export default defineConfig({
         // notes the carry-over.
         "src/application/ports/**/*.ts",
       ],
-      // C1 100 % is the queue-pivot standing target (CLAUDE.md §4).
-      // Phase 0 scrap leaves only generic infrastructure / errors /
-      // VOs in place; Phase 1 reintroduces queue domain + ports +
-      // adapters, all under TDD red→green→refactor with property
-      // tests. The threshold restores to 100 once Phase 1 lands.
+      // C1 100 % is the queue's standing coverage target (CLAUDE.md §4).
       thresholds: {
         branches: 100,
         functions: 100,

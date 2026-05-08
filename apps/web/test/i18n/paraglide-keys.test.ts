@@ -3,8 +3,7 @@ import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
 /**
- * Phase 3 PR#8 / commit 13 — pin the i18n message catalogue's two
- * invariants:
+ * Pin the i18n message catalogue's two invariants:
  *
  * 1. **Locale parity** — `messages/ja.json` and `messages/en.json`
  *    have an identical key set. Adding a new key in one without the
