@@ -23,7 +23,7 @@ env:
 
 jobs:
   mutation:
-    name: Stryker mutation testing on the pure domain
+    name: Stryker mutation testing on the queue domain + use cases
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -38,6 +38,18 @@ jobs:
 
       - name: Install workspace deps
         run: docker compose run --rm dev corepack pnpm install --frozen-lockfile=false
+
+      # Restore the previous mutation run's incremental cache so
+      # Stryker only re-tests mutants whose source / test surface
+      # actually changed. The cache key includes the mutate-scope
+      # hash so a `stryker.config.json` edit invalidates correctly.
+      - name: Restore Stryker incremental cache
+        uses: actions/cache@v4
+        with:
+          path: packages/core/.stryker-tmp
+          key: stryker-${{ runner.os }}-${{ hashFiles('packages/core/src/**', 'packages/core/stryker.config.json') }}
+          restore-keys: |
+            stryker-${{ runner.os }}-
 
       - name: Run Stryker (incremental)
         run: |

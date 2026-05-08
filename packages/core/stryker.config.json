@@ -1,13 +1,24 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "Mutation testing for the pure-domain layer. Validates that the test suite catches real defects, not just incidental code shapes.",
+  "_comment": "Mutation testing for the queue domain + application layer. Validates that the test suite catches real defects, not just incidental code shapes.",
   "packageManager": "pnpm",
   "testRunner": "vitest",
   "vitest": {
     "configFile": "vitest.config.ts"
   },
-  "mutate": ["src/domain/value-objects/**/*.ts", "!src/**/*.d.ts", "!src/**/index.ts"],
-  "ignorePatterns": ["dist", "coverage", "node_modules"],
+  "mutate": [
+    "src/domain/value-objects/**/*.ts",
+    "src/domain/queue/**/*.ts",
+    "src/domain/errors/**/*.ts",
+    "src/application/usecases/queue/**/*.ts",
+    "src/application/usecases/_authenticate.ts",
+    "src/application/usecases/_log.ts",
+    "src/application/usecases/_withUseCaseEnv.ts",
+    "src/application/runtime/BackoffPolicy.ts",
+    "!src/**/*.d.ts",
+    "!src/**/index.ts"
+  ],
+  "ignorePatterns": ["dist", "coverage", "node_modules", "test/bench/**"],
   "thresholds": {
     "high": 90,
     "low": 80,
@@ -18,6 +29,8 @@
     "fileName": "reports/mutation/index.html"
   },
   "tempDirName": ".stryker-tmp",
+  "incremental": true,
+  "incrementalFile": ".stryker-tmp/incremental.json",
   "timeoutMS": 60000,
   "concurrency": 4,
   "checkers": ["typescript"],
