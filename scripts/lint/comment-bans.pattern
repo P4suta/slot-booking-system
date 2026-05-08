@@ -1,0 +1,15 @@
+\bPhase \d+(\.\d+)?[a-z]?\b
+\bPR#\d+\b
+\bM\d{2}\b
+\bBI-\d+\b
+\bslot.graph\b
+\bbooking.graph\b
+\bDaySchedule\b
+\bPothos\b
+\bGraphQL Yoga\b
+\bgraphql-yoga\b
+\bgql\.tada\b
+\bholdSlot\b
+\bavailableSlots\b
+\bcomputeAvailableSlots\b
+\bBookingCommon\b

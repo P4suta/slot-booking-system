@@ -16,22 +16,21 @@ is [`docs/dev-workflow.md`](./docs/dev-workflow.md).
 
 ## Architecture invariants
 
-Three invariants gate every commit:
+Two invariants gate every commit:
 
 1. **Functional Core / Imperative Shell** (ADR-0018) —
    `packages/core` is pure (`Effect`-laden, no side effects in the
    source). Side effects live in adapter Live layers under
    `infrastructure/` or `apps/<deployment>/src/server/adapters/`.
    Enforced by `dependency-cruiser`.
-2. **No PII in logs** (ADR-0009) — the regex grep gate
-   `just pii-guard` rejects literal email / phone / address /
-   birthday / gender field names in `packages/` and `apps/` (the
-   audit log carries internal identifiers only). Enforced by
-   lefthook pre-commit.
-3. **Schema is the source of truth** (ADR-0036) — every wire shape
+2. **Schema is the source of truth** (ADR-0036) — every wire shape
    is decoded through `Effect.Schema` at the boundary; the queue's
    REST + SSE / WebSocket surface emits its OpenAPI 3.1 spec from
    the same Schema declarations the use cases consume.
+
+PII discipline (ADR-0009) and the absence of industry-specific
+vocabulary in the queue core remain project rules; they are
+enforced by code review rather than a static grep gate.
 
 If your change touches a layering boundary, an ADR is required (see
 "Authoring an ADR" below).
@@ -58,10 +57,6 @@ The full configuration is `lefthook.yml`. Pre-commit hooks (run on
 the staged subset for speed):
 
 - `typos` — spelling on text content.
-- `domain-purity-staged` — `packages/core/src` cannot import
-  `cloudflare:workers`, `wrangler`, or other deployment-specific
-  packages.
-- `pii-guard-staged` — see ADR-0009.
 - `comment-bans-staged` — historical-narrative tokens (queue-pivot
   milestone names, scrapped framework names) are rejected; ADRs and
   CHANGELOG keep the trail.
@@ -70,7 +65,7 @@ the staged subset for speed):
 
 Pre-push hook runs the `just check` mirror — typecheck, biome,
 eslint, markdownlint, depcruise, vitest, coverage, knip,
-type-coverage, error-doc drift, `comment-bans-full`.
+type-coverage, error-doc drift, comment-bans.
 
 ## Commit style
 

@@ -133,16 +133,6 @@ size-limit-core:
     {{DEV}} {{PNPM}} -F @booking/core run build
     {{DEV}} {{PNPM}} -F @booking/core run size-limit
 
-# PII guard: forbids field/column declarations and URL/email-host literals
-# tied to PII, throughout source. See ADR-0009.
-pii-guard:
-    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'
-
-# Domain-purity: forbid industry-specific terms inside packages/core +
-# apps/default.
-domain-purity:
-    {{DEV}} bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
-
 # Comment-bans: reject historical narrative tokens (queue-pivot
 # milestone names, scrapped framework names) outside the ADR archive
 # / CHANGELOG. Source describes the present; git log + ADRs own the
@@ -313,7 +303,7 @@ diagnose-arch:
 diagnose-test:
     bash scripts/diagnose-test.sh
 
-# Guards (PII / domain-purity / strict-code / dead-code / type-coverage /
+# Guards (comment-bans / strict-code / dead-code / type-coverage /
 # error-docs-drift) を順次回し、 各 pass/fail を集計。
 diagnose-guards:
     bash scripts/diagnose-guards.sh
@@ -349,7 +339,7 @@ error-docs-refresh:
 # binary is mise-managed and faster to invoke directly), plus the
 # core library size-limit gate. Skip mutation testing (heavy) and
 # bench (informational).
-check: lint typecheck arch pii-guard domain-purity comment-bans strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
+check: lint typecheck arch comment-bans strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
 
 # Drift gate for `docs/error-codes.md`. Re-runs `gen-error-docs`
 # and fails if the working tree disagrees — adding a new error

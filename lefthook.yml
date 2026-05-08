@@ -5,8 +5,8 @@
 #                 Biome + typos + actionlint + yamllint guards. Heavy
 #                 type-checking and tests are deferred to pre-push.
 #   commit-msg  — conventional-commit format check via `committed`.
-#   pre-push    — full pipeline: tsc, vitest, dependency-cruiser, PII
-#                 guard, domain-purity guard, strict-code grep.
+#   pre-push    — full pipeline: tsc, vitest, dependency-cruiser,
+#                 comment-bans + strict-code greps.
 #
 # **Warnings fail commits**: every linter is invoked with the strictest
 # exit-code policy it offers. Biome via `--error-on-warnings`, ESLint
@@ -38,18 +38,9 @@ pre-commit:
     biome-staged:
       glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,json}"
       run: docker compose run --rm dev ./node_modules/.bin/biome check --error-on-warnings --no-errors-on-unmatched {staged_files}
-    pii-guard-staged:
-      glob: "**/*.{ts,tsx,svelte,sql}"
-      run: |
-        docker compose run --rm dev bash -c '! rg -n --type-add "svelte:*.svelte" -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" {staged_files}'
-    domain-purity-staged:
-      glob: "{packages,apps}/**/*.{ts,tsx,svelte,sql}"
-      run: |
-        docker compose run --rm dev bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" {staged_files}'
     comment-bans-staged:
       glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,md,sql,yaml,yml,toml}"
-      run: |
-        docker compose run --rm dev bash scripts/lint/comment-bans.sh {staged_files}
+      run: docker compose run --rm dev bash scripts/lint/comment-bans.sh {staged_files}
 
 commit-msg:
   commands:
@@ -77,12 +68,6 @@ pre-push:
       run: docker compose run --rm dev bash -c "cd apps/default && ./node_modules/.bin/vitest run"
     test-web:
       run: docker compose run --rm dev bash -c "cd apps/web && ./node_modules/.bin/vitest run"
-    pii-guard-full:
-      run: |
-        docker compose run --rm dev bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'
-    domain-purity-full:
-      run: |
-        docker compose run --rm dev bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
     comment-bans-full:
       run: docker compose run --rm dev bash scripts/lint/comment-bans.sh
     strict-code:

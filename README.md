@@ -86,8 +86,8 @@ on the type-state transitions and monoid homomorphism, and the
 `Errors.ts` on every push.
 
 Architectural invariants are enforced by `dependency-cruiser`
-(`.dependency-cruiser.cjs`) and the `pii-guard` / `domain-purity` /
-`comment-bans` ripgrep gates in `lefthook.yml`.
+(`.dependency-cruiser.cjs`) and the `comment-bans` ripgrep gate in
+`lefthook.yml`.
 
 ## Development
 

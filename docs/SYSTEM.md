@@ -147,4 +147,4 @@ project".
   storage carries the same data only for the active day.
 - The audit log (5y retention) carries `actor`, `action`, `data` (PII-
   free by construction), `traceId`, and `recorded_at`. PII never
-  reaches it; the `pii-guard` CI step rejects the patterns at source.
+  reaches it (ADR-0009).
