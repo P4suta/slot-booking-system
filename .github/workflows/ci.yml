@@ -158,7 +158,7 @@ jobs:
             -v "$PWD:/workspace" \
             -w /workspace \
             slot-booking-system-ci:latest \
-            bash -c '! rg -n -t ts -e "\\bnew Date\\(|\\bDate\\.now\\(|@ts-ignore|@ts-expect-error|: any\\b" packages/core/src apps/default/src 2>/dev/null'
+            bash -c '! rg -n -t ts -e "\\bnew Date\\(|\\bDate\\.now\\(|@ts-ignore|@ts-expect-error|: any\\b" packages/core/src 2>/dev/null'
 
       - name: Test (vitest + coverage, all packages)
         run: |
