@@ -4,12 +4,12 @@ import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
 import { applyCancel, guardActive, invalidTransition } from "../../../domain/queue/transitions.js"
 import type { TicketId } from "../../../domain/types/EntityId.js"
 import type { CustomerHandle } from "../../../domain/value-objects/CustomerHandle.js"
-import { Clock } from "../../ports/Clock.js"
-import { TicketRepository } from "../../ports/EventSourcedRepository.js"
-import { IdGenerator } from "../../ports/IdGenerator.js"
-import { Logger } from "../../ports/Logger.js"
+import type { Clock } from "../../ports/Clock.js"
+import type { TicketRepository } from "../../ports/EventSourcedRepository.js"
+import type { IdGenerator } from "../../ports/IdGenerator.js"
+import type { Logger } from "../../ports/Logger.js"
 import { authenticateCustomer, loadOrTicketNotFound } from "../_authenticate.js"
-import { infoPayload } from "../_log.js"
+import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
  * CancelTicket — Waiting | Called → Cancelled. Both customer (with
@@ -30,10 +30,6 @@ export const CancelTicket = (
   Clock | IdGenerator | TicketRepository | Logger
 > =>
   Effect.gen(function* () {
-    const clock = yield* Clock
-    const idgen = yield* IdGenerator
-    const repo = yield* TicketRepository
-    const logger = yield* Logger
     const loaded =
       handle !== undefined
         ? yield* authenticateCustomer(ticketId, handle)
@@ -54,15 +50,14 @@ export const CancelTicket = (
     if (loaded.state.state !== "Waiting" && loaded.state.state !== "Called") {
       return yield* Effect.fail(invalidTransition(loaded.state.state, "Cancel"))
     }
-    const eventId = yield* idgen.newTicketEventId
-    const at = yield* clock.nowInstant
-    const { ticket, event } = applyCancel(loaded.state, at, eventId, actor, reason)
-    yield* repo.save(ticketId, loaded.revision, [event], ticket)
-    yield* logger.info(
-      infoPayload("CancelTicket", "I_USECASE_CANCEL_TICKET", {
-        ticketId,
-        actor,
-      }),
-    )
-    return ticket
+    const cancellable = loaded.state
+    return yield* applyAndPersist({
+      loaded,
+      apply: (at, eventId) => applyCancel(cancellable, at, eventId, actor, reason),
+      log: {
+        tag: "CancelTicket",
+        code: "I_USECASE_CANCEL_TICKET",
+        data: { ticketId, actor },
+      },
+    })
   })

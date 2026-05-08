@@ -7,12 +7,12 @@ import {
   invalidTransition,
 } from "../../../domain/queue/transitions.js"
 import type { TicketId } from "../../../domain/types/EntityId.js"
-import { Clock } from "../../ports/Clock.js"
-import { TicketRepository } from "../../ports/EventSourcedRepository.js"
-import { IdGenerator } from "../../ports/IdGenerator.js"
-import { Logger } from "../../ports/Logger.js"
+import type { Clock } from "../../ports/Clock.js"
+import type { TicketRepository } from "../../ports/EventSourcedRepository.js"
+import type { IdGenerator } from "../../ports/IdGenerator.js"
+import type { Logger } from "../../ports/Logger.js"
 import { loadOrTicketNotFound } from "../_authenticate.js"
-import { infoPayload } from "../_log.js"
+import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
  * MarkNoShow — Called → NoShow. Triggered by staff (manual click)
@@ -28,20 +28,20 @@ export const MarkNoShow = (
   Clock | IdGenerator | TicketRepository | Logger
 > =>
   Effect.gen(function* () {
-    const clock = yield* Clock
-    const idgen = yield* IdGenerator
-    const repo = yield* TicketRepository
-    const logger = yield* Logger
     const loaded = yield* loadOrTicketNotFound(ticketId)
     const terminal = guardActive(loaded.state)
     if (terminal !== null) return yield* Effect.fail(terminal)
     if (loaded.state.state !== "Called") {
       return yield* Effect.fail(invalidTransition(loaded.state.state, "MarkNoShow"))
     }
-    const eventId = yield* idgen.newTicketEventId
-    const at = yield* clock.nowInstant
-    const { ticket, event } = applyMarkNoShow(loaded.state, at, eventId, actor)
-    yield* repo.save(ticketId, loaded.revision, [event], ticket)
-    yield* logger.info(infoPayload("MarkNoShow", "I_USECASE_MARK_NO_SHOW", { ticketId, actor }))
-    return ticket
+    const called = loaded.state
+    return yield* applyAndPersist({
+      loaded,
+      apply: (at, eventId) => applyMarkNoShow(called, at, eventId, actor),
+      log: {
+        tag: "MarkNoShow",
+        code: "I_USECASE_MARK_NO_SHOW",
+        data: { ticketId, actor },
+      },
+    })
   })

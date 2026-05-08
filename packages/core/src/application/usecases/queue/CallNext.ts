@@ -1,14 +1,19 @@
 import { Effect } from "effect"
-import { type DomainError, QueueEmptyError } from "../../../domain/errors/Errors.js"
+import {
+  type ConcurrencyError,
+  type DomainError,
+  QueueEmptyError,
+  type StorageError,
+} from "../../../domain/errors/Errors.js"
 import { head } from "../../../domain/queue/projection.js"
 import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
 import { applyCallNext } from "../../../domain/queue/transitions.js"
 import type { TicketId } from "../../../domain/types/EntityId.js"
-import { Clock } from "../../ports/Clock.js"
+import type { Clock } from "../../ports/Clock.js"
 import { TicketRepository } from "../../ports/EventSourcedRepository.js"
-import { IdGenerator } from "../../ports/IdGenerator.js"
-import { Logger } from "../../ports/Logger.js"
-import { infoPayload } from "../_log.js"
+import type { IdGenerator } from "../../ports/IdGenerator.js"
+import type { Logger } from "../../ports/Logger.js"
+import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
  * CallNext — pick the lowest-`seq` Waiting ticket and transition it
@@ -23,12 +28,13 @@ import { infoPayload } from "../_log.js"
  */
 export const CallNext = (
   actor: Actor = "staff",
-): Effect.Effect<Ticket, DomainError, Clock | IdGenerator | TicketRepository | Logger> =>
+): Effect.Effect<
+  Ticket,
+  DomainError | ConcurrencyError | StorageError,
+  Clock | IdGenerator | TicketRepository | Logger
+> =>
   Effect.gen(function* () {
-    const clock = yield* Clock
-    const idgen = yield* IdGenerator
     const repo = yield* TicketRepository
-    const logger = yield* Logger
     const all = yield* repo.listAll()
     // The in-memory adapter does not surface its event log; instead
     // we rebuild the lookup from listAll(), which already projects
@@ -57,15 +63,14 @@ export const CallNext = (
     if (loaded.state.state !== "Waiting") {
       return yield* Effect.fail(new QueueEmptyError({}))
     }
-    const eventId = yield* idgen.newTicketEventId
-    const at = yield* clock.nowInstant
-    const { ticket, event } = applyCallNext(loaded.state, at, eventId, actor)
-    yield* repo.save(next.id, loaded.revision, [event], ticket)
-    yield* logger.info(
-      infoPayload("CallNext", "I_USECASE_CALL_NEXT", {
-        ticketId: next.id,
-        seq: next.seq,
-      }),
-    )
-    return ticket
+    const waiting = loaded.state
+    return yield* applyAndPersist({
+      loaded,
+      apply: (at, eventId) => applyCallNext(waiting, at, eventId, actor),
+      log: {
+        tag: "CallNext",
+        code: "I_USECASE_CALL_NEXT",
+        data: { ticketId: next.id, seq: next.seq },
+      },
+    })
   })
