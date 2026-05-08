@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -64,6 +67,15 @@ jobs:
             -w /workspace \
             slot-booking-system-ci:latest \
             corepack pnpm install --frozen-lockfile=false
+
+      - name: Build packages/core (emit dist consumed by apps)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            corepack pnpm --filter @booking/core run build
 
       - name: Print GraphQL SDL
         run: |

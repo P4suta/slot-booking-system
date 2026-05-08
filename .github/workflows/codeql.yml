@@ -1,0 +1,51 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly mainstream-language scan; Dependabot stays the
+    # primary supply-chain gate (see ADR-0016 / repo Dependabot
+    # config).
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only the languages this repo actually contains. Rust /
+        # Java / Go are deliberately omitted (the project-template
+        # scaffold's auto-detection enabled them by default; this
+        # override drops them so CodeQL stops emitting "no code
+        # written in Rust" failures on every PR).
+        language:
+          - actions
+          - javascript-typescript
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
