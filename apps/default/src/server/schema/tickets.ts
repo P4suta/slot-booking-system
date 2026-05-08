@@ -2,10 +2,15 @@ import { sql } from "drizzle-orm"
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
 
 /**
- * D1 read-mirror of the ticket aggregate. The DurableObject's local
- * SQLite is the canonical truth (write side); each successful save
- * pushes an outbox row that the alarm relays into this table.
- * `myTicket` reads from D1 to keep the DO load profile predictable.
+ * Read-side projection materialized view of the ticket aggregate.
+ * Event-sourcing canonical truth lives in `ticket_events` (DO-local)
+ * with snapshots in `aggregate_snapshots`; this table is rebuilt by
+ * applying `applyEvent` to each emitted event so query-side reads
+ * stay column-projected without touching the event log on every fetch.
+ *
+ * D1 hosts the same shape as a downstream mirror: each successful
+ * DO save pushes an outbox row that the alarm relays into D1 so
+ * `myTicket` can read from D1 with predictable profile.
  */
 export const tickets = sqliteTable("tickets", {
   id: text("id").primaryKey().notNull(),

@@ -80,18 +80,22 @@ const ticketColumns = (
 
 /**
  * DurableObject-storage-backed adapter for the queue's
- * `TicketRepository`. The DO's local SQLite holds three tables:
+ * `TicketRepository`. The DO's local SQLite holds four tables:
  *
- *   - `tickets` — current projection per id (one row, mutated in
- *     place on each transition)
- *   - `ticket_events` — append-only log; `(ticket_id, seq)` UNIQUE
- *     index pins ordering
- *   - `outbox` — relay queue drained into D1 by the alarm
+ *   - `ticket_events` — append-only event log; canonical truth.
+ *     `(ticket_id, seq)` UNIQUE index pins ordering.
+ *   - `aggregate_snapshots` — load accelerator emitted every K
+ *     events; one row per ticket id, upserted in place.
+ *   - `tickets` — read-side projection materialized view.
+ *     Rebuilt as `applyEvent` folds each emitted event; every
+ *     query-side caller (listAll, the operator dashboard) reads
+ *     from here so the projection stays cheap.
+ *   - `outbox` — relay queue drained into D1 by the alarm.
  *
  * `save(id, expected, events, next)` runs as one synchronous batch
  * (`sql.exec` calls inside a single transaction) so partial-success
- * is impossible — the revision check, log append, snapshot upsert,
- * and outbox enqueue all land or none do.
+ * is impossible — the revision check, event log append, snapshot
+ * upsert, projection refresh, and outbox enqueue all land or none do.
  */
 export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
   Layer.succeed(TicketRepository, {
