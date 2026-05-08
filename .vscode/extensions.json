@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "svelte.svelte-vscode",
+    "vitest.explorer",
+    "dbaeumer.vscode-eslint",
+    "streetsidesoftware.code-spell-checker",
+    "skellock.just",
+    "tamasfe.even-better-toml"
+  ]
+}

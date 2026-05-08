@@ -298,6 +298,28 @@ diagnose-test:
 diagnose-guards:
     bash scripts/diagnose-guards.sh
 
+# Fast feedback: pre-commit gate のみ (typos + biome staged) を回す軽量
+# lane。 < 5 秒。 修正サイクルの中で「format / typo は通った?」 を quick check
+# する用途。
+diagnose-fast:
+    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'
+    {{DEV}} ./node_modules/.bin/biome check --error-on-warnings .
+
+# Watch mode: tsc -w + vitest --watch + biome check --watch を docker
+# compose run で並走。 'just watch' で起動、 Ctrl-C で全停止。
+# Cloudflare Workers の watch は wrangler dev 自身が watch なので
+# 別経路 (just dev-default) で。
+watch:
+    {{DEV}} bash -c '\
+      ./node_modules/.bin/tsc -b --watch --preserveWatchOutput & \
+      cd packages/core && ./node_modules/.bin/vitest --watch & \
+      wait'
+
+# 'docs/error-codes.md' を強制再生成 (errorClassRegistry が変わった後)。
+# error-docs-drift-check が落ちる場合の baseline 復活用。
+error-docs-refresh:
+    just gen-error-docs
+
 # ---------------------------------------------------------------------------
 # Aggregate gates
 # ---------------------------------------------------------------------------
