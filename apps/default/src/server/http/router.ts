@@ -6,7 +6,9 @@ import { verifyStaffJwt } from "../security/jwt.js"
 import { readSessionCookie, verifySession } from "../security/session.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
 import { handleStaffLogin } from "./auth/login.js"
+import { envelopeLog } from "./envelopeLog.js"
 import { DEFECT_STATUS, statusForTag } from "./errorEnvelope.js"
+import { onError } from "./onError.js"
 import { openApiDocument } from "./openapi.js"
 import { rateLimitMiddleware } from "./rateLimit.js"
 import { requestLog } from "./requestLog.js"
@@ -165,6 +167,8 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const cors = corsAllowlist(c.env.IS_DEV === "1", allowed)
     return cors(c as never, next)
   })
+  app.use("*", envelopeLog)
+  app.onError(onError)
 
   // Staff login — exchanges the deployment secret for a JWT
   // (response body) + an HMAC-signed cookie session. Bearer +
