@@ -77,11 +77,14 @@ lint-biome-fix:
 # linter cannot (no-floating-promises, switch-exhaustiveness-check,
 # no-misused-promises, no-unsafe-*). `--max-warnings=0` makes the
 # gate strict — any rule emitting a warning fails the run.
+# `--cache` writes a per-file timestamp+config snapshot under
+# `node_modules/.cache/.eslintcache`; warm runs skip unchanged
+# files and drop wall time from ~13 s to <2 s.
 lint-eslint:
-    {{DEV}} ./node_modules/.bin/eslint . --max-warnings 0
+    {{DEV}} ./node_modules/.bin/eslint . --cache --cache-location node_modules/.cache/.eslintcache --max-warnings 0
 
 lint-eslint-fix:
-    {{DEV}} ./node_modules/.bin/eslint . --fix
+    {{DEV}} ./node_modules/.bin/eslint . --cache --cache-location node_modules/.cache/.eslintcache --fix
 
 markdownlint:
     markdownlint-cli2 \
@@ -372,7 +375,17 @@ error-docs-refresh:
 # binary is mise-managed and faster to invoke directly), plus the
 # core library size-limit gate. Skip mutation testing (heavy) and
 # bench (informational).
-check: lint typecheck arch comment-bans strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
+#
+# Gates run concurrently — they share no FS state at runtime, and
+# the docker daemon serialises container creation enough that
+# concurrent `docker compose run` invocations don't thrash. Wall
+# time collapses from ~60 s sequential to ~14 s (max gate). The
+# sequential alias is kept under `check-sequential` for failure
+# bisection when interleaved logs are inscrutable.
+check:
+    bash scripts/check-parallel.sh
+
+check-sequential: lint typecheck arch comment-bans strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
 
 # Drift gate for `docs/error-codes.md`. Re-runs `gen-error-docs`
 # and fails if the working tree disagrees — adding a new error
