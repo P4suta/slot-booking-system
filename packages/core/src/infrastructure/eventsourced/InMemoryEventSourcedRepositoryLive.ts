@@ -45,7 +45,7 @@ export const InMemoryTicketRepositoryLive = Layer.effect(
         Effect.gen(function* () {
           const m = yield* Ref.get(store)
           const row = m.get(id)
-          if (row === undefined || row.revision !== expected) {
+          if (row?.revision !== expected) {
             return yield* Effect.fail(
               new ConcurrencyError({ expected, actual: row?.revision ?? 0 }),
             )

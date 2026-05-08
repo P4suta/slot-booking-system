@@ -85,6 +85,6 @@ describe("DomainErrorSchema", () => {
     // least confirm that `is` accepts a constructed error instance.
     const isDomainError = Schema.is(DomainErrorSchema)
     expect(isDomainError(new AlreadyCancelledError({}))).toBe(true)
-    expect(isDomainError({ foo: "bar" } as unknown)).toBe(false)
+    expect(isDomainError({ foo: "bar" })).toBe(false)
   })
 })

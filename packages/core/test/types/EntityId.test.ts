@@ -43,20 +43,12 @@ describe("parseId variants", () => {
   // exactOptionalPropertyTypes does not narrow the row type at the
   // Vitest `it.each` boundary.
   type AnyResult = Result.Result<unknown, unknown>
-  const parsers: ReadonlyArray<readonly [string, (s: string) => AnyResult, string]> = [
-    ["TicketId", parseTicketId as (s: string) => AnyResult, "tkt_01h0000000000000000000000a"],
-    [
-      "TicketEventId",
-      parseTicketEventId as (s: string) => AnyResult,
-      "tev_01h0000000000000000000000a",
-    ],
-    ["StaffId", parseStaffId as (s: string) => AnyResult, "staf_01h0000000000000000000000a"],
-    ["AuditLogId", parseAuditLogId as (s: string) => AnyResult, "audt_01h0000000000000000000000a"],
-    [
-      "IdempotencyKeyId",
-      parseIdempotencyKeyId as (s: string) => AnyResult,
-      "idem_01h0000000000000000000000a",
-    ],
+  const parsers: readonly (readonly [string, (s: string) => AnyResult, string])[] = [
+    ["TicketId", parseTicketId, "tkt_01h0000000000000000000000a"],
+    ["TicketEventId", parseTicketEventId, "tev_01h0000000000000000000000a"],
+    ["StaffId", parseStaffId, "staf_01h0000000000000000000000a"],
+    ["AuditLogId", parseAuditLogId, "audt_01h0000000000000000000000a"],
+    ["IdempotencyKeyId", parseIdempotencyKeyId, "idem_01h0000000000000000000000a"],
   ]
   it.each(parsers)("accepts a well-formed %s", (_label, parser, value) => {
     expect(isRight(parser(value))).toBe(true)

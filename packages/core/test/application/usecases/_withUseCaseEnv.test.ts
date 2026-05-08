@@ -36,14 +36,7 @@ describe("useCaseEnv", () => {
       InMemoryTicketRepositoryLive,
       (await Effect.runPromise(makeSilentLogger())).layer,
     )
-    const env = await Effect.runPromise(
-      useCaseEnv.pipe(Effect.provide(layer)) as unknown as Effect.Effect<{
-        readonly clock: unknown
-        readonly idgen: unknown
-        readonly repo: unknown
-        readonly logger: unknown
-      }>,
-    )
+    const env = await Effect.runPromise(useCaseEnv.pipe(Effect.provide(layer)))
     expect(env.clock).toBeDefined()
     expect(env.idgen).toBeDefined()
     expect(env.repo).toBeDefined()
@@ -107,13 +100,13 @@ describe("issueAndPersist", () => {
     const program = Effect.gen(function* () {
       const apply = (id: never, eventId: never, at: never, seq: never) =>
         applyIssue({
-          id: id as never,
-          seq: seq as never,
+          id: id,
+          seq: seq,
           nameKana: KANA,
           phoneLast4: PHONE,
           freeText: null,
-          at: at as never,
-          eventId: eventId as never,
+          at: at,
+          eventId: eventId,
         })
       const log = ({ id, seq }: { readonly id: unknown; readonly seq: number }) => ({
         tag: "IssueTicket",

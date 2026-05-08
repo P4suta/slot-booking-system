@@ -4,7 +4,6 @@ import {
   CancelTicket,
   type CustomerHandle,
   codeOf,
-  type DomainError,
   IssueTicket,
   MarkNoShow,
   MarkServed,
@@ -57,8 +56,7 @@ export type QueueResult =
   | { ok: true; ticket: EncodedTicket }
   | { ok: false; error: { _tag: string; code: string } }
 
-const encodeTicket = (t: Ticket): EncodedTicket =>
-  Schema.encodeUnknownSync(TicketSchema)(t) as EncodedTicket
+const encodeTicket = (t: Ticket): EncodedTicket => Schema.encodeUnknownSync(TicketSchema)(t)
 
 const NO_SHOW_TIMEOUT_DEFAULT_SECONDS = 300
 
@@ -115,8 +113,8 @@ export class QueueShop extends DurableObject<Env> {
         onFailure: (cause) => {
           console.error("[QueueShop] dispatch cause:", cause)
           const fails = cause.reasons.filter(Cause.isFailReason)
-          const first = fails[0]?.error as DomainError | undefined
-          if (first !== undefined && first._tag === "Storage") {
+          const first = fails[0]?.error
+          if (first?._tag === "Storage") {
             console.error("[QueueShop] Storage reason:", first.reason, "cause:", first.cause)
           }
           return Effect.succeed({

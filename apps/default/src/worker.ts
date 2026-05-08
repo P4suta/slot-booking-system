@@ -5,30 +5,20 @@ import { makeD1AuditLogger } from "./server/adapters/D1AuditLoggerLive.js"
 import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
 import { makeRuntimeModeLayer } from "./server/adapters/RuntimeModeLive.js"
 import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
-import { routeQueueApi } from "./server/api/queue.js"
-import type { QueueShop } from "./server/durableObjects/QueueShop.js"
+import { buildQueueApi } from "./server/http/router.js"
+import type { Env } from "./server/http/types.js"
 import { chooseExporter } from "./server/observability/otelConfig.js"
 
 export { QueueShop } from "./server/durableObjects/QueueShop.js"
 
-type Env = {
-  DB: D1Database
-  QUEUE_SHOP: DurableObjectNamespace<QueueShop>
-  DEPLOYMENT_NAME: string
-  DEPLOYMENT_TIMEZONE: string
-  IS_DEV?: string
-  OTEL_EXPORTER_URL?: string
-  OTEL_EXPORTER_KEY?: string
-  STAFF_SESSION_SECRET?: string
-  NO_SHOW_TIMEOUT_SECONDS?: string
-}
-
 const TWO_YEARS = Duration.days(365 * 2)
+
+const queueApi = buildQueueApi()
 
 /**
  * Worker entry. Routes:
  *   - GET  /healthz       readiness probe
- *   - *    /api/v1/...    queue REST + SSE surface
+ *   - *    /api/v1/...    queue REST + SSE surface (Hono-mounted)
  *
  * The QueueShop DurableObject (single instance, idFromName("shop"))
  * is exported so wrangler can construct it. The scheduled handler
@@ -44,8 +34,7 @@ const handler = {
       })
     }
     if (url.pathname.startsWith("/api/v1/")) {
-      const handled = await routeQueueApi(request, env)
-      if (handled !== null) return handled
+      return queueApi.fetch(request, env)
     }
     const body = JSON.stringify(
       {

@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import { TicketRepository } from "../../../src/application/ports/EventSourcedRepository.js"
 import { ConcurrencyError } from "../../../src/domain/errors/Errors.js"
-import type { Ticket, Waiting } from "../../../src/domain/queue/Ticket.js"
+import type { Waiting } from "../../../src/domain/queue/Ticket.js"
 import {
   type ApplyResult,
   applyCallNext,
@@ -52,7 +52,7 @@ describe("InMemoryTicketRepositoryLive", () => {
       Effect.gen(function* () {
         const repo = yield* TicketRepository
         const { ticket, event } = issueOne()
-        yield* repo.issue(ticket.id, [event], ticket as Ticket)
+        yield* repo.issue(ticket.id, [event], ticket)
         const loaded = yield* repo.load(ticket.id)
         expect(loaded.state.id).toBe(ticket.id)
         expect(loaded.revision).toBe(1)
@@ -64,8 +64,8 @@ describe("InMemoryTicketRepositoryLive", () => {
       Effect.gen(function* () {
         const repo = yield* TicketRepository
         const { ticket, event } = issueOne()
-        yield* repo.issue(ticket.id, [event], ticket as Ticket)
-        const r = yield* eitherEffect(repo.issue(ticket.id, [event], ticket as Ticket))
+        yield* repo.issue(ticket.id, [event], ticket)
+        const r = yield* eitherEffect(repo.issue(ticket.id, [event], ticket))
         expect(r.ok).toBe(false)
         if (!r.ok && r.error instanceof ConcurrencyError) {
           expect(r.error.expected).toBe(0)
@@ -92,7 +92,7 @@ describe("InMemoryTicketRepositoryLive", () => {
       Effect.gen(function* () {
         const repo = yield* TicketRepository
         const { ticket, event } = issueOne()
-        yield* repo.issue(ticket.id, [event], ticket as Ticket)
+        yield* repo.issue(ticket.id, [event], ticket)
         const next = applyCallNext(
           ticket as Waiting,
           at("2026-05-08T09:05:00Z"),
@@ -100,7 +100,7 @@ describe("InMemoryTicketRepositoryLive", () => {
         )
         // Issue brought revision to 1; saving with `expected = 0` is
         // a stale-read race.
-        const r = yield* eitherEffect(repo.save(ticket.id, 0, [next.event], next.ticket as Ticket))
+        const r = yield* eitherEffect(repo.save(ticket.id, 0, [next.event], next.ticket))
         expect(r.ok).toBe(false)
         if (!r.ok && r.error instanceof ConcurrencyError) {
           expect(r.error.expected).toBe(0)
@@ -116,7 +116,7 @@ describe("InMemoryTicketRepositoryLive", () => {
         const { ticket, event } = issueOne()
         // Never issued — the save body sees no row and synthesises
         // `actual = 0`. This is the "lost the issue race" branch.
-        const r = yield* eitherEffect(repo.save(ticket.id, 0, [event], ticket as Ticket))
+        const r = yield* eitherEffect(repo.save(ticket.id, 0, [event], ticket))
         expect(r.ok).toBe(false)
         if (!r.ok && r.error instanceof ConcurrencyError) {
           expect(r.error.expected).toBe(0)
@@ -141,8 +141,8 @@ describe("InMemoryTicketRepositoryLive", () => {
         const repo = yield* TicketRepository
         const a = issueOne()
         const b = issueOne()
-        yield* repo.issue(a.ticket.id, [a.event], a.ticket as Ticket)
-        yield* repo.issue(b.ticket.id, [b.event], b.ticket as Ticket)
+        yield* repo.issue(a.ticket.id, [a.event], a.ticket)
+        yield* repo.issue(b.ticket.id, [b.event], b.ticket)
         const all = yield* repo.listAll()
         expect(all).toHaveLength(2)
       }),

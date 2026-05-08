@@ -25,7 +25,7 @@ export type Ticket = {
 export type ShopState = {
   readonly waitingCount: number
   readonly serving: Ticket | null
-  readonly waitingPreview: ReadonlyArray<{ id: string; seq: number }>
+  readonly waitingPreview: readonly { id: string; seq: number }[]
 }
 
 /**
@@ -43,7 +43,7 @@ export type ApiResult<A> = { ok: true; value: A } | { ok: false; error: ErrorEnv
 
 const json = async <A>(res: Response): Promise<ApiResult<A>> => {
   const body = (await res.json().catch(() => null)) as { ok: boolean; error?: ErrorEnvelope }
-  if (res.ok && body?.ok === true) return { ok: true, value: body as unknown as A }
+  if (res.ok && body?.ok) return { ok: true, value: body as unknown as A }
   return {
     ok: false,
     error: body?.error ?? { _tag: "Network", code: `E_NET_${res.status}` },

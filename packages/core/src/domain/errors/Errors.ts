@@ -405,7 +405,7 @@ export const errorClassRegistry = [
   AggregateNotFoundError,
   ConcurrencyError,
   StorageError,
-] as const satisfies ReadonlyArray<ErrorClass & Schema.Top>
+] as const satisfies readonly (ErrorClass & Schema.Top)[]
 
 export const DomainErrorSchema = Schema.Union(errorClassRegistry).pipe(
   Schema.toTaggedUnion("_tag"),

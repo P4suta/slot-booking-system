@@ -120,7 +120,7 @@ const drive = (
         )
         if (cancellable === undefined) continue
         const out = applyCancel(
-          cancellable as Waiting | Called,
+          cancellable,
           at(tick),
           newTicketEventId(),
           "customer",

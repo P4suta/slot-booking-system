@@ -55,7 +55,7 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "Called": {
       const prior = tickets.get(event.ticketId)
-      if (prior === undefined || prior.state !== "Waiting") return snap
+      if (prior?.state !== "Waiting") return snap
       const next: Called = {
         ...prior,
         state: "Called",
@@ -67,7 +67,7 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "Served": {
       const prior = tickets.get(event.ticketId)
-      if (prior === undefined || prior.state !== "Called") return snap
+      if (prior?.state !== "Called") return snap
       const next: Ticket = {
         ...prior,
         state: "Served",
@@ -79,7 +79,7 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "NoShowed": {
       const prior = tickets.get(event.ticketId)
-      if (prior === undefined || prior.state !== "Called") return snap
+      if (prior?.state !== "Called") return snap
       const next: Ticket = {
         ...prior,
         state: "NoShow",
@@ -104,7 +104,7 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "Recalled": {
       const prior = tickets.get(event.ticketId)
-      if (prior === undefined || prior.state !== "Called") return snap
+      if (prior?.state !== "Called") return snap
       // Drop the Called-only fields by reconstructing the common
       // shape verbatim — keeping `seq` is the point (the ticket
       // returns to the head of the queue), but `calledAt` /

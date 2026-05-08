@@ -18,7 +18,8 @@
     "@microlabs/otel-cf-workers": "latest",
     "@opentelemetry/api": "latest",
     "drizzle-orm": "rc",
-    "effect": "beta"
+    "effect": "beta",
+    "hono": "latest"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "latest",

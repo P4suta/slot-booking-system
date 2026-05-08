@@ -11,7 +11,6 @@ import {
   Recall,
 } from "../../../../src/application/usecases/queue/index.js"
 import { AggregateNotFoundError } from "../../../../src/domain/errors/Errors.js"
-import type { Ticket } from "../../../../src/domain/queue/Ticket.js"
 import { applyIssue } from "../../../../src/domain/queue/transitions.js"
 import { newTicketEventId, newTicketId } from "../../../../src/domain/types/EntityId.js"
 import type { CustomerHandle } from "../../../../src/domain/value-objects/CustomerHandle.js"
@@ -355,7 +354,7 @@ describe("queue lifecycle round-trip", () => {
     const stubRepoLayer = Layer.succeed(
       TicketRepository,
       TicketRepository.of({
-        listAll: () => Effect.succeed([ghost.ticket as Ticket]),
+        listAll: () => Effect.succeed([ghost.ticket]),
         load: () => Effect.fail(new AggregateNotFoundError({})),
         save: () => Effect.void,
         issue: () => Effect.void,
@@ -372,9 +371,7 @@ describe("queue lifecycle round-trip", () => {
       Effect.matchEffect(CallNext(), {
         onSuccess: (value) => Effect.succeed({ ok: true as const, value }),
         onFailure: (error) => Effect.succeed({ ok: false as const, error }),
-      }).pipe(Effect.provide(layer)) as unknown as Effect.Effect<
-        { ok: true; value: Ticket } | { ok: false; error: { readonly _tag: string } }
-      >,
+      }).pipe(Effect.provide(layer)),
     )
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error._tag).toBe("QueueEmpty")
