@@ -9,7 +9,7 @@ import type { ErrorSeverity } from "../../domain/errors/Errors.js"
  *   - `validation` is the highest-volume severity (every malformed
  *     phone, every empty kana surfaces here) and the operator only
  *     needs a representative sample to spot regressions.
- *   - `domain` failures (`PhoneMismatch`, `SlotExpired`, …) are
+ *   - `domain` failures (`PhoneMismatch`, `AlreadyCancelled`, …) are
  *     rarer but still operator-visible — half-sample so a regression
  *     spike still shows up.
  *   - `infrastructure` failures (`Storage`, `Concurrency`,

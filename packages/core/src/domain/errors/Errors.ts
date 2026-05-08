@@ -16,9 +16,7 @@ export type ErrorSeverity = "validation" | "domain" | "infrastructure"
  * Constructor-side metadata every concrete error class must declare. The
  * pair `(code, severity)` lives on the class (not the instance), so the
  * tag → code / tag → severity mapping is co-located with the error
- * definition itself rather than in a separate lookup table. Phase 2.0
- * pulls these reads through a typed `metadataOf` accessor — no
- * `as unknown as ...` cast.
+ * definition itself rather than in a separate lookup table.
  */
 export type ErrorClassMetadata = {
   readonly code: string
@@ -28,29 +26,14 @@ export type ErrorClassMetadata = {
 /**
  * Structural shape of `e.constructor` for every domain error class. A
  * tagged error class extends `Schema.TaggedError`'s class factory, so
- * the constructor exposes both the `Schema.fields` table (for Phase 2.0
- * field-introspection) and the {@link ErrorClassMetadata} `code` /
- * `severity` declared at the leaf class.
+ * the constructor exposes both the `Schema.fields` table and the
+ * {@link ErrorClassMetadata} `code` / `severity` declared at the leaf
+ * class.
  */
 export type ErrorClass = ErrorClassMetadata & {
-  // The factory produces a `Schema.Struct.Fields` table whose `_tag`
-  // entry is the literal `Schema.tag<...>` brand and the remainder are
-  // ordinary `Schema.Schema.Any` codecs. The looser `unknown` value
-  // type accommodates that variance — `dataOf` only walks the keys.
   readonly fields: Readonly<Record<string, unknown>>
 }
 
-/**
- * Structural narrowing of a `DomainError` instance to its class-side
- * metadata. TypeScript types `instance.constructor` as the un-narrowed
- * `Function` interface even when the instance type is a discriminated
- * union of classes that all carry the same statics — the cast bridges
- * that gap. Every member of the {@link DomainError} union is asserted
- * against {@link ErrorClass} at compile time by the
- * `errorClassRegistry` array further down this module, so the cast is
- * sound by construction (a missing `static code` / `severity` /
- * `fields` would refuse to type-check the registry entry).
- */
 const metadataOf = (e: DomainError): ErrorClass => e.constructor as unknown as ErrorClass
 
 /* -------------------------------------------------------------------------- */
@@ -73,104 +56,11 @@ export class InvalidNameKanaError extends Schema.TaggedErrorClass<InvalidNameKan
   static readonly severity: ErrorSeverity = "validation"
 }
 
-/** Why a booking code failed to parse. */
-export type BookingCodeReason = "wrong-length" | "invalid-character" | "checksum-mismatch"
-
-export const BookingCodeReasonSchema = Schema.Literals([
-  "wrong-length",
-  "invalid-character",
-  "checksum-mismatch",
-])
-
-export class InvalidBookingCodeError extends Schema.TaggedErrorClass<InvalidBookingCodeError>()(
-  "InvalidBookingCode",
-  { reason: BookingCodeReasonSchema },
-) {
-  static readonly code = "E_VAL_BOOKING_CODE"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
 export class InvalidFreeTextError extends Schema.TaggedErrorClass<InvalidFreeTextError>()(
   "InvalidFreeText",
   { reason: Schema.String },
 ) {
   static readonly code = "E_VAL_FREE_TEXT"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidDurationError extends Schema.TaggedErrorClass<InvalidDurationError>()(
-  "InvalidDuration",
-  { reason: Schema.String },
-) {
-  static readonly code = "E_VAL_DURATION"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidHoldingDaysError extends Schema.TaggedErrorClass<InvalidHoldingDaysError>()(
-  "InvalidHoldingDays",
-  { reason: Schema.String },
-) {
-  static readonly code = "E_VAL_HOLDING_DAYS"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidTimeSlotError extends Schema.TaggedErrorClass<InvalidTimeSlotError>()(
-  "InvalidTimeSlot",
-  { reason: Schema.String },
-) {
-  static readonly code = "E_VAL_TIME_SLOT"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidBitmapError extends Schema.TaggedErrorClass<InvalidBitmapError>()(
-  "InvalidBitmap",
-  {
-    reason: Schema.String,
-  },
-) {
-  static readonly code = "E_VAL_BITMAP"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidSkillError extends Schema.TaggedErrorClass<InvalidSkillError>()(
-  "InvalidSkill",
-  {
-    reason: Schema.String,
-  },
-) {
-  static readonly code = "E_VAL_SKILL"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidResourceTypeError extends Schema.TaggedErrorClass<InvalidResourceTypeError>()(
-  "InvalidResourceType",
-  { reason: Schema.String },
-) {
-  static readonly code = "E_VAL_RESOURCE_TYPE"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidWeekdayError extends Schema.TaggedErrorClass<InvalidWeekdayError>()(
-  "InvalidWeekday",
-  { reason: Schema.String },
-) {
-  static readonly code = "E_VAL_WEEKDAY"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidOpenWindowError extends Schema.TaggedErrorClass<InvalidOpenWindowError>()(
-  "InvalidOpenWindow",
-  { reason: Schema.String },
-) {
-  static readonly code = "E_VAL_OPEN_WINDOW"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
-export class InvalidAbsenceError extends Schema.TaggedErrorClass<InvalidAbsenceError>()(
-  "InvalidAbsence",
-  { reason: Schema.String },
-) {
-  static readonly code = "E_VAL_ABSENCE"
   static readonly severity: ErrorSeverity = "validation"
 }
 
@@ -193,35 +83,6 @@ export class InvalidEntityIdError extends Schema.TaggedErrorClass<InvalidEntityI
   static readonly severity: ErrorSeverity = "validation"
 }
 
-export const CatalogEntitySchema = Schema.Literals([
-  "service",
-  "provider",
-  "resource",
-  "businessHours",
-  "closure",
-  "providerAbsence",
-])
-export type CatalogEntity = Schema.Schema.Type<typeof CatalogEntitySchema>
-
-/**
- * Schema decoding rejected a catalog input payload (Service / Provider /
- * Resource / BusinessHours / Closure / ProviderAbsence). Distinct from
- * the per-value-object validation errors above because catalog inputs
- * arrive as a whole struct and the failure may be in any field — the
- * carrier `entity` records which entity rejected, `reason` carries the
- * Schema parse summary.
- */
-export class InvalidCatalogInputError extends Schema.TaggedErrorClass<InvalidCatalogInputError>()(
-  "InvalidCatalogInput",
-  {
-    entity: CatalogEntitySchema,
-    reason: Schema.String,
-  },
-) {
-  static readonly code = "E_VAL_CATALOG_INPUT"
-  static readonly severity: ErrorSeverity = "validation"
-}
-
 export const MissingStaffCapabilityReasonSchema = Schema.Literals([
   "absent",
   "malformed",
@@ -232,7 +93,7 @@ export type MissingStaffCapabilityReason = Schema.Schema.Type<
 >
 
 /**
- * The request did not present a valid `StaffCapability`. Covers four
+ * The request did not present a valid `StaffCapability`. Covers the four
  * causes the boundary cannot distinguish without leaking auth detail:
  * missing header, malformed envelope (base64 / JSON parse), invalid
  * Schema shape, and capability tag other than `StaffCapability`. Lack
@@ -251,14 +112,12 @@ export class MissingStaffCapabilityError extends Schema.TaggedErrorClass<Missing
 /* Domain errors — business rule violations.                                   */
 /* -------------------------------------------------------------------------- */
 
-export class BookingNotFoundError extends Schema.TaggedErrorClass<BookingNotFoundError>()(
-  "BookingNotFound",
-  {},
-) {
-  static readonly code = "E_DOM_BOOKING_NOT_FOUND"
-  static readonly severity: ErrorSeverity = "domain"
-}
-
+/**
+ * The customer's handle (phoneLast4) did not match the ticket's stored
+ * value. Defends against ticket-id enumeration: an attacker who guesses
+ * a valid id still cannot mutate the ticket without the matching weak
+ * factor.
+ */
 export class PhoneMismatchError extends Schema.TaggedErrorClass<PhoneMismatchError>()(
   "PhoneMismatch",
   {},
@@ -267,6 +126,10 @@ export class PhoneMismatchError extends Schema.TaggedErrorClass<PhoneMismatchErr
   static readonly severity: ErrorSeverity = "domain"
 }
 
+/**
+ * The ticket has already reached the `Cancelled` terminal state and
+ * does not accept further commands.
+ */
 export class AlreadyCancelledError extends Schema.TaggedErrorClass<AlreadyCancelledError>()(
   "AlreadyCancelled",
   {},
@@ -275,6 +138,10 @@ export class AlreadyCancelledError extends Schema.TaggedErrorClass<AlreadyCancel
   static readonly severity: ErrorSeverity = "domain"
 }
 
+/**
+ * The ticket has already reached the `Served` terminal state and does
+ * not accept further commands.
+ */
 export class AlreadyCompletedError extends Schema.TaggedErrorClass<AlreadyCompletedError>()(
   "AlreadyCompleted",
   {},
@@ -283,6 +150,10 @@ export class AlreadyCompletedError extends Schema.TaggedErrorClass<AlreadyComple
   static readonly severity: ErrorSeverity = "domain"
 }
 
+/**
+ * The ticket has already reached the `NoShow` terminal state and does
+ * not accept further commands.
+ */
 export class AlreadyNoShowError extends Schema.TaggedErrorClass<AlreadyNoShowError>()(
   "AlreadyNoShow",
   {},
@@ -291,54 +162,12 @@ export class AlreadyNoShowError extends Schema.TaggedErrorClass<AlreadyNoShowErr
   static readonly severity: ErrorSeverity = "domain"
 }
 
-export class SlotExpiredError extends Schema.TaggedErrorClass<SlotExpiredError>()(
-  "SlotExpired",
-  {},
-) {
-  static readonly code = "E_DOM_SLOT_EXPIRED"
-  static readonly severity: ErrorSeverity = "domain"
-}
-
-export class SlotUnavailableError extends Schema.TaggedErrorClass<SlotUnavailableError>()(
-  "SlotUnavailable",
-  {},
-) {
-  static readonly code = "E_DOM_SLOT_UNAVAILABLE"
-  static readonly severity: ErrorSeverity = "domain"
-}
-
-export class OutsideBusinessHoursError extends Schema.TaggedErrorClass<OutsideBusinessHoursError>()(
-  "OutsideBusinessHours",
-  {},
-) {
-  static readonly code = "E_DOM_OUTSIDE_HOURS"
-  static readonly severity: ErrorSeverity = "domain"
-}
-
-export class ServiceDisabledError extends Schema.TaggedErrorClass<ServiceDisabledError>()(
-  "ServiceDisabled",
-  {},
-) {
-  static readonly code = "E_DOM_SERVICE_DISABLED"
-  static readonly severity: ErrorSeverity = "domain"
-}
-
-export class ProviderUnavailableError extends Schema.TaggedErrorClass<ProviderUnavailableError>()(
-  "ProviderUnavailable",
-  {},
-) {
-  static readonly code = "E_DOM_PROVIDER_UNAVAILABLE"
-  static readonly severity: ErrorSeverity = "domain"
-}
-
-export class ResourceUnavailableError extends Schema.TaggedErrorClass<ResourceUnavailableError>()(
-  "ResourceUnavailable",
-  {},
-) {
-  static readonly code = "E_DOM_RESOURCE_UNAVAILABLE"
-  static readonly severity: ErrorSeverity = "domain"
-}
-
+/**
+ * A command tried to apply a transition that the current state does not
+ * accept (e.g. `MarkServed` while `Waiting`). Carries the offending
+ * state and command names so log readers can read the failed edge off
+ * the `(state, command) → next` lattice without reconstructing context.
+ */
 export class InvalidStateTransitionError extends Schema.TaggedErrorClass<InvalidStateTransitionError>()(
   "InvalidStateTransition",
   {
@@ -353,10 +182,9 @@ export class InvalidStateTransitionError extends Schema.TaggedErrorClass<Invalid
 /**
  * The bearer's capability does not satisfy the command's requirements
  * — typically a `StaffCapability` whose `scopes` do not include the
- * scope the command needs (e.g. issuing `Complete` without the
- * `"complete"` scope). The `_tag` enum at the schema level filters out
- * the obvious cases (a Customer cannot issue `Complete`); this error
- * covers the residual scope-membership check inside `apply`.
+ * scope the command needs. The `_tag` enum at the schema level filters
+ * out the obvious cases (a Customer cannot issue staff-only commands);
+ * this error covers the residual scope-membership check inside `apply`.
  */
 export class InsufficientCapabilityError extends Schema.TaggedErrorClass<InsufficientCapabilityError>()(
   "InsufficientCapability",
@@ -375,10 +203,10 @@ export class InsufficientCapabilityError extends Schema.TaggedErrorClass<Insuffi
 
 /**
  * An aggregate id has no recorded events and no snapshot. Distinct from
- * `BookingNotFoundError` which is a domain-level "the booking the user
- * asked about does not exist". `AggregateNotFoundError` is raised by the
- * `EventSourcedRepository.load` port when the underlying storage has no
- * entry for the requested id (e.g. invalid id, purged aggregate).
+ * domain-level "the ticket the user asked about does not exist" —
+ * `AggregateNotFoundError` is raised by the `EventSourcedRepository.load`
+ * port when the underlying storage has no entry for the requested id
+ * (e.g. invalid id, purged aggregate).
  */
 export class AggregateNotFoundError extends Schema.TaggedErrorClass<AggregateNotFoundError>()(
   "AggregateNotFound",
@@ -405,11 +233,10 @@ export class ConcurrencyError extends Schema.TaggedErrorClass<ConcurrencyError>(
 /**
  * Generic storage failure — disk I/O error, schema drift, txn aborted,
  * `D1Database` rejected the batch, etc. `reason` is an operator-facing
- * string (never PII). `cause` is a first-class field (Phase 2.0 / BI-2)
- * carrying the underlying defect or rejected error so log sinks can
- * unfold it; it is the *only* error class with a cause field, because
- * production code only ever attaches a cause at storage / RPC boundary
- * sites (`Effect.tryPromise.catch`, `Effect.catchDefect`).
+ * string (never PII). `cause` is a first-class field carrying the
+ * underlying defect or rejected error so log sinks can unfold it; it
+ * is the *only* error class with a cause field, because production code
+ * only ever attaches a cause at storage / RPC boundary sites.
  */
 export class StorageError extends Schema.TaggedErrorClass<StorageError>()("Storage", {
   reason: Schema.String,
@@ -426,34 +253,16 @@ export class StorageError extends Schema.TaggedErrorClass<StorageError>()("Stora
 export type ValidationError =
   | InvalidPhoneLast4Error
   | InvalidNameKanaError
-  | InvalidBookingCodeError
   | InvalidFreeTextError
-  | InvalidDurationError
-  | InvalidHoldingDaysError
-  | InvalidTimeSlotError
-  | InvalidBitmapError
-  | InvalidSkillError
-  | InvalidResourceTypeError
-  | InvalidWeekdayError
-  | InvalidOpenWindowError
-  | InvalidAbsenceError
   | InvalidBusinessTimeZoneError
   | InvalidEntityIdError
-  | InvalidCatalogInputError
   | MissingStaffCapabilityError
 
 export type DomainRuleError =
-  | BookingNotFoundError
   | PhoneMismatchError
   | AlreadyCancelledError
   | AlreadyCompletedError
   | AlreadyNoShowError
-  | SlotExpiredError
-  | SlotUnavailableError
-  | OutsideBusinessHoursError
-  | ServiceDisabledError
-  | ProviderUnavailableError
-  | ResourceUnavailableError
   | InvalidStateTransitionError
   | InsufficientCapabilityError
 
@@ -461,10 +270,13 @@ export type InfrastructureError = AggregateNotFoundError | ConcurrencyError | St
 
 /**
  * Top-level union of every tagged error the core emits across its three
- * stratifications (boundary parse, domain rule, port-side infra). Consumers
- * pattern-match on `_tag` or narrow with `instanceof`. The helpers
- * `codeOf` / `severityOf` / `toLogPayload` accept the union without
- * branching — metadata is read from the constructor.
+ * stratifications (boundary parse, domain rule, port-side infra).
+ * Consumers pattern-match on `_tag` or narrow with `instanceof`. The
+ * helpers `codeOf` / `severityOf` / `toLogPayload` accept the union
+ * without branching — metadata is read from the constructor.
+ *
+ * Phase 1 of the queue pivot extends this union with the queue-specific
+ * sub-lattice (`TicketNotFoundError`, `OutsideQueueHoursError`, …).
  */
 export type DomainError = ValidationError | DomainRuleError | InfrastructureError
 
@@ -480,10 +292,10 @@ export const severityOf = (e: DomainError): ErrorSeverity => metadataOf(e).sever
  * is a plain object (no `Error.prototype` fields) carrying:
  *   - `_tag`, `code`, `severity`
  *   - the error's own scalar/structured payload (the constructor args,
- *     enumerated via the Schema `fields` on the class — Phase 2.0 / BI-2)
- *   - `traceId` (passed in by the log layer from the active OTel
- *     span via `getCurrentTraceId` — domain errors no longer carry
- *     it themselves)
+ *     enumerated via the Schema `fields` on the class)
+ *   - `traceId` (passed in by the log layer from the active OTel span
+ *     via `getCurrentTraceId` — domain errors no longer carry it
+ *     themselves)
  *   - `cause` only when the error class has one as a payload field
  *     (currently `StorageError`); the unwrapping is delegated to
  *     {@link extractCausePreview}.
@@ -507,23 +319,8 @@ const extractCausePreview = (raw: unknown): LogPayload["cause"] => {
   return undefined
 }
 
-/**
- * Keys present in the Schema fields record that are *not* part of the
- * domain payload — `_tag` is the discriminator the
- * `Schema.TaggedErrorClass` factory installs on every class, and
- * `cause` is the underlying-exception carrier surfaced separately
- * via {@link extractCausePreview}. Hoisted so the filter rule lives
- * in one place rather than as two equality checks inside `dataOf`.
- */
 const INFRASTRUCTURE_FIELDS: ReadonlySet<string> = new Set(["_tag", "cause"])
 
-/**
- * Enumerate the payload fields declared on the error's class. The
- * iteration is driven by `e.constructor.fields` — the Schema fields
- * static the `Schema.TaggedErrorClass` factory installs on the class —
- * so adding a new field to a class instantly shows up in log payloads
- * with no separate registration.
- */
 const dataOf = (e: DomainError): Readonly<Record<string, unknown>> => {
   const view = e as unknown as Readonly<Record<string, unknown>>
   return Object.fromEntries(
@@ -565,41 +362,18 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] }
  * `Schema.TaggedError`'s factory). Type-checking this array compiles
  * iff every leaf class declares the metadata; the cast in
  * {@link metadataOf} is sound exactly when this list type-checks.
- *
- * Adding a new error class requires appending a single entry here; the
- * compiler then refuses to build the package until the new class also
- * declares the static metadata, which is the smallest possible
- * "if-you-add-this-don't-forget-that" obligation.
  */
 export const errorClassRegistry: readonly ErrorClass[] = [
   InvalidPhoneLast4Error,
   InvalidNameKanaError,
-  InvalidBookingCodeError,
   InvalidFreeTextError,
-  InvalidDurationError,
-  InvalidHoldingDaysError,
-  InvalidTimeSlotError,
-  InvalidBitmapError,
-  InvalidSkillError,
-  InvalidResourceTypeError,
-  InvalidWeekdayError,
-  InvalidOpenWindowError,
-  InvalidAbsenceError,
   InvalidBusinessTimeZoneError,
   InvalidEntityIdError,
-  InvalidCatalogInputError,
   MissingStaffCapabilityError,
-  BookingNotFoundError,
   PhoneMismatchError,
   AlreadyCancelledError,
   AlreadyCompletedError,
   AlreadyNoShowError,
-  SlotExpiredError,
-  SlotUnavailableError,
-  OutsideBusinessHoursError,
-  ServiceDisabledError,
-  ProviderUnavailableError,
-  ResourceUnavailableError,
   InvalidStateTransitionError,
   InsufficientCapabilityError,
   AggregateNotFoundError,
@@ -607,20 +381,6 @@ export const errorClassRegistry: readonly ErrorClass[] = [
   StorageError,
 ]
 
-/**
- * Schema codec union over every {@link DomainError} variant. The
- * structural cast through `readonly Schema.Top[]` is sound at runtime
- * — each {@link errorClassRegistry} entry is a `Schema.TaggedErrorClass`
- * factory result, which is a Schema by construction — but TypeScript
- * cannot bridge from `readonly ErrorClass[]` (the metadata-typed view)
- * to the variadic Union input without a local cast.
- *
- * Encapsulating the cast here lets every consumer (RPC error channel,
- * GraphQL error wire codec, log payload registry) import a
- * `Schema.Codec<DomainError>` without restating the assertion. The
- * day Effect's typings let `Schema.Union(readonly ErrorClass[])`
- * resolve directly, this file is the one place to delete the cast.
- */
 export const DomainErrorSchema: Schema.Codec<DomainError> = Schema.Union(
   errorClassRegistry as readonly unknown[] as readonly Schema.Top[],
 ) as unknown as Schema.Codec<DomainError>

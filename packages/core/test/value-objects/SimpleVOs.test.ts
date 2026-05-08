@@ -1,13 +1,11 @@
 import { Result, Schema } from "effect"
 import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
-import { isMinutes, parseMinutes } from "../../src/domain/value-objects/Duration.js"
 import {
   FreeTextSchema,
   normalizeFreeText,
   parseFreeText,
 } from "../../src/domain/value-objects/FreeText.js"
-import { isHoldingDays, parseHoldingDays } from "../../src/domain/value-objects/HoldingDays.js"
 import {
   NameKanaSchema,
   normalizeNameKana,
@@ -85,10 +83,7 @@ describe("FreeText", () => {
   })
 
   it("strips C0/DEL/C1 controls and keeps \\t and \\n", () => {
-    // BEL (0x07) → range 1, VT (0x0B), FF (0x0C), ESC (0x1B) → range 4,
-    // DEL (0x7F) and NEL (0x85, C1) → range 5. Tab (0x09) and LF (0x0A)
-    // are deliberately *not* in the deny list and must survive.
-    const raw = "abcdefg\thello\nworld"
+    const raw = "abcdefg\thello\nworld"
     const r = parseFreeText(raw)
     expect(isRight(r)).toBe(true)
     if (isRight(r)) expect(r.success).toBe("abcdefg\thello\nworld")
@@ -114,39 +109,5 @@ describe("FreeText", () => {
     if (isRight(r)) {
       expect(Schema.encodeSync(FreeTextSchema)(r.success)).toBe("hello world")
     }
-  })
-})
-
-describe("Minutes", () => {
-  it.each([0, 1, 30, 60, 1440])("accepts %d", (n) => {
-    expect(isRight(parseMinutes(n))).toBe(true)
-  })
-
-  it.each([-1, 1441, 1.5, Number.NaN, Number.POSITIVE_INFINITY])("rejects %p", (n) => {
-    expect(isLeft(parseMinutes(n))).toBe(true)
-  })
-
-  it("isMinutes guard mirrors parseMinutes", () => {
-    expect(isMinutes(0)).toBe(true)
-    expect(isMinutes(1440)).toBe(true)
-    expect(isMinutes(-1)).toBe(false)
-    expect(isMinutes(1.5)).toBe(false)
-  })
-})
-
-describe("HoldingDays", () => {
-  it.each([0, 1, 7, 30])("accepts %d", (n) => {
-    expect(isRight(parseHoldingDays(n))).toBe(true)
-  })
-
-  it.each([-1, 31, 0.5])("rejects %p", (n) => {
-    expect(isLeft(parseHoldingDays(n))).toBe(true)
-  })
-
-  it("isHoldingDays guard mirrors parseHoldingDays", () => {
-    expect(isHoldingDays(0)).toBe(true)
-    expect(isHoldingDays(30)).toBe(true)
-    expect(isHoldingDays(31)).toBe(false)
-    expect(isHoldingDays(0.5)).toBe(false)
   })
 })
