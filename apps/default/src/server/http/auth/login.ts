@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import { signStaffJwt } from "../../security/jwt.js"
 import { sessionCookieHeader, signSession } from "../../security/session.js"
 import { timingSafeEqual } from "../../security/timingSafeEqual.js"
+import { parseJsonBody } from "../parseJsonBody.js"
 import type { Env } from "../types.js"
 
 /**
@@ -27,8 +28,13 @@ const LoginBodySchema = Schema.Struct({ password: Schema.String })
 
 const TTL_SECONDS = 8 * 60 * 60
 
-const failResponse = (status: number, _tag: string, code: string): Response =>
-  new Response(JSON.stringify({ ok: false, error: { _tag, code } }), {
+const failResponse = (
+  status: number,
+  _tag: string,
+  code: string,
+  extra: Record<string, unknown> = {},
+): Response =>
+  new Response(JSON.stringify({ ok: false, error: { _tag, code, ...extra } }), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   })
@@ -38,8 +44,11 @@ export const handleStaffLogin = async (c: Context<{ Bindings: Env }>): Promise<R
   if (secret === undefined || secret === "") {
     return failResponse(503, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY")
   }
-  const raw: unknown = await c.req.json().catch(() => null)
-  const decoded = Schema.decodeUnknownResult(LoginBodySchema)(raw)
+  const parsed = await parseJsonBody(c)
+  if (!parsed.ok) {
+    return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+  }
+  const decoded = Schema.decodeUnknownResult(LoginBodySchema)(parsed.raw)
   if (Result.isFailure(decoded)) {
     return failResponse(422, "InvalidBody", "E_VAL_BODY")
   }

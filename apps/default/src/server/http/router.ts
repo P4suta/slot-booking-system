@@ -10,6 +10,7 @@ import { envelopeLog } from "./envelopeLog.js"
 import { DEFECT_STATUS, statusForTag } from "./errorEnvelope.js"
 import { onError } from "./onError.js"
 import { openApiDocument } from "./openapi.js"
+import { parseJsonBody } from "./parseJsonBody.js"
 import { rateLimitMiddleware } from "./rateLimit.js"
 import { requestLog } from "./requestLog.js"
 import { corsAllowlist, parseAllowlist, securityHeaders } from "./securityHeaders.js"
@@ -177,8 +178,11 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
 
   // Issue is rate-limited per CF-Connecting-IP (60 / min).
   app.post("/api/v1/tickets", rateLimitMiddleware("RL_ISSUE"), async (c) => {
-    const raw: unknown = await c.req.json().catch(() => null)
-    const decoded = Schema.decodeUnknownResult(IssueTicketBodySchema)(raw)
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    }
+    const decoded = Schema.decodeUnknownResult(IssueTicketBodySchema)(parsed.raw)
     if (Result.isFailure(decoded)) return failResponse(422, "InvalidBody", "E_VAL_BODY")
     const handleR = parseCustomerHandleStrict(decoded.success.nameKana, decoded.success.phoneLast4)
     if (Result.isFailure(handleR))
@@ -220,7 +224,11 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   app.post("/api/v1/tickets/:id/cancel", async (c) => {
     const idR = parseTicketId(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    const raw: unknown = await c.req.json().catch(() => null)
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    }
+    const raw = parsed.raw
     const isStaff = c.req.header("x-staff-token") !== undefined
     if (isStaff) {
       const guard = await requireStaff(c)
