@@ -38,6 +38,17 @@ export type ShopState = {
   readonly waitingPreview: ReadonlyArray<{ id: string; seq: number }>
 }
 
+/**
+ * Staff-only shape: PII (nameKana / phoneLast4 / freeText) のせ。
+ * `x-staff-token` を付けて GET /api/v1/queue を叩いたときに返る形。
+ * 顧客 landing で使う {@link ShopState} のスーパーセット。
+ */
+export type StaffShopState = {
+  readonly waitingCount: number
+  readonly serving: Ticket | null
+  readonly waitingPreview: readonly Ticket[]
+}
+
 export type ApiResult<A> = { ok: true; value: A } | { ok: false; error: ErrorEnvelope }
 
 const json = async <A>(res: Response): Promise<ApiResult<A>> => {
@@ -86,6 +97,18 @@ export const cancelTicket = async (
 
 export const shopState = async (): Promise<ApiResult<ShopState>> => {
   const res = await fetch(`${baseUrl()}/api/v1/queue`)
+  return json(res)
+}
+
+/**
+ * Staff 権限版 shopState — preview に PII (kana / 末尾4 / freeText) が
+ * 同梱される。 token を付けたまま public endpoint を叩くだけで sub-path
+ * は変わらない (worker 側で `x-staff-token` をチェックして branch)。
+ */
+export const staffShopState = async (token: string): Promise<ApiResult<StaffShopState>> => {
+  const res = await fetch(`${baseUrl()}/api/v1/queue`, {
+    headers: { "x-staff-token": token },
+  })
   return json(res)
 }
 

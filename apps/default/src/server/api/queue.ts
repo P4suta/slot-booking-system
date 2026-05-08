@@ -215,21 +215,30 @@ export const routeQueueApi = async (request: Request, env: Env): Promise<Respons
     )
   }
 
-  // --- Shop state (public) ---
+  // --- Shop state (public + staff) ---
+  // staff token を持参すると preview / serving に PII を同梱して
+  // 受付業務に使える形で返す。 持参しない場合は ID + seq のみで
+  // 顧客 landing の混雑表示用 (Iron Principles の minimum-PII 維持)。
   if (path === "/api/v1/queue" && request.method === "GET") {
     const tickets = await stub(env).listTickets()
-    const waiting = tickets.filter((t) => t.state === "Waiting")
+    const waiting = tickets.filter((t) => t.state === "Waiting").sort((a, b) => a.seq - b.seq)
     const serving = tickets.find((t) => t.state === "Called") ?? null
+    const isStaff =
+      env.STAFF_SESSION_SECRET !== undefined &&
+      request.headers.get("x-staff-token") === env.STAFF_SESSION_SECRET
+    if (isStaff) {
+      return json(200, {
+        ok: true,
+        waitingCount: waiting.length,
+        serving,
+        waitingPreview: waiting.slice(0, 20),
+      })
+    }
     return json(200, {
       ok: true,
       waitingCount: waiting.length,
-      serving,
-      // Operator-grade preview of the next few waiting tickets,
-      // PII-redacted for the public surface.
-      waitingPreview: waiting
-        .sort((a, b) => a.seq - b.seq)
-        .slice(0, 10)
-        .map((t) => ({ id: t.id, seq: t.seq })),
+      serving: serving === null ? null : { id: serving.id, seq: serving.seq },
+      waitingPreview: waiting.slice(0, 10).map((t) => ({ id: t.id, seq: t.seq })),
     })
   }
 

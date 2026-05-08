@@ -6,8 +6,8 @@
     markNoShow,
     markServed,
     queueEventSource,
-    shopState,
     staffCancel,
+    staffShopState,
     type Ticket,
   } from "$lib/api.js"
 
@@ -15,27 +15,30 @@
   let authenticated = $state(token.length > 0)
   let waitingCount = $state(0)
   let serving: Ticket | null = $state(null)
-  let preview: ReadonlyArray<{ id: string; seq: number }> = $state([])
+  // Staff 画面は受付業務 — 各待ちチケットの kana / 末尾4 / 用件まで
+  // 表示する。 公開 endpoint と違って PII 込みの shape を fetch する。
+  let preview: ReadonlyArray<Ticket> = $state([])
   let busy = $state(false)
   let error: string | null = $state(null)
   let source: EventSource | undefined
 
   /**
-   * Re-fetch the public shop state. Tolerant: a transient network
+   * Re-fetch the staff-side shop state. Tolerant: a transient network
    * error never throws — it just leaves the previous state on screen
    * and surfaces the message in `error`.
    */
   const refresh = async (): Promise<void> => {
     try {
-      const r = await shopState()
+      const r = await staffShopState(token)
       if (!r.ok) {
         error = `refresh: ${r.error._tag}`
+        if (r.error._tag === "MissingStaffCapability") onLogout()
         return
       }
       const data = r.value as unknown as {
         waitingCount: number
         serving: Ticket | null
-        waitingPreview: ReadonlyArray<{ id: string; seq: number }>
+        waitingPreview: ReadonlyArray<Ticket>
       }
       waitingCount = data.waitingCount
       serving = data.serving
@@ -179,6 +182,15 @@
         <span>呼び出し中</span>
         {#if serving !== null}
           <strong>#{serving.seq}</strong>
+          {#if serving.nameKana !== null}
+            <p class="serving-name">{serving.nameKana}</p>
+          {/if}
+          {#if serving.phoneLast4 !== null}
+            <p class="serving-meta">末尾 {serving.phoneLast4}</p>
+          {/if}
+          {#if serving.freeText !== null && serving.freeText !== ""}
+            <p class="serving-meta">📝 {serving.freeText}</p>
+          {/if}
           <p class="ticket-id">{serving.id}</p>
         {:else}
           <strong class="muted">—</strong>
@@ -203,9 +215,18 @@
     {:else}
       <ul class="queue">
         {#each preview as t (t.id)}
-          <li>
+          <li class="queue-row">
             <span class="seq">#{t.seq}</span>
-            <code>{t.id.slice(-8)}</code>
+            <div class="info">
+              <p class="info-name">{t.nameKana ?? "(名前なし)"}</p>
+              <p class="info-meta">
+                <span class="phone">末尾 {t.phoneLast4 ?? "—"}</span>
+                {#if t.freeText !== null && t.freeText !== ""}
+                  <span class="free-text">— {t.freeText}</span>
+                {/if}
+              </p>
+              <p class="info-id">{t.id.slice(-8)}</p>
+            </div>
             <button class="warn small" onclick={() => onCancel(t.id)} disabled={busy}>キャンセル</button>
           </li>
         {/each}
@@ -307,6 +328,17 @@
     color: #86868b;
     word-break: break-all;
   }
+  .serving-name {
+    margin: 0.25rem 0 0;
+    font-size: 1rem;
+    font-weight: 500;
+    color: #1d1d1f;
+  }
+  .serving-meta {
+    margin: 0.1rem 0 0;
+    font-size: 0.85rem;
+    color: #6e6e73;
+  }
   .actions {
     display: flex;
     gap: 0.5rem;
@@ -339,22 +371,49 @@
     flex-direction: column;
     gap: 0.5rem;
   }
-  .queue li {
+  .queue-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 1rem;
-    padding: 0.75rem;
+    padding: 0.85rem 1rem;
     background: #f5f5f7;
-    border-radius: 8px;
+    border-radius: 10px;
   }
   .seq {
-    font-weight: 500;
-    width: 3rem;
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: #1d1d1f;
+    min-width: 2.5rem;
+    padding-top: 0.1rem;
   }
-  code {
+  .info {
     flex: 1;
-    font-family: ui-monospace, monospace;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+  .info-name {
+    margin: 0;
+    font-weight: 500;
+    color: #1d1d1f;
+  }
+  .info-meta {
+    margin: 0;
     font-size: 0.85rem;
-    color: #86868b;
+    color: #6e6e73;
+    word-break: break-word;
+  }
+  .phone {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .free-text {
+    color: #1d1d1f;
+  }
+  .info-id {
+    margin: 0;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    color: #aeaeb2;
   }
 </style>
