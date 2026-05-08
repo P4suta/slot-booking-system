@@ -1,4 +1,4 @@
-import { buildRequest, type RequestInit_ } from "./httpFixture.js"
+import { buildRequest } from "./httpFixture.js"
 
 /**
  * Typed request builders for every Hono-mounted endpoint. Each
@@ -20,7 +20,7 @@ export type Handle = {
 
 export const issueTicket = (
   body: { handle: Handle; freeText: string | null },
-  init: Pick<RequestInit_, "headers"> = {},
+  init: { readonly headers?: Record<string, string> } = {},
 ) =>
   buildRequest("/api/v1/tickets", {
     method: "POST",

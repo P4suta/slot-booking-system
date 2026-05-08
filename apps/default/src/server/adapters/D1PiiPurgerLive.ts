@@ -31,7 +31,7 @@ export const makeD1PiiPurger = (db: D1Database) =>
               )
               .bind(seconds)
               .run()
-            return result.meta.changes ?? 0
+            return result.meta.changes
           },
           catch: (_e) => undefined,
         }).pipe(Effect.orElseSucceed(() => 0)),

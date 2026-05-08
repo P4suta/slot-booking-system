@@ -38,7 +38,7 @@ const issue = (seq: number, idHint?: TicketId) => {
     nameKana: kana,
     phoneLast4: phone,
     freeText: free,
-    at: at(`2026-05-08T09:0${seq}:00Z`),
+    at: at(`2026-05-08T09:0${String(seq)}:00Z`),
     eventId: newTicketEventId(),
   })
 }

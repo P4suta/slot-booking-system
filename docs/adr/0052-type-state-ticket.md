@@ -10,7 +10,7 @@
 `Called`, `Served`, `NoShow`, `Cancelled` — keyed by `state`. The
 type-state phantom
 
-```
+```typescript
 type TicketT<S extends TicketState> = Extract<Ticket, { state: S }>
 ```
 
@@ -18,7 +18,7 @@ lets call sites pin the variant at compile time. The right-side
 smart constructors in `domain/queue/transitions.ts` accept only the
 source state whose outgoing edge they own:
 
-```
+```text
 applyCallNext  : Waiting → Result<{ Called, CalledEvent }>
 applyMarkServed: Called  → Result<{ Served, ServedEvent }>
 applyMarkNoShow: Called  → Result<{ NoShow, NoShowedEvent }>
@@ -38,7 +38,7 @@ guard is the single runtime check that runs after `loadOrTicketNotFound`.
   caller).
 - The state machine's lattice diagram is:
 
-```
+```text
                      ┌──── Cancel ────┐
                      ▼                │
    Waiting ──Call──→ Called ──Served──→ Served (terminal)

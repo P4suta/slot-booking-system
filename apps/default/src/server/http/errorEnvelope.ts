@@ -18,15 +18,6 @@ import { Match } from "effect"
  *          InvalidBusinessTimeZone (validation-shaped errors)
  *   - 500: Storage, Defect (server-side / unexpected)
  */
-export type EnvelopeBody = {
-  readonly ok: false
-  readonly error: {
-    readonly _tag: string
-    readonly code: string
-    readonly [key: string]: unknown
-  }
-}
-
 const status = Match.type<DomainError["_tag"]>().pipe(
   Match.when("TicketNotFound", () => 404),
   Match.when("AggregateNotFound", () => 404),

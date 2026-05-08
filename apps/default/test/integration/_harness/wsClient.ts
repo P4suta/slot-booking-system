@@ -33,10 +33,10 @@ const DEFAULT_TIMEOUT = 2_000
 
 const buildMessageStream = (socket: WebSocket): MessageStream => {
   const buffered: unknown[] = []
-  const waiters: Array<{
+  const waiters: {
     resolve: (value: unknown) => void
-    reject: (reason: unknown) => void
-  }> = []
+    reject: (reason: Error) => void
+  }[] = []
   socket.addEventListener("message", (event) => {
     let parsed: unknown
     try {
@@ -64,7 +64,7 @@ const buildMessageStream = (socket: WebSocket): MessageStream => {
           // (in practice always the head we just registered).
           const idx = waiters.findIndex((w) => w.resolve === resolve)
           if (idx !== -1) waiters.splice(idx, 1)
-          reject(new Error(`No WebSocket message within ${timeoutMs}ms`))
+          reject(new Error(`No WebSocket message within ${String(timeoutMs)}ms`))
         }, timeoutMs)
         waiters.push({
           resolve: (v) => {
@@ -90,9 +90,9 @@ export const openWebSocket = async (
       headers: { Upgrade: "websocket" },
     }),
   )
-  if (response.status !== 101 || response.webSocket === null || response.webSocket === undefined) {
+  if (response.status !== 101 || response.webSocket === null) {
     throw new Error(
-      `WebSocket upgrade expected (status 101 + webSocket field); got status ${response.status.toString()}`,
+      `WebSocket upgrade expected (status 101 + webSocket field); got status ${String(response.status)}`,
     )
   }
   const socket = response.webSocket

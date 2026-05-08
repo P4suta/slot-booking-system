@@ -42,7 +42,7 @@ export const signStaffJwt = async (
     .setIssuer(ISSUER)
     .setAudience(AUDIENCE)
     .setIssuedAt()
-    .setExpirationTime(`${ttlSeconds}s`)
+    .setExpirationTime(`${String(ttlSeconds)}s`)
     .sign(key)
 }
 

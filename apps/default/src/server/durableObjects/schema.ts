@@ -1,5 +1,4 @@
 import { aggregateSnapshots } from "../schema/aggregateSnapshots.js"
-import { auditLog } from "../schema/auditLog.js"
 import { outbox, outboxDead } from "../schema/outbox.js"
 import { ticketEvents } from "../schema/ticketEvents.js"
 import { tickets } from "../schema/tickets.js"
@@ -31,7 +30,3 @@ export const ensureDurableObjectSchema = (sql: SqlStorage): void => {
     sql.exec(stmt)
   }
 }
-
-// auditLog is referenced by D1 only; we re-export it here for the
-// migration generator without including it in the DO schema.
-export { auditLog }

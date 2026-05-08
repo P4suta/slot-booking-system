@@ -55,7 +55,7 @@ const renderColumn = (col: RenderableColumn): string => {
  * automatically appears in the DO's `ensureDurableObjectSchema`
  * idempotent migration with no hand-rolled DDL drift.
  */
-export const tableToDDL = (table: SQLiteTable): readonly string[] => {
+const tableToDDL = (table: SQLiteTable): readonly string[] => {
   const cfg = getTableConfig(table)
   const cols = cfg.columns.map((c) => renderColumn(c as unknown as RenderableColumn))
   const create = `CREATE TABLE IF NOT EXISTS ${cfg.name} (\n  ${cols.join(",\n  ")}\n)`

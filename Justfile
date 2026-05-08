@@ -89,6 +89,7 @@ markdownlint:
         "#**/node_modules/**" \
         "#**/dist/**" \
         "#**/coverage/**" \
+        "#.diagnose/**" \
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**" \
         "#apps/web/src/paraglide/**" \

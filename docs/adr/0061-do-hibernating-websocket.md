@@ -28,11 +28,11 @@ seconds during a busy period. The pre-pivot SSE design re-fetched
 the full projection every 2 s regardless of whether anything had
 changed, which:
 
-  - Wasted both client + DO read bandwidth on quiet windows.
-  - Added up to 2 s of perceived latency between staff calling
-    the next ticket and the customer landing page reflecting it.
-  - Required a 30 s client-side reconnect dance to fit Workers'
-    streaming budget.
+- Wasted both client + DO read bandwidth on quiet windows.
+- Added up to 2 s of perceived latency between staff calling
+  the next ticket and the customer landing page reflecting it.
+- Required a 30 s client-side reconnect dance to fit Workers'
+  streaming budget.
 
 Three options were on the table:
 

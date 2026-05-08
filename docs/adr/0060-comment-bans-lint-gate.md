@@ -12,12 +12,12 @@ The forbidden-token list lives in
 `scripts/lint/comment-bans.pattern` (so the pattern file does not
 self-trigger), and the gate is wired into:
 
-  - `lefthook.yml` `pre-commit` (`comment-bans-staged`, fast path
-    over staged files only)
-  - `lefthook.yml` `pre-push` (`comment-bans-full`, full repo)
-  - `Justfile` `comment-bans` recipe (CI mirror)
-  - `Justfile` `check` (the local CI gate that must stay green
-    before push)
+- `lefthook.yml` `pre-commit` (`comment-bans-staged`, fast path
+  over staged files only)
+- `lefthook.yml` `pre-push` (`comment-bans-full`, full repo)
+- `Justfile` `comment-bans` recipe (CI mirror)
+- `Justfile` `check` (the local CI gate that must stay green
+  before push)
 
 The pattern file currently bans: `Phase \d+`, `PR#\d+`, `M\d{2}`,
 `BI-\d+`, `slot.graph`, `booking.graph`, `DaySchedule`, `Pothos`,

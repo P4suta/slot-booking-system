@@ -16,7 +16,5 @@ export const ticketEvents = sqliteTable(
     recordedAt: text("recorded_at").notNull(),
     payload: text("payload").notNull(),
   },
-  (t) => ({
-    uxBookingSeq: uniqueIndex("ux_ticket_events_ticket_seq").on(t.ticketId, t.seq),
-  }),
+  (t) => [uniqueIndex("ux_ticket_events_ticket_seq").on(t.ticketId, t.seq)],
 )

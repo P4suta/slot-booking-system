@@ -16,7 +16,7 @@ const encodeCounter = (n: number): string => {
   let x = n
   for (let i = 0; i < SUFFIX_LEN; i++) {
     const idx = x % ALPHABET.length
-    acc = ALPHABET[idx] + acc
+    acc = ALPHABET.charAt(idx) + acc
     x = Math.floor(x / ALPHABET.length)
   }
   return acc

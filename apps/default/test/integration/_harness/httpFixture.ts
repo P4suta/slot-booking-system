@@ -22,7 +22,7 @@ export type WorkerHandle = {
 }
 
 /** Returns the typed worker handle the integration tests dispatch through. */
-export const worker = (): WorkerHandle => SELF as unknown as WorkerHandle
+export const worker = (): WorkerHandle => SELF
 
 export type RequestInit_ = {
   readonly method?: "GET" | "POST" | "OPTIONS"
@@ -52,4 +52,4 @@ export const send = async (path: string, init: RequestInit_ = {}): Promise<Respo
 
 /** Parse JSON response body — throws if the body is empty / non-JSON. */
 export const parseJson = async <T = unknown>(response: Response): Promise<T> =>
-  (await response.json()) as T
+  await response.json()

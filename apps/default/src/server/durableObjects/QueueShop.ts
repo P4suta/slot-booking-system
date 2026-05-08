@@ -75,8 +75,9 @@ export class QueueShop extends DurableObject<Env> {
   constructor(state: DurableObjectState, env: Env) {
     super(state, env)
     this.sql = state.storage.sql
-    state.blockConcurrencyWhile(async () => {
+    void state.blockConcurrencyWhile(() => {
       ensureDurableObjectSchema(this.sql)
+      return Promise.resolve()
     })
   }
 
@@ -141,9 +142,9 @@ export class QueueShop extends DurableObject<Env> {
    * safe) so the worker can pass it back over the structuredClone
    * boundary without DataCloneError.
    */
-  async listTickets(): Promise<readonly EncodedTicket[]> {
+  listTickets(): Promise<readonly EncodedTicket[]> {
     const rows = this.sql.exec("SELECT payload FROM tickets ORDER BY seq ASC").toArray()
-    return rows.map((r) => JSON.parse(r.payload as string) as EncodedTicket)
+    return Promise.resolve(rows.map((r) => JSON.parse(r.payload as string) as EncodedTicket))
   }
 
   /**

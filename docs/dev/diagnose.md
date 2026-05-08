@@ -6,7 +6,7 @@
 診断 dashboard。 1 つの gate が落ちても残りを全部走らせ、 結果を 1 画面に
 markdown table で集約する。
 
-```
+```console
 $ just diagnose
 → typecheck
 → biome

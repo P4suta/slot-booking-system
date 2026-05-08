@@ -54,7 +54,7 @@ describe("staff session cookie round-trip", () => {
     // Flip a payload byte; the signature stays the same but no
     // longer matches the recomputed MAC over the modified body.
     const dot = cookie.lastIndexOf(".")
-    const tampered = `${cookie.slice(0, 1) === "Z" ? "Y" : "Z"}${cookie.slice(1, dot)}.${cookie.slice(dot + 1)}`
+    const tampered = `${cookie.startsWith("Z") ? "Y" : "Z"}${cookie.slice(1, dot)}.${cookie.slice(dot + 1)}`
     const result = await verifySession(SECRET, tampered)
     expect(result.ok).toBe(false)
   })

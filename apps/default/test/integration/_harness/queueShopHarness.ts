@@ -1,4 +1,5 @@
-import { env, runInDurableObject } from "cloudflare:test"
+import { runInDurableObject } from "cloudflare:test"
+import { env } from "cloudflare:workers"
 import type { QueueShop } from "../../../src/server/durableObjects/QueueShop.js"
 
 /**
@@ -26,7 +27,7 @@ type TestEnv = { readonly QUEUE_SHOP: DurableObjectNamespace<QueueShop> }
 export const getShopStub = (): DurableObjectStub<QueueShop> => {
   const e = env as unknown as TestEnv
   const id = e.QUEUE_SHOP.idFromName(SHOP_NAME)
-  return e.QUEUE_SHOP.get(id) as unknown as DurableObjectStub<QueueShop>
+  return e.QUEUE_SHOP.get(id)
 }
 
 /**

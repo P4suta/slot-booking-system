@@ -103,7 +103,7 @@ export const sessionCookieHeader = (token: string, ttlSeconds: number): string =
     "Secure",
     "SameSite=Strict",
     `Path=${COOKIE_PATH}`,
-    `Max-Age=${ttlSeconds}`,
+    `Max-Age=${String(ttlSeconds)}`,
   ].join("; ")
 
 export const sessionCookieClearHeader = (): string =>

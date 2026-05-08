@@ -67,7 +67,7 @@ as "the customer queues; the shop sees the queue."
 
 ## Lifecycle
 
-```
+```text
                      ┌──── Cancel ────┐
                      ▼                │
    Waiting ──Call──→ Called ──Served──→ Served (terminal)

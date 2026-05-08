@@ -16,7 +16,7 @@ describe("integration harness boot", () => {
   })
 
   it("the DO has a SqlStorage on state.storage.sql", async () => {
-    const hasSql = await inShopDo((_instance, state) => state.storage.sql !== undefined)
-    expect(hasSql).toBe(true)
+    const sql = await inShopDo((_instance, state) => state.storage.sql)
+    expect(sql).toBeDefined()
   })
 })

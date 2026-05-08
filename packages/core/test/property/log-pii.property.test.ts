@@ -69,8 +69,8 @@ describe("log PII discipline (property)", () => {
         // (`"tkt_000…001"` contains `"0000"` as a substring) does not
         // false-positive. A real PII leak would surface the value as
         // its own JSON string token, surrounded by quotes.
-        const quotedKana = JSON.stringify(handle.nameKana as string)
-        const quotedPhone = JSON.stringify(handle.phoneLast4 as string)
+        const quotedKana = JSON.stringify(handle.nameKana)
+        const quotedPhone = JSON.stringify(handle.phoneLast4)
         expect(
           json,
           `log entry leaked nameKana ${handle.nameKana as string}: ${json}`,

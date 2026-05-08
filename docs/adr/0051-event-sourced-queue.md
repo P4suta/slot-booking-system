@@ -10,14 +10,14 @@ The queue's truth is the totally-ordered sequence of `TicketEvent`s
 (`Issued` / `Called` / `Served` / `NoShowed` / `Cancelled`). The
 `Ticket` aggregate is the left fold:
 
-```
+```text
 replay : ReadonlyArray<TicketEvent> → QueueSnapshot
 replay = events.reduce(applyEvent, empty)
 ```
 
 The fold is a **monoid homomorphism** over the free monoid on events:
 
-```
+```text
 replay(xs ++ ys) ≡ applyMany(replay(xs), ys)
 ```
 

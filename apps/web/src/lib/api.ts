@@ -2,7 +2,7 @@ import { apiBaseUrl } from "./baseUrl.js"
 
 const baseUrl = apiBaseUrl
 
-export type ErrorEnvelope = {
+type ErrorEnvelope = {
   readonly _tag: string
   readonly code: string
   readonly reason?: string
@@ -42,11 +42,11 @@ export type StaffShopState = {
 export type ApiResult<A> = { ok: true; value: A } | { ok: false; error: ErrorEnvelope }
 
 const json = async <A>(res: Response): Promise<ApiResult<A>> => {
-  const body = (await res.json().catch(() => null)) as { ok: boolean; error?: ErrorEnvelope }
+  const body = (await res.json().catch(() => null)) as { ok: boolean; error?: ErrorEnvelope } | null
   if (res.ok && body?.ok) return { ok: true, value: body as unknown as A }
   return {
     ok: false,
-    error: body?.error ?? { _tag: "Network", code: `E_NET_${res.status}` },
+    error: body?.error ?? { _tag: "Network", code: `E_NET_${String(res.status)}` },
   }
 }
 

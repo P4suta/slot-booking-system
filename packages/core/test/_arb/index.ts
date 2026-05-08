@@ -17,7 +17,7 @@ import { PhoneLast4Schema } from "../../src/domain/value-objects/PhoneLast4.js"
  */
 
 /** Full-width katakana name + space, length 2..16. */
-export const arbNameKanaText: fc.Arbitrary<string> = fc
+const arbNameKanaText: fc.Arbitrary<string> = fc
   .integer({ min: 2, max: 16 })
   .chain((n) =>
     fc.array(fc.constantFrom("ア", "カ", "サ", "タ", "ナ", "ハ", "マ", "ヤ", "ラ", "ワ", "ン"), {
@@ -28,7 +28,7 @@ export const arbNameKanaText: fc.Arbitrary<string> = fc
   .map((cs) => cs.join(""))
 
 /** Four-digit string. */
-export const arbPhoneLast4: fc.Arbitrary<string> = fc
+const arbPhoneLast4: fc.Arbitrary<string> = fc
   .integer({ min: 0, max: 9999 })
   .map((n) => n.toString().padStart(4, "0"))
 
