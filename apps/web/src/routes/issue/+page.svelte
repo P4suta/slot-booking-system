@@ -8,26 +8,31 @@
   let busy = $state(false)
   let error: string | null = $state(null)
 
-  const onSubmit = async (event: SubmitEvent) => {
+  const onSubmit = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
     error = null
     busy = true
-    const result = await issueTicket({
-      nameKana,
-      phoneLast4,
-      freeText: freeText.length === 0 ? null : freeText,
-    })
-    busy = false
-    if (!result.ok) {
-      error = result.error._tag
-      return
+    try {
+      const result = await issueTicket({
+        nameKana,
+        phoneLast4,
+        freeText: freeText.length === 0 ? null : freeText,
+      })
+      if (!result.ok) {
+        error = `issue: ${result.error._tag} (${result.error.code})`
+        return
+      }
+      const ticketId = (result.value as unknown as { ticket: { id: string } }).ticket.id
+      sessionStorage.setItem(
+        "queue.ticket",
+        JSON.stringify({ ticketId, nameKana, phoneLast4 }),
+      )
+      await goto(`/ticket#id=${ticketId}`)
+    } catch (e) {
+      error = `issue: ${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      busy = false
     }
-    const ticketId = (result.value as unknown as { ticket: { id: string } }).ticket.id
-    sessionStorage.setItem(
-      "queue.ticket",
-      JSON.stringify({ ticketId, nameKana, phoneLast4 }),
-    )
-    await goto(`/ticket#id=${ticketId}`)
   }
 </script>
 

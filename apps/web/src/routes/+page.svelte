@@ -12,8 +12,12 @@
   }
 
   onMount(async () => {
-    const initial = await shopState()
-    if (initial.ok) refresh(initial.value as unknown as ShopState)
+    try {
+      const initial = await shopState()
+      if (initial.ok) refresh(initial.value as unknown as ShopState)
+    } catch {
+      // initial fetch failure is non-fatal — SSE will catch up
+    }
     source = queueEventSource()
     source.onmessage = (event) => {
       try {

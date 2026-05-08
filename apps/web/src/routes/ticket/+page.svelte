@@ -33,28 +33,40 @@
     return null
   }
 
-  const refresh = async (id: Stored) => {
-    const r = await myTicket(id)
-    if (!r.ok) {
-      error = r.error._tag
-      return
-    }
-    ticket = (r.value as unknown as { ticket: Ticket }).ticket
-    error = null
-    const s = await shopState()
-    if (s.ok) {
-      const data = s.value as unknown as { waitingCount: number; waitingPreview: { id: string; seq: number }[] }
-      waitingCount = data.waitingCount
-      if (ticket?.state === "Waiting") {
-        const idx = data.waitingPreview.findIndex((t) => t.id === ticket?.id)
-        position = idx >= 0 ? idx : null
-      } else {
-        position = null
+  /**
+   * Re-fetch the customer's own ticket + the public shop state.
+   * Network errors never throw — they surface in `error` and the
+   * previous state stays on screen.
+   */
+  const refresh = async (id: Stored): Promise<void> => {
+    try {
+      const r = await myTicket(id)
+      if (!r.ok) {
+        error = `myTicket: ${r.error._tag} (${r.error.code})`
+        return
       }
+      ticket = (r.value as unknown as { ticket: Ticket }).ticket
+      error = null
+      const s = await shopState()
+      if (s.ok) {
+        const data = s.value as unknown as {
+          waitingCount: number
+          waitingPreview: { id: string; seq: number }[]
+        }
+        waitingCount = data.waitingCount
+        if (ticket?.state === "Waiting") {
+          const idx = data.waitingPreview.findIndex((t) => t.id === ticket?.id)
+          position = idx >= 0 ? idx : null
+        } else {
+          position = null
+        }
+      }
+    } catch (e) {
+      error = `refresh: ${e instanceof Error ? e.message : String(e)}`
     }
   }
 
-  const onLookup = async (event: SubmitEvent) => {
+  const onLookup = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
     const next: Stored = { ...lookupForm }
     sessionStorage.setItem("queue.ticket", JSON.stringify(next))
@@ -62,20 +74,26 @@
     await refresh(next)
   }
 
-  const onCancel = async () => {
+  const onCancel = async (): Promise<void> => {
     if (stored === null) return
     cancelBusy = true
-    const r = await cancelTicket(stored.ticketId, {
-      nameKana: stored.nameKana,
-      phoneLast4: stored.phoneLast4,
-      reason: "customer cancellation",
-    })
-    cancelBusy = false
-    if (!r.ok) {
-      error = r.error._tag
-      return
+    error = null
+    try {
+      const r = await cancelTicket(stored.ticketId, {
+        nameKana: stored.nameKana,
+        phoneLast4: stored.phoneLast4,
+        reason: "customer cancellation",
+      })
+      if (!r.ok) {
+        error = `cancel: ${r.error._tag} (${r.error.code})`
+        return
+      }
+      ticket = (r.value as unknown as { ticket: Ticket }).ticket
+    } catch (e) {
+      error = `cancel: ${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      cancelBusy = false
     }
-    ticket = (r.value as unknown as { ticket: Ticket }).ticket
   }
 
   onMount(async () => {
@@ -83,7 +101,10 @@
     if (stored !== null) await refresh(stored)
     source = queueEventSource()
     source.onmessage = () => {
-      if (stored !== null) refresh(stored)
+      if (stored !== null) void refresh(stored)
+    }
+    source.onerror = () => {
+      error = "live feed: connection lost (retrying…)"
     }
   })
 
