@@ -1,4 +1,4 @@
-import { Result, Schema } from "effect"
+import { type NonEmptyReadonlyArray, Result, Schema } from "effect"
 import type { DomainError } from "../errors/Errors.js"
 import { type NameKana, NameKanaSchema, parseNameKana } from "./NameKana.js"
 import { type PhoneLast4, PhoneLast4Schema, parsePhoneLast4 } from "./PhoneLast4.js"
@@ -23,11 +23,38 @@ export type CustomerHandle = Schema.Schema.Type<typeof CustomerHandleSchema>
 
 /**
  * Lift two raw strings (typically form input) into a validated
- * {@link CustomerHandle}. Returns `Failure` with the first VO error
- * encountered — the call site renders the user-facing message via
- * the standard `errorToI18nKey` projection.
+ * {@link CustomerHandle} with **error accumulation**: both fields
+ * are parsed independently and every failure is reported, so a UI
+ * showing the form errors next to each input gets the full set on
+ * a single submit. The boundary parser favours operator-friendly
+ * feedback over fail-fast cost.
  */
 export const parseCustomerHandle = (
+  nameKana: string,
+  phoneLast4: string,
+): Result.Result<CustomerHandle, NonEmptyReadonlyArray.NonEmptyReadonlyArray<DomainError>> => {
+  const kanaR = parseNameKana(nameKana)
+  const phoneR = parsePhoneLast4(phoneLast4)
+  const failures: DomainError[] = []
+  if (Result.isFailure(kanaR)) failures.push(kanaR.failure)
+  if (Result.isFailure(phoneR)) failures.push(phoneR.failure)
+  if (failures.length > 0) {
+    return Result.fail(
+      failures as unknown as NonEmptyReadonlyArray.NonEmptyReadonlyArray<DomainError>,
+    )
+  }
+  return Result.succeed({
+    nameKana: (kanaR as Result.Success<NameKana, DomainError>).success,
+    phoneLast4: (phoneR as Result.Success<PhoneLast4, DomainError>).success,
+  })
+}
+
+/**
+ * Fail-fast variant for adapter call sites that surface only the
+ * first error (DO RPC paths, internal use cases that don't render
+ * a form). Mirrors {@link parseCustomerHandle} otherwise.
+ */
+export const parseCustomerHandleStrict = (
   nameKana: string,
   phoneLast4: string,
 ): Result.Result<CustomerHandle, DomainError> => {

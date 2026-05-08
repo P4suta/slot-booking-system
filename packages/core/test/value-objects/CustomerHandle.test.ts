@@ -4,6 +4,7 @@ import {
   type CustomerHandle,
   equalsCustomerHandle,
   parseCustomerHandle,
+  parseCustomerHandleStrict,
 } from "../../src/domain/value-objects/CustomerHandle.js"
 
 const isRight = Result.isSuccess
@@ -32,10 +33,40 @@ describe("parseCustomerHandle", () => {
     expect(isLeft(r)).toBe(true)
   })
 
-  it("returns the kana error first when both are invalid", () => {
+  it("accumulates both errors when kana and phone are both invalid", () => {
     const r = parseCustomerHandle("xxx", "abc")
     expect(isLeft(r)).toBe(true)
+    if (isLeft(r)) {
+      expect(r.failure).toHaveLength(2)
+      expect(r.failure.map((e) => e._tag).sort()).toEqual(["InvalidNameKana", "InvalidPhoneLast4"])
+    }
+  })
+
+  it("returns the success on the happy path", () => {
+    const r = parseCustomerHandle("ヤマダ タロウ", "1234")
+    expect(isRight(r)).toBe(true)
+    if (isRight(r)) {
+      expect(r.success.nameKana).toBe("ヤマダ タロウ")
+      expect(r.success.phoneLast4).toBe("1234")
+    }
+  })
+})
+
+describe("parseCustomerHandleStrict (fail-fast)", () => {
+  it("returns the kana error first when both are invalid", () => {
+    const r = parseCustomerHandleStrict("xxx", "abc")
+    expect(isLeft(r)).toBe(true)
     if (isLeft(r)) expect(r.failure._tag).toBe("InvalidNameKana")
+  })
+
+  it("returns the phone error when kana is valid", () => {
+    const r = parseCustomerHandleStrict("ヤマダ タロウ", "abc")
+    expect(isLeft(r)).toBe(true)
+    if (isLeft(r)) expect(r.failure._tag).toBe("InvalidPhoneLast4")
+  })
+
+  it("succeeds on the happy path", () => {
+    expect(isRight(parseCustomerHandleStrict("ヤマダ タロウ", "1234"))).toBe(true)
   })
 })
 
