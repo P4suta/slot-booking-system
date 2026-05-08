@@ -1,19 +1,12 @@
 import { m } from "../paraglide/messages.js"
 
 /**
- * Phase 3 / paraglide-js i18n integration.
- *
- * The 30-key static MessageMap that lived here was the temporary
- * stand-in for paraglide-js's compile-time message contract. It is
- * gone — every error tag now resolves to a typed message function
- * generated under `src/paraglide/` from `messages/{ja,en}.json`. A
- * key referenced here that doesn't exist in the JSON catalogue is
- * a build-time error rather than a missing-tag silent fallback.
- *
- * Lookup is keyed on `BookingError.tag` (the `_tag` of the
- * underlying `DomainError`), reshaped into the paraglide message id
- * `error_<tag>`. Recompile after editing the JSON files via
- * `pnpm -F web run paraglide` (also runs as a build prebuild).
+ * paraglide-js i18n integration. Every error tag resolves to a typed
+ * message function generated under `src/paraglide/` from
+ * `messages/{ja,en}.json`; a key referenced here that doesn't exist
+ * in the JSON catalogue is a build-time error rather than a silent
+ * missing-tag fallback. Lookup is keyed on the `_tag` of the
+ * underlying `DomainError`, reshaped to `error_<tag>`.
  */
 
 type Locale = "ja" | "en"

@@ -27,10 +27,8 @@ type Env = {
 
 /**
  * Action dispatched by the worker to the single QueueShop instance.
- * Discriminated union over the five use cases; the DO routes each
- * action through the matching `application/usecases/queue/` entry
- * point. Phase 3 swaps this raw envelope for an Effect-RPC-typed
- * channel; the action shape is the wire contract either way.
+ * Discriminated union over the use cases; the DO routes each action
+ * through the matching `application/usecases/queue/` entry point.
  */
 export type QueueAction =
   | { type: "IssueTicket"; handle: CustomerHandle; freeText: string | null }
@@ -69,13 +67,9 @@ const NO_SHOW_TIMEOUT_DEFAULT_SECONDS = 300
  * One instance per deployment, keyed by `idFromName("shop")`. The
  * actor model serialises every concurrent write so the FIFO queue
  * is consistent without locks; the DO's local SQLite is the
- * canonical event log + projection.
- *
- * Phase 2 wires the dispatch entry point through plain `dispatch`
- * RPC; Phase 3 layers an Effect-RPC-typed channel on top. The alarm
- * tick fires the no-show sweep (`Called` tickets older than
- * `NO_SHOW_TIMEOUT_SECONDS` → `NoShow`). The outbox drain to D1 is
- * scheduled by the same alarm.
+ * canonical event log + projection. The alarm tick fires the no-show
+ * sweep (`Called` tickets older than `NO_SHOW_TIMEOUT_SECONDS` →
+ * `NoShow`) and drains the outbox to D1.
  */
 export class QueueShop extends DurableObject<Env> {
   private readonly sql: SqlStorage

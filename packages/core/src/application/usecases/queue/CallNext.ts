@@ -14,8 +14,8 @@ import { infoPayload } from "../_log.js"
  * CallNext — pick the lowest-`seq` Waiting ticket and transition it
  * to Called. The use case re-derives the head from a fresh
  * projection over `repo.listAll()` (the in-memory adapter walks the
- * map; the DurableObject adapter Phase 2 issues a single SELECT
- * `seq` ASC, LIMIT 1).
+ * map; the DurableObject adapter issues a single SELECT seq ASC
+ * LIMIT 1).
  *
  * Returns the called ticket so the staff dashboard can render the
  * callout immediately. `actor` defaults to `staff`; the no-show

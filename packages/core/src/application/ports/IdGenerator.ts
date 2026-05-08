@@ -8,15 +8,12 @@ import type {
 } from "../../domain/types/EntityId.js"
 
 /**
- * Centralised id generation, abstracted as an `Effect.Tag`. Production
- * wires {@link IdGenerator} to TypeID + Crockford-Base32
- * (`UlidIdGeneratorLive`); tests wire a seeded counter
- * (`DeterministicIdGeneratorLive`) so property tests are reproducible.
- *
- * The Phase 1 queue pivot narrows the kind set to the five identifiers
- * the queue domain mints (`Ticket`, `TicketEvent`, `Staff`, `AuditLog`,
- * `IdempotencyKey`); the booking-graph kinds (book / serv / prov /
- * rsrc / clos / absn / bhrs) are gone with the slot aggregate.
+ * Centralised id generation. Production wires {@link IdGenerator} to
+ * TypeID + Crockford-Base32 (`UlidIdGeneratorLive`); tests wire a
+ * seeded counter (`DeterministicIdGeneratorLive`) so property tests
+ * are reproducible. The kind set covers the five identifiers the
+ * queue domain mints: Ticket, TicketEvent, Staff, AuditLog,
+ * IdempotencyKey.
  */
 export class IdGenerator extends Context.Service<
   IdGenerator,

@@ -107,7 +107,7 @@ export const queueEventSource = (): EventSource =>
   new EventSource(`${baseUrl()}/api/v1/queue/events`)
 
 /* -------------------------------------------------------------------------- */
-/* Staff actions — protected by x-staff-token (Phase 4 future-work for cookie). */
+/* Staff actions — protected by x-staff-token.                                */
 /* -------------------------------------------------------------------------- */
 
 const staffHeaders = (token: string) => ({

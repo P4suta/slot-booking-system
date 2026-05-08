@@ -3,17 +3,10 @@ import { Result, Schema } from "effect"
 import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
 
 /**
- * REST + SSE surface for the queue. Phase 3 of the pivot replaces the
- * planned GraphQL Yoga surface with a small JSON / SSE matrix —
- * five POST endpoints (one per use case), two GETs (shop state and
- * personal ticket), and one SSE stream (live queue projection).
- *
- * The REST shape carries the same five-mutation / two-query / one-
- * subscription structure the queue-pivot plan §3 specified; the
- * exchange is entirely driven by Effect-Schema parsing on the way
- * in, the QueueShop dispatch on the way through, and a JSON envelope
- * on the way out. Phase 5 (customer UI) and Phase 6 (staff UI)
- * consume this matrix directly.
+ * REST + SSE surface for the queue: 5 POSTs (one per use case),
+ * 2 GETs (shop state + personal ticket), 1 SSE stream (live
+ * projection). Effect-Schema parses the request, QueueShop dispatch
+ * runs the use case, the response is a JSON envelope.
  */
 
 const FreeTextOrNull = Schema.NullOr(Schema.String)
@@ -36,11 +29,9 @@ const CancelBodySchema = Schema.Struct({
   reason: Schema.String,
 })
 
-// CORS for the apps/web dev server (Vite on :5173) hitting wrangler
-// dev (:8787). Production uses a single Cloudflare zone so the path
-// stays same-origin; the dev-only `*` is gated by `IS_DEV` in the
-// caller's env wiring (see Phase 4 future-work for tighter origin
-// pinning). Today: any origin is allowed because the surface carries
+// CORS for apps/web dev (Vite :5173) hitting wrangler dev (:8787).
+// Production uses a single Cloudflare zone so the path stays
+// same-origin; `*` is acceptable in dev because the surface carries
 // no cookies and the staff token is opt-in via header.
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -88,8 +79,6 @@ const requireOperateQueue = (
       reason: "absent",
     })
   }
-  // Phase 4 wires in a real cookie/JWT verification. For now a
-  // shared header keeps `wrangler dev --local` testable.
   const presented = request.headers.get("x-staff-token")
   if (presented !== staffSecret) {
     return fail(401, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {

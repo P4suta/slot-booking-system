@@ -19,8 +19,8 @@ import type { TicketEvent } from "./TicketEvent.js"
  *     transitioned to a terminal state.
  *
  * The replay is a **monoid homomorphism** over the free monoid on
- * events: `replay(xs ++ ys) = applyMany(replay(xs), ys)`. The Phase 1
- * property test pins this invariant directly.
+ * events: `replay(xs ++ ys) = applyMany(replay(xs), ys)`. The
+ * `projection.test.ts` property tests pin this invariant directly.
  */
 export type QueueSnapshot = {
   readonly tickets: ReadonlyMap<TicketId, Ticket>

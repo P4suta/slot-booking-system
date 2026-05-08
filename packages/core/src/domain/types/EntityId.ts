@@ -3,19 +3,15 @@ import { typeid } from "typeid-js"
 import { type DomainError, InvalidEntityIdError } from "../errors/Errors.js"
 
 /**
- * TypeID-shaped entity identifiers, branded so they cannot be mistakenly
- * substituted for one another (ADR-0003).
+ * TypeID-shaped entity identifiers, branded so they cannot be
+ * mistakenly substituted for one another (ADR-0003).
  *
- * Internal representation is the canonical TypeID string `<prefix>_<ULID>`.
- * Each id is materialised as an `Effect.Schema` so the type, runtime
- * decoder, and `Schema.is` predicate all derive from a single declaration.
- *
- * Higher-kinded brand: every entity kind is one row in the
- * {@link ENTITY_KIND_TAG} map below; `Id<"tkt">` is `TicketId`,
- * `Id<"tev">` is `TicketEventId`, etc. Phase 1 of the queue pivot
- * narrows the kind set to the five identifiers the FIFO domain
- * actually mints — the booking-graph kinds (book / serv / prov / rsrc
- * / clos / absn / bhrs) are gone with the slot-graph aggregate.
+ * Internal representation is the canonical TypeID string
+ * `<prefix>_<ULID>`. Each id is materialised as an `Effect.Schema` so
+ * the type, runtime decoder, and `Schema.is` predicate all derive
+ * from a single declaration. The kind set is fixed by the
+ * {@link ENTITY_KIND_TAG} map below — `Id<"tkt">` is `TicketId`,
+ * `Id<"tev">` is `TicketEventId`, etc.
  */
 const ENTITY_KIND_TAG = {
   tkt: "TicketId",

@@ -17,7 +17,7 @@ import { infoPayload } from "../_log.js"
 /**
  * MarkNoShow — Called → NoShow. Triggered by staff (manual click)
  * or by the QueueShop alarm sweep when a Called ticket exceeds
- * `NO_SHOW_TIMEOUT_SECONDS` (Phase 2). The actor field records who.
+ * `NO_SHOW_TIMEOUT_SECONDS`. The actor field records who.
  */
 export const MarkNoShow = (
   ticketId: TicketId,

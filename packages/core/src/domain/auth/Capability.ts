@@ -21,11 +21,11 @@ export { type StaffScope, StaffScopeSchema } from "./ScopeSet.js"
  *      credential triple). Verified by `_authenticate` against the
  *      repository — no session, no cookie, no account (ADR-0054).
  *
- *   2. `StaffCapability` — issued by the staff-side login flow (ADR-0055,
- *      Phase 4). Carries the operator's `StaffId` and a non-empty list
- *      of {@link StaffScope}s spelling out which transitions the
- *      operator may issue. `apply` rejects commands whose required
- *      scope is missing from the bearer's set.
+ *   2. `StaffCapability` — issued by the staff-side login flow
+ *      (ADR-0055). Carries the operator's `StaffId` and a non-empty
+ *      list of {@link StaffScope}s spelling out which transitions
+ *      the operator may issue. `apply` rejects commands whose
+ *      required scope is missing from the bearer's set.
  *
  *   3. `SystemCapability` — emitted by automated processes inside the
  *      Worker itself: `expire` from the QueueShop alarm when a
@@ -34,7 +34,7 @@ export { type StaffScope, StaffScopeSchema } from "./ScopeSet.js"
  *      cluster (no external surface produces it).
  *
  * The `_tag` discriminator drives `_authenticate` and the per-command
- * `requiredCapability` matcher (Phase 1 transitions algebra).
+ * `requiredCapability` matcher in the transitions algebra.
  */
 
 /**
@@ -79,10 +79,9 @@ export const CapabilitySchema = Schema.Union([
 export type Capability = Schema.Schema.Type<typeof CapabilitySchema>
 
 /**
- * Subject category, derived purely from `_tag` for log payloads /
- * GraphQL resolution. Replaces the legacy `"customer" | "staff" |
- * "system"` scalar — call sites that need the wire-shape can read this
- * rather than serialise the full capability (which carries credentials).
+ * Subject category, derived from `_tag` for log payloads / audit
+ * entries. Call sites read this instead of serialising the full
+ * capability (which carries credentials).
  */
 export const subjectOf: (cap: Capability) => "customer" | "staff" | "system" =
   Match.type<Capability>().pipe(

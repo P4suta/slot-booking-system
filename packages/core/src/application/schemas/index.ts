@@ -1,2 +1,3 @@
-// Application-layer schemas land here once the queue domain is in place (Phase 1).
+// Boundary-input Schemas (e.g. IssueTicket request body) land here
+// when a use case grows a request shape distinct from its arguments.
 export {}

@@ -301,9 +301,6 @@ export type InfrastructureError = AggregateNotFoundError | ConcurrencyError | St
  * Consumers pattern-match on `_tag` or narrow with `instanceof`. The
  * helpers `codeOf` / `severityOf` / `toLogPayload` accept the union
  * without branching — metadata is read from the constructor.
- *
- * Phase 1 of the queue pivot extends this union with the queue-specific
- * sub-lattice (`TicketNotFoundError`, `OutsideQueueHoursError`, …).
  */
 export type DomainError = ValidationError | DomainRuleError | InfrastructureError
 

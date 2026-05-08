@@ -23,15 +23,9 @@ export type LoadedAggregate<A> = {
 export type NonEmptyReadonlyArray<T> = readonly [T, ...T[]]
 
 /**
- * Event-sourced repository for the queue domain (ADR-0051). The
- * generic shape is `<A, I, E>`:
- *   - `A`: aggregate state (`Ticket`)
- *   - `I`: aggregate identifier (`TicketId`)
- *   - `E`: event variant (`TicketEvent`)
- *
- * Phase 1 of the queue pivot specialises the port at the Ticket
- * shape; the slot-graph's generic three-parameter contract collapses
- * to a single instance because the queue has exactly one aggregate.
+ * Event-sourced repository specialised at the queue's single aggregate
+ * (ADR-0051). `Ticket` is the aggregate, `TicketId` the identifier,
+ * `TicketEvent` the event variant.
  *
  * Contract:
  *   1. `load(id)` returns the latest folded state plus its revision,

@@ -23,17 +23,13 @@ import { Effect, Layer, Option } from "effect"
  * `toLogPayload` (in core) is the chokepoint that builds these.
  */
 /**
- * Phase 2.6 / BI-9 — emit each log call as a span event in addition
- * to the existing JSON-line console sink. The `Effect.currentSpan`
- * call returns `Cause.NoSuchElementException` when no span is
- * active (e.g. tests, scheduled handlers without OTel wiring); the
- * inner effect short-circuits via `Effect.option` so the span event
- * is genuinely additive — Workers Logs ingestion is unaffected.
- *
- * The JSON line carries `otel.span.active` (boolean) so operators
- * can filter for log entries that ran outside a trace (typically a
- * misconfigured scheduled handler or a test path) without inferring
- * it from the absence of `traceId`.
+ * Emit each log call as a span event in addition to the JSON-line
+ * console sink. `Effect.currentSpan` returns `NoSuchElementException`
+ * when no span is active (tests, scheduled handlers without OTel
+ * wiring); the inner effect short-circuits via `Effect.option` so the
+ * span event is genuinely additive. The JSON line carries
+ * `otel.span.active` so operators can filter for entries that ran
+ * outside a trace.
  */
 const decoratedEmit =
   (level: "info" | "warn" | "error") =>

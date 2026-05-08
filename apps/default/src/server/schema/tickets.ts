@@ -2,15 +2,10 @@ import { sql } from "drizzle-orm"
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
 
 /**
- * D1 read-mirror of the ticket aggregate (Phase 2 of the queue pivot).
- * The DurableObject's local SQLite is the canonical truth (write side);
- * each successful save pushes an outbox row that the alarm relays into
- * this table. The customer-facing `Query.myTicket` reads from D1 to
- * keep the DO load profile predictable.
- *
- * Phase 2 keeps the column set minimal — Phase 3 adds the timing
- * fields (`called_at`, `served_at`, `cancelled_at`, `marked_at`) as
- * the Subscription resolver needs them.
+ * D1 read-mirror of the ticket aggregate. The DurableObject's local
+ * SQLite is the canonical truth (write side); each successful save
+ * pushes an outbox row that the alarm relays into this table.
+ * `myTicket` reads from D1 to keep the DO load profile predictable.
  */
 export const tickets = sqliteTable("tickets", {
   id: text("id").primaryKey().notNull(),

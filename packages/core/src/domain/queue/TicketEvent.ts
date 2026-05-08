@@ -11,12 +11,11 @@ import { ActorSchema } from "./Ticket.js"
 /* -------------------------------------------------------------------------- */
 
 /**
- * Every ticket event carries identity (`id`, `ticketId`), schema version
- * (`version`), and the bitemporal pair (`occurredAt` / `recordedAt`)
- * the slot-graph established under ADR-0032. `occurredAt = recordedAt`
- * for online flows (the use case asks `Clock.nowInstant` once and
- * threads it through both fields); the pair only diverges when a use
- * case back-dates a transition (system-issued no-show sweep).
+ * Every ticket event carries identity (`id`, `ticketId`), schema
+ * version, and the bitemporal pair (`occurredAt` / `recordedAt`)
+ * established under ADR-0032 / ADR-0051. `occurredAt = recordedAt`
+ * for online flows; the pair only diverges when a use case back-
+ * dates a transition (e.g. the system-issued no-show sweep).
  */
 const TicketEventBaseFields = {
   id: TicketEventIdSchema,

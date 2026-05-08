@@ -1,21 +1,11 @@
 /**
- * Phase 3 / outbox-relay generic groundwork.
- *
- * The transactional outbox relay needs three pluggable concerns: the
- * source store (where messages queue), the destination (where messages
- * land), and the retry schedule. Today only the third is shaped as a
- * pure value; the other two are still inlined into
- * `apps/default/.../relay.ts`. Hoisting `BackoffPolicy` first lets the
- * relay swap the schedule (e.g. introduce jitter, switch to a
- * progressively-rounded fibonacci sequence) without touching the
- * outbox loop, and lets `core` test the schedule in isolation.
+ * Retry schedule for the transactional-outbox relay. The schedule is
+ * a pure value so the relay can swap the policy (introduce jitter,
+ * switch to fibonacci, etc.) without touching the outbox loop, and
+ * `core` can test the schedule in isolation.
  *
  * Reference — Hohpe & Woolf "Guaranteed Delivery" / Kleppmann's
- * transactional-outbox pattern. The full pluggable
- * `OutboxStore<Msg>` + `Destination<Msg>` adapter pair is reserved
- * for a follow-up phase (see ADR draft notes); the relay's other
- * concerns stay DO/D1-specific until a second destination justifies
- * the abstraction.
+ * transactional-outbox pattern.
  */
 
 /**

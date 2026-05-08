@@ -2,15 +2,12 @@ import { Schema } from "effect"
 
 /**
  * Permissioned action a staff member may issue while bearing the
- * capability. The queue pivot (ADR-0055) reduces the slot-graph's
- * five-element scope universe to the single `operate_queue` scope —
- * the only staff command surface left is the queue dashboard
- * (`callNext` / `markServed` / `markNoShow`), so a single bit suffices.
- *
- * The lattice machinery below stays general (set union, containment,
- * lift from / project to wire array) so a future scope addition is
- * one entry in {@link ALL_SCOPES} and the bounded-semilattice laws
- * keep holding without further structural change.
+ * capability. ADR-0055 fixes the scope universe at the single
+ * `operate_queue` value — the staff command surface is the queue
+ * dashboard (callNext / markServed / markNoShow / recall / cancel),
+ * so a single bit suffices. The lattice machinery below stays
+ * general so a future scope addition is one entry in
+ * {@link ALL_SCOPES} and the bounded-semilattice laws hold unchanged.
  */
 export const StaffScopeSchema = Schema.Literals(["operate_queue"])
 export type StaffScope = Schema.Schema.Type<typeof StaffScopeSchema>
@@ -31,9 +28,8 @@ export const ALL_SCOPES = ["operate_queue"] as const satisfies readonly StaffSco
  *   - {@link empty} is the identity for merge (⊥ ∪ x = x)
  *   - {@link full} is the absorbing element under intersection
  *
- * The Phase 0 scrap removed the slot-graph's bitmap-backed ScopeSet
- * (which depended on `domain/slot/Bitmap.ts`); a `Set` is correct, simple,
- * and avoids importing a domain artefact that is no longer relevant.
+ * The internal representation is a plain `ReadonlySet<StaffScope>` —
+ * correct, simple, and import-free.
  */
 declare const ScopeSetBrand: unique symbol
 export type ScopeSet = ReadonlySet<StaffScope> & { readonly [ScopeSetBrand]: never }

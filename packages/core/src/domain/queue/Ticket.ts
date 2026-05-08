@@ -19,9 +19,8 @@ export type Actor = Schema.Schema.Type<typeof ActorSchema>
 
 /**
  * Identity + immutable customer-side payload every ticket variant
- * carries. Mirrors the slot-graph's `BookingCommon` pattern: the field
- * set never depends on the current state, so the variant Schemas
- * spread it unchanged.
+ * carries. The field set never depends on the current state, so the
+ * variant Schemas spread it unchanged.
  *
  * `seq` is a monotonic per-day counter handed out at `Issue` time
  * (ADR-0051). It powers the O(1) "your position is N" projection

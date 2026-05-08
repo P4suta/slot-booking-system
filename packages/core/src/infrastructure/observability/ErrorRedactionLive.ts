@@ -17,11 +17,11 @@ const previewStack = (raw: string | undefined): string | undefined => {
 }
 
 /**
- * Dev-side redactor — exposes a `{name, message, stack[0..3], originalTag?}`
- * preview so the operator can chase the cause without server-side log
- * access. Exported standalone so synchronous adapters (graphql-yoga's
- * `formatError` plugin) can reuse the canonical definition without
- * spinning up an Effect runtime to resolve {@link ErrorRedaction}.
+ * Dev-side redactor — exposes a `{name, message, stack[0..3],
+ * originalTag?}` preview so the operator can chase the cause without
+ * server-side log access. Exported standalone so synchronous adapters
+ * (HTTP error envelope, OTel exception event) can reuse the canonical
+ * definition without spinning up an Effect runtime.
  */
 export const devRedactCause = (cause: unknown): Record<string, unknown> => {
   if (cause instanceof Error) {

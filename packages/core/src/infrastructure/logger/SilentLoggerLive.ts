@@ -7,9 +7,9 @@ import type { LogPayload } from "../../domain/errors/Errors.js"
  * `lastN` retains the most recent emissions so a test can assert on
  * the structured log contract without coupling to a real sink.
  *
- * Production wires {@link WorkersLoggerLive} (Phase 1.6 / ADR-0026)
- * which serialises the same payload as JSON to `console.{info,warn,
- * error}` for Workers Logs ingestion.
+ * Production wires {@link WorkersLoggerLive} (ADR-0026), which
+ * serialises the same payload as JSON to `console.{info,warn,error}`
+ * for Workers Logs ingestion.
  */
 type Level = "info" | "warn" | "error"
 type Entry = { readonly level: Level; readonly payload: LogPayload }
