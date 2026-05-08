@@ -6,17 +6,18 @@ Day-one notes for anyone (including future-you) joining the
 ## Repo identity
 
 - **slot-booking-system** is the home of:
-  - `packages/core` — the industry-agnostic booking core (pure TS).
-  - `apps/default` — a generic, deployable demo (placeholder Service /
-    Provider / Resource names).
-- The future **`bikeshop-booking`** repo is a separate codebase that
-  will depend on `@booking/core` and replace `apps/default`'s
-  configuration with bikeshop-specific deployment data. It does not
-  live here.
-- The user has authored **SYSTEM.md** (system-level contracts, lives
-  in this repo) and **DEPLOYMENT.md** (bikeshop-specific deployment
-  doc, lives in the future bikeshop repo). If you only see SYSTEM
-  here, that is correct.
+  - `packages/core` — the industry-agnostic queue core (pure TS).
+    Domain entities are `Ticket` / `TicketEvent` / `QueueShop`; the
+    customer takes a number, the staff calls the next in line.
+  - `apps/default` — a generic, deployable demo (the queue runs on a
+    single Cloudflare DurableObject, the SSE feed updates the
+    public landing page).
+- A downstream deployment (e.g. a future bikeshop / clinic / shop
+  application) is a separate codebase that depends on `@booking/core`
+  and replaces `apps/default`'s placeholder UI copy with the
+  industry-specific surface. It does not live here.
+- **SYSTEM.md** captures system-level contracts and lives in this
+  repo; deployment-specific docs live with the consuming app.
 
 ## Day-one setup
 
@@ -32,18 +33,17 @@ just sh                # interactive shell inside the dev container
 just typecheck         # tsc -b --pretty (Project References, incremental)
 just lint              # biome check + eslint (type-aware) + markdownlint
 just lint-eslint       # typescript-eslint strict-type-checked alone
+just comment-bans      # historical-narrative token grep gate
 just test              # vitest run, all packages
 just test-coverage     # plus C1 branch coverage gate (100 % threshold)
 just test-property     # fast-check property tests
 just arch              # dependency-cruiser layer enforcement
-just pii-guard         # ripgrep guard against PII keywords
-just domain-purity     # ripgrep guard against industry-specific terms
 just dead-code         # knip (unused exports / files / deps)
 just type-coverage     # type-coverage --at-least 99.5 (no implicit any)
 just attw              # arethetypeswrong (publish-shape sanity)
 just check             # all of the above, the local CI mirror
 just dev-default       # wrangler dev for apps/default (port 8787)
-just bench             # vitest bench (computeAvailableSlots baseline)
+just bench             # vitest bench (replay / projection / transitions)
 just mutation          # Stryker (workflow_dispatch only; heavy)
 ```
 
@@ -87,7 +87,9 @@ The defence layers stack:
   - Everything inside Docker.
 - Public industry-specific vocabulary (any term that names a business
   vertical) is forbidden in `packages/core` and `apps/default` — see
-  ADR-0008 and the `domain-purity` guard.
+  ADR-0008. The historical-narrative grep gate (`just comment-bans`)
+  enforces it from the comment side; review enforces it on the code
+  side.
 
 ## Where to look first when a question comes up
 
@@ -99,42 +101,29 @@ The defence layers stack:
 | How do I run the thing?                   | This file + `Justfile`                    |
 | What are we building next?                | The plan file in `~/.claude/plans/`. |
 
-## Phase-0 finish line
+## What runs end-to-end today
 
-You are at Phase 0 done when:
-
-- `just check` is green from a clean clone in under 5 minutes.
-- `packages/core` ships pure-domain code with C1 100 % branch coverage.
-- ADR-0002 through ADR-0015 are present and indexed.
-- `wrangler dev` starts in `apps/default` and answers a request.
-
-Phase 1 begins after that mark and adds the customer-facing reservation
-flow (HoldSlot / ConfirmBooking / CancelBooking / RescheduleBooking),
-the DurableObject `DaySchedule`, and the SvelteKit pages.
-
-## Phase-1 finish line
-
-Phase 1 is done when:
-
-- Use cases (`HoldSlot`, `ConfirmBooking`, `CancelBooking`,
-  `RescheduleBooking`, `PurgeStalePii`) are implemented with full
-  Layer composition and C1 100 % branch coverage.
-- The `DaySchedule` Durable Object actor serializes per-day writes;
-  `alarm()` expires stale holds and drains the outbox to D1
-  (ADR-0027).
-- Drizzle migration `0000_…sql` covers `bookings`,
-  `booking_events`, `outbox`, `audit_log`.
-- GraphQL endpoint at `/graphql` exposes:
-  - **Query**: `availableSlots` (Phase 1 stub, Phase 2 wires the real
-    catalog read).
-  - **Mutation**: `holdSlot`, `confirmBooking`, `cancelBooking`,
-    `rescheduleBooking` — all routed through the per-day DO.
+- `just check` is green from a clean clone.
+- `packages/core` ships pure-domain queue code with high branch
+  coverage; the six use cases (`IssueTicket`, `CallNext`,
+  `MarkServed`, `MarkNoShow`, `Recall`, `CancelTicket`) are
+  exercised by unit + property tests.
+- The `QueueShop` DurableObject (single instance,
+  `idFromName("shop")`) serialises every state transition through
+  `dispatch`. Its local SQLite holds the canonical event log
+  (`ticket_events`), aggregate snapshots (every K=200 events),
+  the read-side projection (`tickets`), and the outbox queue.
+- The Hono router at `/api/v1/*` exposes the customer + staff REST
+  surface (issue / cancel / call-next / served / no-show / recall /
+  shop / events SSE feed). The error envelope is an exhaustive
+  `Match.tagged` over `DomainError._tag`.
 - Cloudflare Workers `scheduled` cron at `0 4 * * *` runs the daily
-  PII purge (NULLs `name_kana` / `phone_last4` / `free_text` on
-  bookings whose terminal timestamp is more than 2 years old).
-- Operational doc `docs/runbook.md` covers the seven on-call
-  diagnostics paths.
+  PII purge over the D1 mirror (`name_kana`, `phone_last4`,
+  `free_text` NULLed on terminal tickets > 2 years old).
+- The SvelteKit frontend in `apps/web` reflects the queue state
+  through the SSE feed for the public landing page and a
+  staff-token-gated dashboard for the operator.
 
-Phase 2 picks up SvelteKit form actions (no-JS fallback), the
-service-catalog read schema, and Cloudflare Access wiring for
-admin-only mutations.
+The next architectural increments (DO Hibernating WebSocket push,
+HS256 JWT staff auth, Cloudflare rate-limit binding, OpenAPI 3.1
+emission) are tracked through ADR drafts in `docs/adr/`.
