@@ -46,7 +46,15 @@ back.
 | [0041](./adr/0041-graphql-functor-migration.md)     | GraphQL functor migration (Pothos → derive/graphql.ts)       | accepted |
 | [0042](./adr/0042-runtime-mode-port.md)             | RuntimeMode port — env-indexed Layer dispatcher              | accepted |
 | [0043](./adr/0043-error-redaction-port.md)          | ErrorRedaction port — cause redaction at the GraphQL boundary | accepted |
-| [0044](./adr/0044-do-rpc-envelope-serialization.md) | DO RPC envelope sanitiser — cross-realm structured-clone fix | accepted |
+| [0044](./adr/0044-do-rpc-envelope-serialization.md) | DO RPC envelope sanitiser — cross-realm structured-clone fix | superseded by 0050 |
+| [0050](./adr/0050-queue-pivot.md)                   | Queue pivot — slot-graph reservation → FIFO number-tag queue | accepted |
+| [0051](./adr/0051-event-sourced-queue.md)           | Event-sourced queue — ticket_events as the canonical log     | accepted |
+| [0052](./adr/0052-type-state-ticket.md)             | Type-state Ticket — discriminated union on `state`           | accepted |
+| [0053](./adr/0053-single-writer-do.md)              | Single-writer QueueShop DurableObject                        | accepted |
+| [0054](./adr/0054-customer-anonymous-handle.md)     | Customer anonymous handle (nameKana + phoneLast4)            | accepted |
+| [0055](./adr/0055-staff-single-capability.md)       | Staff single capability (`operate_queue`)                    | accepted |
+| [0056](./adr/0056-hono-router.md)                   | Hono as the queue REST router                                | accepted |
+| [0059](./adr/0059-event-log-source-of-truth.md)     | Event log is the source of truth + aggregate snapshots       | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).
