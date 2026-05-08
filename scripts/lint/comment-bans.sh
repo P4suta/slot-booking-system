@@ -37,11 +37,7 @@ EXCLUDES=(
   --glob '!docs/error-codes.md'
   --glob '!**/wrangler.toml'
   --glob '!scripts/lint/**'
-  # Docs that still carry slot-graph era narrative; the rewrite is
-  # an in-flight commit train. Each doc graduates out of this list
-  # as it lands the queue-centric rewrite.
-  --glob '!docs/dev-workflow.md'
-  --glob '!docs/dev/diagnose.md'
+
   --glob '!**/paraglide/**'
   --glob '!**/dist/**'
   --glob '!**/node_modules/**'
@@ -59,7 +55,6 @@ for f in "$@"; do
     docs/ADR_INDEX.md|CHANGELOG.md|.gitleaks.toml|_typos.toml|docs/error-codes.md) ;;
     */wrangler.toml|wrangler.toml) ;;
     scripts/lint/*) ;;
-    docs/dev-workflow.md|docs/dev/diagnose.md) ;;
     */paraglide/*|*/dist/*|*/node_modules/*|*/.svelte-kit/*) ;;
     *) filtered+=("$f") ;;
   esac

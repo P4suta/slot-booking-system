@@ -16,17 +16,16 @@ $ just diagnose
 → guards
 # diagnose summary
 
-| gate          | status | count | top files / rules                     |
-|---------------|--------|-------|---------------------------------------|
-| typecheck     | FAIL   | 57    | Lifecycle.test.ts (23); D1AuditLogger (6) |
-| biome         | PASS   | 0     | —                                     |
-| eslint        | FAIL   | 12    | QueueShop.ts (4); api/queue.ts (3)   |
-| arch          | FAIL   | 3     | no-orphans (3); Satisfier.ts (1)      |
-| test          | …      | …     | …                                     |
+| gate          | status | count | top files / rules                          |
+|---------------|--------|-------|--------------------------------------------|
+| typecheck     | FAIL   | 4     | CustomerHandle.ts (1); homomorphism.test (3) |
+| biome         | PASS   | 0     | —                                          |
+| eslint        | FAIL   | 12    | QueueShop.ts (4); router.ts (3)            |
+| arch          | PASS   | 0     | —                                          |
+| test          | …      | …     | …                                          |
 
 ### Guards (pass/fail only)
-  - pii-guard: PASS
-  - domain-purity: PASS
+  - comment-bans: PASS
   - strict-code: PASS
   - …
 ```
@@ -56,7 +55,7 @@ recipe で、 **常に exit 0**。 CI の gate には使わない。
 | `just diagnose-eslint`  | eslint message の file 別 + rule 別                     |
 | `just diagnose-arch`    | dependency-cruiser violation の rule 別 + source 別     |
 | `just diagnose-test`    | vitest の workspace 別 failed test                       |
-| `just diagnose-guards`  | pii / domain-purity / strict-code / dead-code / type-coverage / error-docs-drift の pass/fail |
+| `just diagnose-guards`  | comment-bans / strict-code / dead-code / type-coverage / error-docs-drift の pass/fail |
 
 ## 標準 contract (sub-script を増やすときの規約)
 
@@ -72,15 +71,14 @@ recipe で、 **常に exit 0**。 CI の gate には使わない。
 連結するだけ。 sub-script 側に集計ロジックを閉じ込めることで、 Justfile
 の単独 recipe (`just diagnose-<gate>`) からも再利用できる。
 
-## 修正計画との連携
+## 修正サイクルでの使い方
 
-`docs/dev/queue-pivot-status.md` は `just diagnose-tsc` の出力 (file 別
-top 10 + error code 別 top 10) を baseline として保持し、 修正の進捗
-(commit 後の error 件数推移) を追記する場所。
+baseline → cluster fix → 再診の三歩で進める:
 
-修正サイクル:
+1. `just diagnose-tsc` で baseline 確認 (file 別 top 10 + error code 別 top 10)。
+2. cluster (例: TS2345 を全て fix) を 1 commit で land。
+3. `just diagnose-tsc` 再走、 該当 cluster の件数が 0 になったか確認。
 
-1. `just diagnose-tsc` で baseline 確認
-2. cluster (例: TS2379 を全て fix) を 1 commit で land
-3. `just diagnose-tsc` 再走、 該当 cluster の件数が 0 になったか確認
-4. `docs/dev/queue-pivot-status.md` に commit hash + baseline 件数の差を追記
+baseline → fix の差分は ADR / commit message の Fixes 行に記録するのが
+通例で、 別途進捗ファイルは置かない (リポは「現在」を記述する場所であり、
+過去の修正進捗は git log + ADR に閉じる)。
