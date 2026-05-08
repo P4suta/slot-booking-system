@@ -271,6 +271,12 @@ gen-error-docs:
 diagnose:
     bash scripts/diagnose.sh
 
+# Typecheck deep-dive — file 別 top 10 + error code 別 top 10 + (file ×
+# error code) pair top 10. Standalone; same data also fed into
+# `just diagnose` summary.
+diagnose-tsc:
+    bash scripts/diagnose-tsc.sh
+
 # ---------------------------------------------------------------------------
 # Aggregate gates
 # ---------------------------------------------------------------------------

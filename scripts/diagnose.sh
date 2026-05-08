@@ -24,79 +24,80 @@ mkdir -p .diagnose
 out=".diagnose/last-run.md"
 detail=".diagnose/last-run-detail.md"
 
-DEV="docker compose run --rm -T dev"
+# ---- run all sub-gates ---------------------------------------------------
+# Each sub-script writes:
+#   - .diagnose/<gate>.status        single line `PASS:<n>` or `FAIL:<n>`
+#   - .diagnose/<gate>-detail.md     per-gate detail markdown
+echo "→ typecheck"
+bash scripts/diagnose-tsc.sh >/dev/null
 
-run_gate() {
-  local name="$1"
-  local cmd="$2"
-  local log_file=".diagnose/${name}.log"
-  echo "→ $name"
-  bash -c "$cmd" >"$log_file" 2>&1
-  local exit_code=$?
-  echo "$exit_code" >".diagnose/${name}.exit"
-  echo "$log_file"
+# Phase B/C will append more sub-script invocations here.
+
+# ---- summary table -------------------------------------------------------
+read_status() {
+  local gate="$1"
+  local file=".diagnose/${gate}.status"
+  if [ ! -f "$file" ]; then
+    echo "—:—"
+  else
+    cat "$file"
+  fi
+}
+
+# Compact per-gate top files / rules for the summary row. Picks the
+# first 3 entries from the gate's detail file by extracting list items.
+top3() {
+  local gate="$1"
+  local file=".diagnose/${gate}-detail.md"
+  if [ ! -f "$file" ]; then
+    echo "—"
+    return
+  fi
+  awk '/^### top files/{flag=1; next} /^###/{flag=0} flag && /^  - /' "$file" \
+    | head -3 \
+    | sed -E 's/^  - //; s/ — / (/; s/$/)/' \
+    | paste -sd '; ' \
+    | sed 's/$/\./'
+}
+
+format_row() {
+  local gate="$1"
+  local label="$2"
+  local raw=$(read_status "$gate")
+  local status="${raw%%:*}"
+  local count="${raw##*:}"
+  local top=$(top3 "$gate")
+  [ -z "$top" ] && top="—"
+  printf "| %-13s | %-6s | %-5s | %s |\n" "$label" "$status" "$count" "$top"
 }
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-count_tsc_errors() {
-  grep -cE 'error TS[0-9]+' "$1" 2>/dev/null || echo 0
-}
-
-top_tsc_files() {
-  grep -oE '^[^(]+\([0-9]+,[0-9]+\): error TS' "$1" \
-    | sed -E 's/\([0-9]+,[0-9]+\): error TS//' \
-    | sort | uniq -c | sort -rn | head -3 \
-    | awk '{count=$1; $1=""; sub(/^ /, ""); print $0 " (" count ")"}' \
-    | paste -sd '; '
-}
-
-# ---- typecheck -----------------------------------------------------------
-run_gate typecheck "$DEV ./node_modules/.bin/tsc -b" >/dev/null
-tsc_log=".diagnose/typecheck.log"
-tsc_exit=$(cat .diagnose/typecheck.exit)
-tsc_errors=$(count_tsc_errors "$tsc_log")
-[ "$tsc_exit" -eq 0 ] && tsc_status="PASS" || tsc_status="FAIL"
-tsc_top=$(top_tsc_files "$tsc_log")
-[ -z "$tsc_top" ] && tsc_top="—"
-
-# ---- summary -------------------------------------------------------------
 {
   echo "# diagnose summary"
   echo
   echo "_Generated: $(now)_"
   echo
-  echo "| gate      | status | count | top files                    |"
-  echo "|-----------|--------|-------|------------------------------|"
-  printf "| %-9s | %-6s | %-5s | %s |\n" "typecheck" "$tsc_status" "$tsc_errors" "$tsc_top"
+  echo "| gate          | status | count | top files / rules |"
+  echo "|---------------|--------|-------|-------------------|"
+  format_row typecheck "typecheck"
   echo
-  echo "_Phase B/C will extend this table with biome / eslint / arch / test / guards._"
+  echo "_Phase B/C extend this table with biome / eslint / arch / test / guards._"
   echo
   echo "Detail: see \`.diagnose/last-run-detail.md\` for per-gate top files / rules."
 } | tee "$out"
 
-# ---- detail --------------------------------------------------------------
+# ---- detail aggregation --------------------------------------------------
 {
   echo "# diagnose detail"
   echo
-  echo "## typecheck (exit $tsc_exit, $tsc_errors errors)"
-  echo
-  if [ "$tsc_errors" -gt 0 ]; then
-    echo "### top files"
-    echo
-    grep -oE '^[^(]+\([0-9]+,[0-9]+\): error TS' "$tsc_log" \
-      | sed -E 's/\([0-9]+,[0-9]+\): error TS//' \
-      | sort | uniq -c | sort -rn | head -10 \
-      | awk '{count=$1; $1=""; sub(/^ /, ""); printf "  - %s (%s)\n", $0, count}'
-    echo
-    echo "### error code distribution"
-    echo
-    grep -oE 'error TS[0-9]+' "$tsc_log" \
-      | sort | uniq -c | sort -rn | head -10 \
-      | awk '{printf "  - %s (%s)\n", $2, $1}'
-  else
-    echo "_no errors_"
-  fi
+  for gate in typecheck; do
+    f=".diagnose/${gate}-detail.md"
+    if [ -f "$f" ]; then
+      cat "$f"
+      echo
+    fi
+  done
 } > "$detail"
 
 exit 0
