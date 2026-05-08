@@ -8,11 +8,9 @@
     "dev": "wrangler dev --ip 0.0.0.0 --test-scheduled --var IS_DEV:1 --var OTEL_EXPORTER_URL:console",
     "build": "wrangler deploy --dry-run --outdir dist",
     "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage": "vitest run --coverage",
     "migrate:local": "wrangler d1 migrations apply DB --local",
-    "seed:render": "tsx seed/seed.ts",
-    "gen:api-spec": "tsx scripts/gen-api-spec.ts"
+    "seed:render": "tsx seed/seed.ts"
   },
   "dependencies": {
     "@booking/core": "workspace:*",

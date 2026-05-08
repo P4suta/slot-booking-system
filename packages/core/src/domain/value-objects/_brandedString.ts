@@ -6,22 +6,15 @@ import { summarizeParse } from "../errors/fromParseError.js"
  * Common shape for "branded ASCII / Unicode string with optional
  * pre-decode normalisation and a domain-specific error class".
  *
- * Five value objects share the body:
- *   - `Schema.String.check(...)` produces a refined string;
- *     the refinement is either a `Schema.isPattern(regex)` (so the
- *     `derive/algebra.ts` predicate fold can project it to a SQL
- *     `REGEXP` CHECK and a `fast-check` Arbitrary) or an opaque
- *     `Schema.makeFilter(predicate)` (for refinements with no
- *     regex shape — length-bounded NFC strings, code-point counts);
+ *   - `Schema.String.check(...)` produces a refined string; the
+ *     refinement is either a regex (`Schema.isPattern`) for codepoint
+ *     shape or an opaque `Schema.makeFilter(predicate)` for length /
+ *     normalisation invariants;
  *   - `Schema.brand(tag)` lifts the refinement to a phantom brand;
- *   - optional `normalize` runs through `Schema.decodeTo + SchemaGetter.transform`
- *     before the brand check, so the normalised form is what's
- *     branded;
- *   - `Schema.decodeUnknownResult` plus `summarizeParse` wraps the
- *     parse result in a tagged `DomainError` subtype.
- *
- * The combinator factors that body once. New string-shaped value
- * objects become one declaration:
+ *   - optional `normalize` runs through `Schema.decodeTo +
+ *     SchemaGetter.transform` before the brand check;
+ *   - `Schema.decodeUnknownResult` + `summarizeParse` wraps the parse
+ *     failure in a tagged `DomainError` subtype.
  *
  * ```ts
  * const phone = brandedString({
@@ -43,11 +36,9 @@ type BrandedStringCommon<B extends string, E extends DomainError> = {
 
 /**
  * Discriminated-union config: every call site supplies exactly one of
- * `pattern` (regex refinement, lifts via `Schema.isPattern` so the
- * `derive/algebra.ts` predicate fold projects it to SQL) or
- * `predicate` (opaque refinement, lifts via `Schema.makeFilter`).
- * Forbidding "neither" at the type level removes the otherwise
- * structurally-unreachable fallback arm in {@link brandedString}.
+ * `pattern` (regex refinement) or `predicate` (opaque refinement).
+ * Forbidding "neither" at the type level removes the structurally
+ * unreachable fallback arm in {@link brandedString}.
  */
 type BrandedStringConfig<B extends string, E extends DomainError> =
   | (BrandedStringCommon<B, E> & {

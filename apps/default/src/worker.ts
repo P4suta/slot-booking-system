@@ -8,7 +8,6 @@ import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
 import { routeQueueApi } from "./server/api/queue.js"
 import type { QueueShop } from "./server/durableObjects/QueueShop.js"
 import { chooseExporter } from "./server/observability/otelConfig.js"
-import { buildOpenAPISpec } from "./server/rest/openapiSpec.js"
 
 export { QueueShop } from "./server/durableObjects/QueueShop.js"
 
@@ -27,10 +26,9 @@ type Env = {
 const TWO_YEARS = Duration.days(365 * 2)
 
 /**
- * Worker entry for the queue pivot. Routes:
- *   - GET  /healthz                readiness probe
- *   - GET  /api/v1/openapi.json    OpenAPI 3.1 spec
- *   - *    /graphql                queue GraphQL surface (Phase 3)
+ * Worker entry. Routes:
+ *   - GET  /healthz       readiness probe
+ *   - *    /api/v1/...    queue REST + SSE surface
  *
  * The QueueShop DurableObject (single instance, idFromName("shop"))
  * is exported so wrangler can construct it. The scheduled handler
@@ -45,12 +43,6 @@ const handler = {
         headers: { "content-type": "application/json; charset=utf-8" },
       })
     }
-    if (url.pathname === "/api/v1/openapi.json") {
-      return new Response(JSON.stringify(buildOpenAPISpec(), null, 2), {
-        status: 200,
-        headers: { "content-type": "application/json; charset=utf-8" },
-      })
-    }
     if (url.pathname.startsWith("/api/v1/")) {
       const handled = await routeQueueApi(request, env)
       if (handled !== null) return handled
@@ -59,7 +51,6 @@ const handler = {
       {
         deployment: env.DEPLOYMENT_NAME,
         timezone: env.DEPLOYMENT_TIMEZONE,
-        message: "queue pivot Phase 2 — Phase 3 reintroduces the GraphQL surface",
       },
       null,
       2,

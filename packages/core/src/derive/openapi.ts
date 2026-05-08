@@ -3,31 +3,11 @@ import type { Schema, SchemaAST } from "effect"
 /**
  * Pure functor `Schema → OpenAPISchema 3.1`.
  *
- * Twin of `apps/default/src/server/graphql/derive.ts` (PR#7 M16) —
- * both consume the same Effect Schema source category. This module
- * gives the deployment a Schema-driven path to emit JSON Schema /
- * OpenAPI 3.1 artefacts (component schemas + `/healthz` response
- * shapes etc.) from the same Schema declarations the rest of the
- * domain reads.
- *
- * Coverage matches the variants the rest of `derive/` already
- * emits: scalar leaves (`String` / `Number` / `Boolean` /
- * `Literal`), `Arrays`, `Objects` with required-field detection,
- * and `Union` of string `Literal`s lifted to JSON Schema's `enum`.
- *
- * Out of scope for the M21 land:
- *
- * - `Union` of structs (would emit `oneOf` + discriminator) — wire
- *   the booking event union when the consumer arrives.
- * - Custom keywords (`format: "date-time"`, `pattern`, `minLength`)
- *   — the existing `derive/algebra.ts` predicate fold owns those
- *   projections; a follow-up pass can stitch them in.
- *
- * Profunctor-with-graphql twin: this module + `derive/graphql.ts`
- * sit over the same source category and produce two parallel
- * artefacts. ADR-0041 (GraphQL migration) and the build-time
- * artifact emitter (PR#8 M23) are the consumers that bring the
- * twin functor pattern to runtime.
+ * Coverage: scalar leaves (`String` / `Number` / `Boolean` /
+ * `Literal`), `Arrays`, `Objects` with required-field detection, and
+ * `Union` of string `Literal`s lifted to JSON Schema's `enum`. The
+ * Hono router that consumes this lives under
+ * `apps/default/src/server/http/`.
  */
 
 export type OpenAPISchemaObject = {

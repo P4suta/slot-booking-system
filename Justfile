@@ -224,12 +224,6 @@ dev-web:
 migrate-local:
     {{DEV}} {{PNPM}} -F default exec wrangler d1 migrations apply DB --local
 
-# Smoke recipes (`smoke-available-slots`, `smoke-booking-flow`,
-# `smoke-all`) and `trigger-scheduled` lived against the slot-graph
-# domain. Phase 2/3 of the queue pivot will reintroduce a single
-# `smoke-queue-flow` recipe (issue → callNext → markServed) once the
-# QueueShop DO + GraphQL surface are in place.
-
 # Apply the catalog seed to the local D1. Idempotent — re-running
 # refreshes the rows. Generates the SQL document on the fly via
 # `apps/default/seed/seed.ts`, so the seed is always in lockstep
