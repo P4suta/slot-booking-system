@@ -5,6 +5,7 @@ import { makeD1AuditLogger } from "./server/adapters/D1AuditLoggerLive.js"
 import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
 import { makeRuntimeModeLayer } from "./server/adapters/RuntimeModeLive.js"
 import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
+import { routeQueueApi } from "./server/api/queue.js"
 import type { QueueShop } from "./server/durableObjects/QueueShop.js"
 import { chooseExporter } from "./server/observability/otelConfig.js"
 import { buildOpenAPISpec } from "./server/rest/openapiSpec.js"
@@ -49,6 +50,10 @@ const handler = {
         status: 200,
         headers: { "content-type": "application/json; charset=utf-8" },
       })
+    }
+    if (url.pathname.startsWith("/api/v1/")) {
+      const handled = await routeQueueApi(request, env)
+      if (handled !== null) return handled
     }
     const body = JSON.stringify(
       {
