@@ -65,3 +65,48 @@ export const fixedBackoff = (delaysMs: readonly number[]): BackoffPolicy => {
  */
 export const nextAttemptMs = (policy: BackoffPolicy, attempts: number, nowMs: number): number =>
   nowMs + policy.nextDelayMs(attempts)
+
+/**
+ * Decorrelated Jitter — AWS Architecture Blog "Exponential Backoff
+ * and Jitter" (Marc Brooker). The recurrence
+ *
+ *     sleep_n = min(cap, U(base, prev_sleep * 3))
+ *
+ * (with `prev_sleep := base` initially, `U(a, b)` uniform on `[a, b)`)
+ * spreads retries more evenly across the cap window than equal-jitter
+ * or full-jitter, which matters when many writers contend on the same
+ * downstream queue. The constant `3` is the AWS-recommended growth
+ * factor — large enough that the schedule reaches `cap` quickly,
+ * small enough that the variance stays bounded.
+ *
+ * The returned policy is stateful: it caches `prev_sleep` in a
+ * closure so successive `nextDelayMs(n)` calls walk the recurrence.
+ * Tests inject a deterministic `rng` (e.g. `() => 0.5`) to pin the
+ * sequence; production sees the source through the {@link Random}
+ * port and adapts it to the synchronous callback shape.
+ *
+ * Bounds invariant: `base <= delay <= cap` for every attempt; the
+ * outer `Math.max(base, ...)` keeps the policy total even when a
+ * caller inverts the inputs (`cap < base`).
+ */
+export const decorrelatedJitter = (
+  config: {
+    readonly base: number
+    readonly cap: number
+    readonly maxAttempts: number
+  },
+  rng: () => number,
+): BackoffPolicy => {
+  let prev = config.base
+  return {
+    nextDelayMs: () => {
+      const lo = config.base
+      const hi = prev * 3
+      const sample = Math.floor(lo + rng() * (hi - lo))
+      const next = Math.max(config.base, Math.min(config.cap, sample))
+      prev = next
+      return next
+    },
+    maxAttempts: config.maxAttempts,
+  }
+}
