@@ -2,11 +2,13 @@
 
 ## Status
 
-**Superseded** by [ADR-0056](./0056-hono-router.md). The GraphQL
+Superseded by [ADR-0056](./0056-hono-router.md). The GraphQL
 functor and its `derive/graphql.ts` pipeline are removed from the
 post-pivot tree; the queue REST surface mounts on Hono with an
 exhaustive `Match.tagged` error envelope. The ADR is kept as a
 historical record of the slot-graph era's GraphQL boundary.
+
+Superseded-By: ADR-0056
 
 ## Context
 

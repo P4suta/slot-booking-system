@@ -1,6 +1,7 @@
 # 0012. Slot calculation via bitmap × bitwise AND
 
 - Status: superseded by [ADR-0050](./0050-queue-pivot.md) — the slot bitmap algorithm is unused; the queue domain has no time-window matching.
+- Superseded-By: ADR-0050
 - Date: 2026-05-05
 - Deciders: Yasunobu
 - Tags: algorithm, performance
