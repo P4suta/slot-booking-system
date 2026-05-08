@@ -277,6 +277,27 @@ diagnose:
 diagnose-tsc:
     bash scripts/diagnose-tsc.sh
 
+# Biome deep-dive — file 別 + rule 別の violation 集計。
+diagnose-biome:
+    bash scripts/diagnose-biome.sh
+
+# ESLint deep-dive — file 別 + rule 別の message 集計。
+diagnose-eslint:
+    bash scripts/diagnose-eslint.sh
+
+# dependency-cruiser deep-dive — rule 別 + source 別の violation 集計。
+diagnose-arch:
+    bash scripts/diagnose-arch.sh
+
+# Vitest deep-dive — workspace 別 failed test 集計。
+diagnose-test:
+    bash scripts/diagnose-test.sh
+
+# Guards (PII / domain-purity / strict-code / dead-code / type-coverage /
+# error-docs-drift) を順次回し、 各 pass/fail を集計。
+diagnose-guards:
+    bash scripts/diagnose-guards.sh
+
 # ---------------------------------------------------------------------------
 # Aggregate gates
 # ---------------------------------------------------------------------------
