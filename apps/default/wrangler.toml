@@ -23,6 +23,10 @@ name = "QUEUE_SHOP"
 class_name = "QueueShop"
 
 [[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DaySchedule"]
+
+[[migrations]]
 tag = "v2"
 new_sqlite_classes = ["QueueShop"]
 deleted_classes = ["DaySchedule"]

@@ -12,6 +12,52 @@ import {
 } from "@booking/core"
 import { Effect, Layer, Schema } from "effect"
 
+const TICKET_INSERT_SQL = `INSERT INTO tickets (
+  id, seq, state, name_kana, phone_last4, free_text, issued_at,
+  called_at, served_at, cancelled_at, marked_at,
+  reason, cancelled_by, called_by, served_by, marked_by,
+  payload, revision
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  state = excluded.state,
+  called_at = excluded.called_at,
+  served_at = excluded.served_at,
+  cancelled_at = excluded.cancelled_at,
+  marked_at = excluded.marked_at,
+  reason = excluded.reason,
+  cancelled_by = excluded.cancelled_by,
+  called_by = excluded.called_by,
+  served_by = excluded.served_by,
+  marked_by = excluded.marked_by,
+  payload = excluded.payload,
+  revision = excluded.revision,
+  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
+
+const ticketColumns = (
+  next: Ticket,
+  encodedTicket: unknown,
+  revision: number,
+): readonly unknown[] => [
+  next.id,
+  next.seq,
+  next.state,
+  next.nameKana,
+  next.phoneLast4,
+  next.freeText,
+  String(next.issuedAt),
+  "calledAt" in next ? String(next.calledAt) : null,
+  "servedAt" in next ? String(next.servedAt) : null,
+  "cancelledAt" in next ? String(next.cancelledAt) : null,
+  "markedAt" in next ? String(next.markedAt) : null,
+  "reason" in next ? next.reason : null,
+  "cancelledBy" in next ? next.cancelledBy : null,
+  "calledBy" in next ? next.calledBy : null,
+  "servedBy" in next ? next.servedBy : null,
+  "markedBy" in next ? next.markedBy : null,
+  JSON.stringify(encodedTicket),
+  revision,
+]
+
 /**
  * DurableObject-storage-backed adapter for the queue's
  * `TicketRepository`. The DO's local SQLite holds three tables:
@@ -58,13 +104,15 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           if (current !== expected) {
             throw new ConcurrencyError({ expected, actual: current })
           }
+          let seq = current
           for (const ev of events) {
+            seq += 1
             const encoded = Schema.encodeUnknownSync(TicketEventSchema)(ev)
             sql.exec(
               "INSERT INTO ticket_events (id, ticket_id, seq, type, occurred_at, recorded_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
               ev.id,
               ev.ticketId,
-              0,
+              seq,
               ev.type,
               String(ev.occurredAt),
               String(ev.recordedAt),
@@ -79,12 +127,8 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           }
           const encodedTicket = Schema.encodeUnknownSync(TicketSchema)(next)
           sql.exec(
-            "INSERT INTO tickets (id, seq, state, payload, revision) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state, payload = excluded.payload, revision = excluded.revision",
-            next.id,
-            next.seq,
-            next.state,
-            JSON.stringify(encodedTicket),
-            current + events.length,
+            TICKET_INSERT_SQL,
+            ...ticketColumns(next, encodedTicket, current + events.length),
           )
         },
         catch: (e) => {
@@ -95,13 +139,15 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
     issue: (_id: TicketId, events: NonEmptyReadonlyArray<TicketEvent>, next: Ticket) =>
       Effect.try({
         try: () => {
+          let seq = 0
           for (const ev of events) {
+            seq += 1
             const encoded = Schema.encodeUnknownSync(TicketEventSchema)(ev)
             sql.exec(
               "INSERT INTO ticket_events (id, ticket_id, seq, type, occurred_at, recorded_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
               ev.id,
               ev.ticketId,
-              0,
+              seq,
               ev.type,
               String(ev.occurredAt),
               String(ev.recordedAt),
@@ -115,14 +161,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
             )
           }
           const encodedTicket = Schema.encodeUnknownSync(TicketSchema)(next)
-          sql.exec(
-            "INSERT INTO tickets (id, seq, state, payload, revision) VALUES (?, ?, ?, ?, ?)",
-            next.id,
-            next.seq,
-            next.state,
-            JSON.stringify(encodedTicket),
-            events.length,
-          )
+          sql.exec(TICKET_INSERT_SQL, ...ticketColumns(next, encodedTicket, events.length))
         },
         catch: (e) => new StorageError({ reason: "issue", cause: e }),
       }),

@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   called_by text,
   served_by text,
   marked_by text,
+  payload text NOT NULL,
+  revision integer NOT NULL DEFAULT 0,
   updated_at text NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 

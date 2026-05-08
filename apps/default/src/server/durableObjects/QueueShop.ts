@@ -3,15 +3,18 @@ import {
   CallNext,
   CancelTicket,
   type CustomerHandle,
+  codeOf,
+  type DomainError,
   IssueTicket,
   MarkNoShow,
   MarkServed,
   SystemClockLive,
   type Ticket,
   type TicketId,
+  TicketSchema,
   UlidIdGeneratorLive,
 } from "@booking/core"
-import { Effect, Layer } from "effect"
+import { Cause, Effect, Layer, Schema } from "effect"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { ensureDurableObjectSchema } from "./schema.js"
@@ -41,9 +44,21 @@ export type QueueAction =
       handle?: CustomerHandle
     }
 
+/**
+ * The Worker boundary serialises every DO RPC return through
+ * `structuredClone`, which rejects `Temporal.Instant` values (no
+ * default cloner). We re-encode the ticket via `Schema.encode` so the
+ * wire shape is JSON-safe; consumers re-decode if they need typed
+ * Temporal access.
+ */
+export type EncodedTicket = (typeof TicketSchema)["Encoded"]
+
 export type QueueResult =
-  | { ok: true; ticket: Ticket }
+  | { ok: true; ticket: EncodedTicket }
   | { ok: false; error: { _tag: string; code: string } }
+
+const encodeTicket = (t: Ticket): EncodedTicket =>
+  Schema.encodeUnknownSync(TicketSchema)(t) as EncodedTicket
 
 const NO_SHOW_TIMEOUT_DEFAULT_SECONDS = 300
 
@@ -96,23 +111,36 @@ export class QueueShop extends DurableObject<Env> {
       }
     })()
     return Effect.runPromise(
-      Effect.matchEffect(eff, {
-        onSuccess: (ticket) => Effect.succeed({ ok: true, ticket } satisfies QueueResult),
-        onFailure: (err: unknown) =>
-          Effect.succeed({
+      Effect.matchCauseEffect(eff, {
+        onSuccess: (ticket) =>
+          Effect.succeed({ ok: true, ticket: encodeTicket(ticket) } satisfies QueueResult),
+        onFailure: (cause) => {
+          console.error("[QueueShop] dispatch cause:", cause)
+          const fails = cause.reasons.filter(Cause.isFailReason)
+          const first = fails[0]?.error as DomainError | undefined
+          if (first !== undefined && first._tag === "Storage") {
+            console.error("[QueueShop] Storage reason:", first.reason, "cause:", first.cause)
+          }
+          return Effect.succeed({
             ok: false,
             error: {
-              _tag: (err as { _tag?: string })._tag ?? "Unknown",
-              code: (err as { code?: string }).code ?? "E_UNKNOWN",
+              _tag: first?._tag ?? "Defect",
+              code: first !== undefined ? codeOf(first) : "E_DEFECT",
             },
-          } satisfies QueueResult),
+          } satisfies QueueResult)
+        },
       }).pipe(Effect.provide(layer)),
     )
   }
 
-  async listTickets(): Promise<readonly Ticket[]> {
-    const rows = this.sql.exec("SELECT id, state FROM tickets").toArray()
-    return rows.map((r) => ({ id: r.id, state: r.state }) as unknown as Ticket)
+  /**
+   * Read the full ticket projection. Returns the encoded shape (JSON-
+   * safe) so the worker can pass it back over the structuredClone
+   * boundary without DataCloneError.
+   */
+  async listTickets(): Promise<readonly EncodedTicket[]> {
+    const rows = this.sql.exec("SELECT payload FROM tickets ORDER BY seq ASC").toArray()
+    return rows.map((r) => JSON.parse(r.payload as string) as EncodedTicket)
   }
 
   override async alarm(): Promise<void> {

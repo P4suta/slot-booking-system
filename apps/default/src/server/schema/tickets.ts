@@ -29,5 +29,10 @@ export const tickets = sqliteTable("tickets", {
   calledBy: text("called_by"),
   servedBy: text("served_by"),
   markedBy: text("marked_by"),
+  // The repo serialises the full Ticket aggregate as JSON for the
+  // DO-local snapshot store; the column-projected fields above
+  // mirror it for D1 read access via the outbox relay.
+  payload: text("payload").notNull(),
+  revision: integer("revision").notNull().default(0),
   updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`),
 })
