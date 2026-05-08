@@ -32,17 +32,34 @@
     preview = data.waitingPreview
   }
 
-  const onLogin = (event: SubmitEvent) => {
+  const startLiveFeed = async () => {
+    await refresh()
+    if (source === undefined) {
+      source = queueEventSource()
+      source.onmessage = () => refresh()
+    }
+  }
+
+  const onLogin = async (event: SubmitEvent) => {
     event.preventDefault()
     if (token.length === 0) return
     localStorage.setItem("queue.staffToken", token)
     authenticated = true
+    // onMount は component mount 時に 1 回しか走らないので、
+    // ログイン直後 (authenticated false → true) にも live feed を
+    // 起動する。 さもないと preview が空のまま固定される。
+    await startLiveFeed()
   }
 
   const onLogout = () => {
     localStorage.removeItem("queue.staffToken")
     token = ""
     authenticated = false
+    source?.close()
+    source = undefined
+    waitingCount = 0
+    serving = null
+    preview = []
   }
 
   const wrap = async <A>(fn: () => Promise<{ ok: boolean; error?: { _tag: string } }>) => {
@@ -69,11 +86,10 @@
   const onCancel = (id: string) => wrap(() => staffCancel(token, id, "staff cancel"))
 
   onMount(async () => {
-    if (authenticated) {
-      await refresh()
-      source = queueEventSource()
-      source.onmessage = () => refresh()
-    }
+    // token を localStorage 復元済の場合は authenticated = true で
+    // mount される。 その場合のみ即 live feed 起動。 token 未入力で
+    // mount された場合は onLogin 内で startLiveFeed が走る。
+    if (authenticated) await startLiveFeed()
   })
 
   onDestroy(() => source?.close())
