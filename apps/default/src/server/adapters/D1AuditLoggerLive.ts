@@ -16,6 +16,9 @@ import { auditLog } from "../schema/index.js"
  * operator-facing reason strings; the `pii-guard` CI step rejects
  * the patterns at source).
  *
+ * The AuditEntry shape (declared in `domain/errors/derivations.ts`) is:
+ *   `{ ts, actor, outcome: "denied", errorTag, errorCode, traceId? }`
+ *
  * Failure routing: an audit-write failure never propagates to the
  * caller. The Logger port records the event so the operator can spot
  * a degraded audit channel in dashboards.
@@ -26,7 +29,7 @@ export const makeD1AuditLogger = (db: D1Database) =>
     Effect.gen(function* () {
       const logger = yield* Logger
       return AuditLogger.of({
-        record: (entry: AuditEntry) =>
+        write: (entry: AuditEntry) =>
           Effect.gen(function* () {
             const traceId = yield* getCurrentTraceId
             const id = newAuditLogId()
@@ -38,14 +41,17 @@ export const makeD1AuditLogger = (db: D1Database) =>
                   .values({
                     id,
                     actor: entry.actor,
-                    action: entry.action,
-                    traceId: traceId ?? null,
-                    data: JSON.stringify(entry.data),
+                    action: `${entry.outcome}:${entry.errorTag}`,
+                    traceId: entry.traceId ?? traceId ?? null,
+                    data: JSON.stringify({
+                      ts: entry.ts,
+                      errorCode: entry.errorCode,
+                    }),
                   })
                   .run(),
               catch: (e) => e,
             }).pipe(
-              Effect.catchAll((err) =>
+              Effect.catch((err) =>
                 logger.error({
                   _tag: "AuditWriteFailed",
                   code: "E_INF_AUDIT",

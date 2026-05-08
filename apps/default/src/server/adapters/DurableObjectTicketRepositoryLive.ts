@@ -40,6 +40,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           return yield* Effect.fail(new AggregateNotFoundError({}))
         }
         const row = rows[0]
+        if (row === undefined) return yield* Effect.fail(new AggregateNotFoundError({}))
         const decoded = Schema.decodeUnknownSync(TicketSchema)(JSON.parse(row.payload as string))
         return { state: decoded, revision: Number(row.revision ?? 0) }
       })
@@ -53,7 +54,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
       Effect.try({
         try: () => {
           const cur = sql.exec("SELECT revision FROM tickets WHERE id = ?", id).toArray()
-          const current = cur.length > 0 ? Number(cur[0].revision ?? 0) : 0
+          const current = cur[0] !== undefined ? Number(cur[0].revision ?? 0) : 0
           if (current !== expected) {
             throw new ConcurrencyError({ expected, actual: current })
           }

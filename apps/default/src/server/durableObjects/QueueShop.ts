@@ -96,9 +96,9 @@ export class QueueShop extends DurableObject<Env> {
       }
     })()
     return Effect.runPromise(
-      eff.pipe(
-        Effect.map((ticket) => ({ ok: true, ticket }) satisfies QueueResult),
-        Effect.catchAll((err) =>
+      Effect.matchEffect(eff, {
+        onSuccess: (ticket) => Effect.succeed({ ok: true, ticket } satisfies QueueResult),
+        onFailure: (err: unknown) =>
           Effect.succeed({
             ok: false,
             error: {
@@ -106,9 +106,7 @@ export class QueueShop extends DurableObject<Env> {
               code: (err as { code?: string }).code ?? "E_UNKNOWN",
             },
           } satisfies QueueResult),
-        ),
-        Effect.provide(layer),
-      ),
+      }).pipe(Effect.provide(layer)),
     )
   }
 
@@ -117,7 +115,7 @@ export class QueueShop extends DurableObject<Env> {
     return rows.map((r) => ({ id: r.id, state: r.state }) as unknown as Ticket)
   }
 
-  async alarm(): Promise<void> {
+  override async alarm(): Promise<void> {
     const timeoutSeconds = Number(
       this.env.NO_SHOW_TIMEOUT_SECONDS ?? NO_SHOW_TIMEOUT_DEFAULT_SECONDS,
     )

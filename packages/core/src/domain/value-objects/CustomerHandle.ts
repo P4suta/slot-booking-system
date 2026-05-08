@@ -32,10 +32,10 @@ export const parseCustomerHandle = (
   phoneLast4: string,
 ): Result.Result<CustomerHandle, DomainError> => {
   const kanaR = parseNameKana(nameKana)
-  if (Result.isFailure(kanaR)) return Result.fail<CustomerHandle, DomainError>(kanaR.failure)
+  if (Result.isFailure(kanaR)) return Result.fail(kanaR.failure)
   const phoneR = parsePhoneLast4(phoneLast4)
-  if (Result.isFailure(phoneR)) return Result.fail<CustomerHandle, DomainError>(phoneR.failure)
-  return Result.succeed<CustomerHandle, DomainError>({
+  if (Result.isFailure(phoneR)) return Result.fail(phoneR.failure)
+  return Result.succeed({
     nameKana: kanaR.success,
     phoneLast4: phoneR.success,
   })

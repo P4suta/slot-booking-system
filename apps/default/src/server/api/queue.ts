@@ -1,4 +1,4 @@
-import { type CustomerHandle, parseCustomerHandle, parseTicketId } from "@booking/core"
+import { type CustomerHandle, codeOf, parseCustomerHandle, parseTicketId } from "@booking/core"
 import { Result, Schema } from "effect"
 import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
 
@@ -99,7 +99,7 @@ const parseHandleFromBody = (
   if (Result.isFailure(handleR)) {
     return {
       ok: false,
-      res: fail(422, handleR.failure._tag, (handleR.failure as { code: string }).code),
+      res: fail(422, handleR.failure._tag, codeOf(handleR.failure)),
     }
   }
   return { ok: true, handle: handleR.success, rest: rec }
@@ -127,8 +127,7 @@ export const routeQueueApi = async (request: Request, env: Env): Promise<Respons
     const decoded = Schema.decodeUnknownResult(IssueTicketBodySchema)(raw)
     if (Result.isFailure(decoded)) return fail(422, "InvalidBody", "E_VAL_BODY")
     const handleR = parseCustomerHandle(decoded.success.nameKana, decoded.success.phoneLast4)
-    if (Result.isFailure(handleR))
-      return fail(422, handleR.failure._tag, (handleR.failure as { code: string }).code)
+    if (Result.isFailure(handleR)) return fail(422, handleR.failure._tag, codeOf(handleR.failure))
     const action: QueueAction = {
       type: "IssueTicket",
       handle: handleR.success,
