@@ -6,8 +6,7 @@
   "description": "SvelteKit frontend (customer + staff) for the booking system.",
   "scripts": {
     "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy globalVariable baseLocale --is-server 'import.meta.env.SSR' --emit-ts-declarations --no-emit-readme --silent",
-    "graphql-env": "gql.tada generate-output --tsconfig ./tsconfig.json --output ./src/graphql-env.d.ts",
-    "codegen": "pnpm run paraglide && pnpm run graphql-env",
+    "codegen": "pnpm run paraglide",
     "dev": "pnpm run codegen && vite dev",
     "build": "pnpm run codegen && vite build",
     "preview": "vite preview",

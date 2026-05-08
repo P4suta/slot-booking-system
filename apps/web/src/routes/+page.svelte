@@ -1,10 +1,8 @@
 <script lang="ts">
-  // Customer landing page — link the rest of the customer flow.
+  // Phase 0 of the queue pivot scrapped the customer search/hold/confirm/
+  // manage routes; Phase 5 reintroduces a single `並ぶ` (issue ticket)
+  // page plus a `/ticket` panel for live position.
 </script>
 
-<h1>Booking</h1>
-<p>Customer-facing self-service flow. Pick what you want to do:</p>
-<ul>
-  <li><a href="/customer/search">Find an available slot</a></li>
-  <li><a href="/customer/manage">Manage an existing booking (cancel / reschedule)</a></li>
-</ul>
+<h1>Queue</h1>
+<p>Pivot in progress — Phase 5 reintroduces the customer-facing surface.</p>
