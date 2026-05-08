@@ -86,14 +86,14 @@ jobs:
             slot-booking-system-ci:latest \
             corepack pnpm run print-schema
 
-      - name: Compile codegen (paraglide + gql.tada)
+      - name: Compile codegen (paraglide + gql.tada + svelte-kit sync)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
             -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
             -w /workspace/apps/web \
             slot-booking-system-ci:latest \
-            corepack pnpm run codegen
+            bash -c "corepack pnpm run codegen && corepack pnpm exec svelte-kit sync"
 
       - name: Lint (biome)
         run: |
