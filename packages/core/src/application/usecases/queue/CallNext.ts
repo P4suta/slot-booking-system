@@ -1,12 +1,9 @@
 import { Effect } from "effect"
-import {
-  type ConcurrencyError,
-  QueueEmptyError,
-  type StorageError,
-} from "../../../domain/errors/Errors.js"
-import { head, replay } from "../../../domain/queue/projection.js"
+import { type DomainError, QueueEmptyError } from "../../../domain/errors/Errors.js"
+import { head } from "../../../domain/queue/projection.js"
 import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
 import { applyCallNext } from "../../../domain/queue/transitions.js"
+import type { TicketId } from "../../../domain/types/EntityId.js"
 import { Clock } from "../../ports/Clock.js"
 import { TicketRepository } from "../../ports/EventSourcedRepository.js"
 import { IdGenerator } from "../../ports/IdGenerator.js"
@@ -26,31 +23,26 @@ import { infoPayload } from "../_log.js"
  */
 export const CallNext = (
   actor: Actor = "staff",
-): Effect.Effect<
-  Ticket,
-  QueueEmptyError | ConcurrencyError | StorageError,
-  Clock | IdGenerator | TicketRepository | Logger
-> =>
+): Effect.Effect<Ticket, DomainError, Clock | IdGenerator | TicketRepository | Logger> =>
   Effect.gen(function* () {
     const clock = yield* Clock
     const idgen = yield* IdGenerator
     const repo = yield* TicketRepository
     const logger = yield* Logger
     const all = yield* repo.listAll()
-    const snap = replay([])
     // The in-memory adapter does not surface its event log; instead
     // we rebuild the lookup from listAll(), which already projects
     // each row. Construct a synthetic snapshot whose tickets map to
     // the listed states so `head` / `serving` work uniformly.
-    const tickets = new Map<string, Ticket>()
+    const tickets = new Map<TicketId, Ticket>()
     for (const t of all) tickets.set(t.id, t)
-    const next = head({ tickets, ...snap })
+    const next = head({ tickets })
     if (next === null) return yield* Effect.fail(new QueueEmptyError({}))
     const loaded = yield* repo
       .load(next.id)
       .pipe(
         Effect.catchTag("AggregateNotFound", () =>
-          Effect.fail<QueueEmptyError | ConcurrencyError | StorageError>(new QueueEmptyError({})),
+          Effect.fail<DomainError>(new QueueEmptyError({})),
         ),
       )
     if (loaded.state.state !== "Waiting") {

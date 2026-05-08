@@ -63,11 +63,13 @@ const idSchema = <E extends EntityKind>(prefix: E) =>
  */
 export const parseId =
   <E extends EntityKind>(prefix: E) =>
-  (s: string): Result.Result<Id<E>, DomainError> =>
-    Result.mapError(
-      Schema.decodeUnknownResult(idSchema(prefix))(s),
-      () => new InvalidEntityIdError({ expectedPrefix: prefix, received: s }),
-    )
+  (s: string): Result.Result<Id<E>, DomainError> => {
+    const decoded = Schema.decodeUnknownResult(idSchema(prefix))(s)
+    if (Result.isFailure(decoded)) {
+      return Result.fail(new InvalidEntityIdError({ expectedPrefix: prefix, received: s }))
+    }
+    return Result.succeed(decoded.success as unknown as Id<E>)
+  }
 
 /**
  * Mint a fresh `Id<E>` for the given prefix using `typeid-js`. The
@@ -77,7 +79,7 @@ export const parseId =
 const newId =
   <E extends EntityKind>(prefix: E) =>
   (): Id<E> =>
-    typeid(prefix).toString() as Id<E>
+    typeid(prefix).toString() as unknown as Id<E>
 
 /* -------------------------------------------------------------------------- */
 /* Per-kind aliases.                                                           */

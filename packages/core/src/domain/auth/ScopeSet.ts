@@ -41,7 +41,7 @@ export type ScopeSet = ReadonlySet<StaffScope> & { readonly [ScopeSetBrand]: nev
 const lift = (s: ReadonlySet<StaffScope>): ScopeSet => s as ScopeSet
 
 /** Bottom element ⊥. No scopes granted. */
-export const empty = (): ScopeSet => lift(new Set())
+export const empty = (): ScopeSet => lift(new Set<StaffScope>())
 
 /** Top element ⊤. Every scope granted. */
 export const full = (): ScopeSet => lift(new Set(ALL_SCOPES))

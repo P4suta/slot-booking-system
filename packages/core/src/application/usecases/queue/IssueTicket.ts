@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { ConcurrencyError, StorageError } from "../../../domain/errors/Errors.js"
+import type { DomainError } from "../../../domain/errors/Errors.js"
 import type { Ticket } from "../../../domain/queue/Ticket.js"
 import { applyIssue } from "../../../domain/queue/transitions.js"
 import type { CustomerHandle } from "../../../domain/value-objects/CustomerHandle.js"
@@ -27,11 +27,7 @@ export type IssueTicketInput = {
  */
 export const IssueTicket = (
   input: IssueTicketInput,
-): Effect.Effect<
-  Ticket,
-  ConcurrencyError | StorageError,
-  Clock | IdGenerator | TicketRepository | Logger
-> =>
+): Effect.Effect<Ticket, DomainError, Clock | IdGenerator | TicketRepository | Logger> =>
   Effect.gen(function* () {
     const clock = yield* Clock
     const idgen = yield* IdGenerator

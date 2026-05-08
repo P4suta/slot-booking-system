@@ -15,11 +15,10 @@ type Row = {
 
 /**
  * In-memory adapter for the queue's `TicketRepository`. Backed by a
- * single `Ref<Map<TicketId, Row>>` plus a monotonic seq counter,
- * mirroring the slot-graph's `InMemoryEventSourcedRepositoryLive`
- * pattern. Used directly by domain unit tests; the
- * Cloudflare-DurableObject adapter (Phase 2) writes the same
- * contract on top of `ctx.storage.sql`.
+ * single `Ref<Map<TicketId, Row>>` plus a monotonic seq counter and
+ * an append-only event log; used by domain unit tests. The
+ * Cloudflare-DurableObject adapter writes the same contract on top
+ * of `ctx.storage.sql`.
  */
 export const InMemoryTicketRepositoryLive = Layer.effect(
   TicketRepository,
@@ -29,53 +28,49 @@ export const InMemoryTicketRepositoryLive = Layer.effect(
     const events = yield* Ref.make<readonly TicketEvent[]>([])
     return {
       load: (id: TicketId) =>
-        Ref.get(store).pipe(
-          Effect.flatMap((m) => {
-            const row = m.get(id)
-            return row === undefined
-              ? Effect.fail(new AggregateNotFoundError({}))
-              : Effect.succeed({ state: row.state, revision: row.revision })
-          }),
-        ),
+        Effect.gen(function* () {
+          const m = yield* Ref.get(store)
+          const row = m.get(id)
+          if (row === undefined) {
+            return yield* Effect.fail(new AggregateNotFoundError({}))
+          }
+          return { state: row.state, revision: row.revision }
+        }),
       save: (
         id: TicketId,
         expected: number,
         evs: NonEmptyReadonlyArray<TicketEvent>,
         next: Ticket,
       ) =>
-        Ref.modify(store, (m) => {
+        Effect.gen(function* () {
+          const m = yield* Ref.get(store)
           const row = m.get(id)
           if (row === undefined || row.revision !== expected) {
-            return [
-              Effect.fail(
-                new ConcurrencyError({
-                  expected,
-                  actual: row?.revision ?? 0,
-                }),
-              ),
-              m,
-            ] as const
+            return yield* Effect.fail(
+              new ConcurrencyError({ expected, actual: row?.revision ?? 0 }),
+            )
           }
           const updated = new Map(m)
           updated.set(id, { state: next, revision: row.revision + evs.length })
-          return [Effect.void, updated] as const
-        }).pipe(
-          Effect.flatten,
-          Effect.tap(() => Ref.update(events, (xs) => xs.concat(...evs))),
-        ),
-      issue: (id: TicketId, evs: NonEmptyReadonlyArray<TicketEvent>, next: Ticket) =>
-        Ref.modify(store, (m) => {
-          if (m.has(id)) {
-            return [Effect.fail(new ConcurrencyError({ expected: 0, actual: 1 })), m] as const
+          yield* Ref.set(store, updated)
+          yield* Ref.update(events, (xs) => xs.concat(...evs))
+        }),
+      issue: (_id: TicketId, evs: NonEmptyReadonlyArray<TicketEvent>, next: Ticket) =>
+        Effect.gen(function* () {
+          const m = yield* Ref.get(store)
+          if (m.has(next.id)) {
+            return yield* Effect.fail(new ConcurrencyError({ expected: 0, actual: 1 }))
           }
           const updated = new Map(m)
-          updated.set(id, { state: next, revision: evs.length })
-          return [Effect.void, updated] as const
-        }).pipe(
-          Effect.flatten,
-          Effect.tap(() => Ref.update(events, (xs) => xs.concat(...evs))),
-        ),
-      nextSeq: () => Ref.modify(seq, (n) => [n + 1, n + 1] as const),
+          updated.set(next.id, { state: next, revision: evs.length })
+          yield* Ref.set(store, updated)
+          yield* Ref.update(events, (xs) => xs.concat(...evs))
+        }),
+      nextSeq: () =>
+        Ref.modify(seq, (n) => {
+          const next = n + 1
+          return [next, next] as const
+        }),
       listAll: () =>
         Ref.get(store).pipe(Effect.map((m) => Array.from(m.values()).map((r) => r.state))),
     }
