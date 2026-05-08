@@ -127,6 +127,31 @@ export class PhoneMismatchError extends Schema.TaggedErrorClass<PhoneMismatchErr
 }
 
 /**
+ * Domain-level "the ticket the customer asked about does not exist".
+ * Distinct from {@link AggregateNotFoundError} which is the storage
+ * port's hard miss. The use case maps the latter to the former when
+ * the missed lookup is part of an authenticated customer flow.
+ */
+export class TicketNotFoundError extends Schema.TaggedErrorClass<TicketNotFoundError>()(
+  "TicketNotFound",
+  {},
+) {
+  static readonly code = "E_DOM_TICKET_NOT_FOUND"
+  static readonly severity: ErrorSeverity = "domain"
+}
+
+/**
+ * The "next ticket" command was issued but no `Waiting` ticket exists
+ * to call. The staff dashboard prevents this from being clickable;
+ * the error covers the race window where two staff actions hit at
+ * once and the projection updates between read and write.
+ */
+export class QueueEmptyError extends Schema.TaggedErrorClass<QueueEmptyError>()("QueueEmpty", {}) {
+  static readonly code = "E_DOM_QUEUE_EMPTY"
+  static readonly severity: ErrorSeverity = "domain"
+}
+
+/**
  * The ticket has already reached the `Cancelled` terminal state and
  * does not accept further commands.
  */
@@ -260,6 +285,8 @@ export type ValidationError =
 
 export type DomainRuleError =
   | PhoneMismatchError
+  | TicketNotFoundError
+  | QueueEmptyError
   | AlreadyCancelledError
   | AlreadyCompletedError
   | AlreadyNoShowError
@@ -371,6 +398,8 @@ export const errorClassRegistry: readonly ErrorClass[] = [
   InvalidEntityIdError,
   MissingStaffCapabilityError,
   PhoneMismatchError,
+  TicketNotFoundError,
+  QueueEmptyError,
   AlreadyCancelledError,
   AlreadyCompletedError,
   AlreadyNoShowError,
