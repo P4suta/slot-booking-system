@@ -18,6 +18,7 @@ import { Cause, Effect, Layer, Schema } from "effect"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { ensureDurableObjectSchema } from "./schema.js"
+import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecycleLog.js"
 
 type Env = {
   DB: D1Database
@@ -166,6 +167,7 @@ export class QueueShop extends DurableObject<Env> {
     const client = pair[0]
     const server = pair[1]
     this.ctx.acceptWebSocket(server)
+    logWsAccept()
     // Send the current projection on connect so the new client has
     // full state immediately rather than waiting for the next mutation.
     await this.sendProjectionTo(server)
@@ -182,24 +184,25 @@ export class QueueShop extends DurableObject<Env> {
     // intentional no-op; the feed is unidirectional today
   }
 
-  override async webSocketClose(
-    _ws: WebSocket,
-    _code: number,
-    _reason: string,
-    _wasClean: boolean,
-  ): Promise<void> {
-    // No-op: by the time this lifecycle handler fires the socket is
-    // already in a closing state, and the Hibernating runtime has
-    // already removed it from `ctx.getWebSockets()`. Calling
-    // `ws.close(...)` here throws because the socket is no longer
-    // mutable from server code.
+  override webSocketClose(_ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
+    // No-op on the runtime side: by the time this lifecycle handler
+    // fires the socket is already in a closing state, and the
+    // Hibernating runtime has already removed it from
+    // `ctx.getWebSockets()`. Calling `ws.close(...)` here throws
+    // because the socket is no longer mutable from server code.
+    // The structured `ws.close` log is the operator's signal that
+    // the socket actually disconnected (close code + reason
+    // surface "client navigated away" vs "1006 abnormal closure").
+    logWsClose(code, reason, wasClean)
   }
 
-  override async webSocketError(_ws: WebSocket, _err: unknown): Promise<void> {
-    // No-op: same lifecycle invariant as webSocketClose. The runtime
-    // surfaces the underlying error via the close handshake; we have
-    // no recovery path inside the DO that does not race with
-    // hibernation.
+  override webSocketError(_ws: WebSocket, err: unknown): void {
+    // No-op on the runtime side: same lifecycle invariant as
+    // `webSocketClose`. The runtime surfaces the underlying error
+    // via the close handshake; we have no recovery path inside the
+    // DO that does not race with hibernation. The structured log
+    // gives the operator visibility into errored disconnects.
+    logWsError(err instanceof Error ? err.message : String(err))
   }
 
   /**
@@ -237,14 +240,18 @@ export class QueueShop extends DurableObject<Env> {
   private async broadcastProjection(): Promise<void> {
     const sockets = this.ctx.getWebSockets()
     if (sockets.length === 0) return
+    const started = Date.now()
     const payload = await this.projectionPayload()
+    let failed = 0
     for (const ws of sockets) {
       try {
         ws.send(payload)
-      } catch {
-        // ignore — see sendProjectionTo
+      } catch (err) {
+        failed += 1
+        logWsError(`broadcast send failed: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
+    logWsBroadcast(sockets.length, Date.now() - started, payload.length, failed)
   }
 
   override async alarm(): Promise<void> {
