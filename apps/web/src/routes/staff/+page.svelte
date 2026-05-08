@@ -5,7 +5,7 @@
     callNext,
     markNoShow,
     markServed,
-    queueEventSource,
+    queueWebSocket,
     recall,
     staffCancel,
     staffShopState,
@@ -21,9 +21,9 @@
   let preview: ReadonlyArray<Ticket> = $state([])
   let busy = $state(false)
   let error: string | null = $state(null)
-  let source: EventSource | undefined
-  // 直前の待ち人数。 SSE refresh で増分を検出して、 タブが背面に
-  // ある間だけ Notification を発火する。 null = 初回 refresh 前
+  let socket: WebSocket | undefined
+  // 直前の待ち人数。 WebSocket refresh で増分を検出して、 タブが背面
+  // にある間だけ Notification を発火する。 null = 初回 refresh 前
   // (= ページロード直後の「5件溜まってます」では鳴らさない)。
   let prevWaitingCount: number | null = null
 
@@ -99,19 +99,20 @@
 
   const startLiveFeed = async (): Promise<void> => {
     await refresh()
-    if (source === undefined) {
-      source = queueEventSource()
-      source.onmessage = () => {
+    if (socket === undefined) {
+      socket = queueWebSocket()
+      socket.onmessage = () => {
         // 直後に event = backend 健在、 過去の reconnect banner を解除
         if (error?.startsWith("live feed:") === true) error = null
+        // The staff dashboard wants the PII-bearing projection, so we
+        // re-fetch via REST after every WS push instead of trusting
+        // the anonymous projection the WS carries.
         void refresh()
       }
-      source.onerror = () => {
-        // SSE は 30 秒ごとに server 側で close し、 client が自動
-        // 再接続する設計 (Workers の stream 予算対策)。
-        // CONNECTING (readyState 0) は通常の再接続中なので表示しない。
-        // CLOSED (readyState 2) だけが本当の停止 — surface する。
-        if (source?.readyState === EventSource.CLOSED) {
+      socket.onclose = (ev) => {
+        // 1000 = client-initiated normal close (logout). Anything
+        // else is a network drop and warrants the reconnect banner.
+        if (ev.code !== 1000) {
           error = "live feed: closed (再読み込みで再接続)"
         }
       }
@@ -174,8 +175,8 @@
     localStorage.removeItem("queue.staffToken")
     token = ""
     authenticated = false
-    source?.close()
-    source = undefined
+    socket?.close(1000, "logout")
+    socket = undefined
     waitingCount = 0
     serving = null
     preview = []
@@ -230,7 +231,7 @@
     }
   })
 
-  onDestroy(() => source?.close())
+  onDestroy(() => socket?.close(1000, "navigation"))
 </script>
 
 <section>

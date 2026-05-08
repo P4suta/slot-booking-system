@@ -51,9 +51,10 @@ describe("paraglide message catalogue parity (commit 13)", () => {
 
   it("docs/error-codes.md exposes the expected number of tags", () => {
     // The catalogue is drift-gated against errorClassRegistry — the
-    // count is part of the contract. If this assertion changes, the
-    // i18n catalogue must follow.
-    expect(extractedTags.length).toBeGreaterThanOrEqual(33)
+    // count is part of the contract. The post-pivot queue domain has
+    // 17 tags (5 validation + 9 domain + 3 infrastructure); this
+    // floor moves with the registry.
+    expect(extractedTags.length).toBeGreaterThanOrEqual(17)
   })
 
   it("every error_<Tag> from docs/error-codes.md exists in ja.json", () => {

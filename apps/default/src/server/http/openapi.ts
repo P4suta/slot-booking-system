@@ -240,14 +240,22 @@ export const openApiDocument = {
         },
       },
     },
-    "/queue/events": {
+    "/queue/feed": {
       get: {
         tags: ["projection"],
-        summary: "SSE stream of the projection (2 s polling, 30 s cap)",
+        summary: "DO Hibernating WebSocket projection feed — server-push on every dispatch.",
+        description:
+          "Upgrade with `Connection: Upgrade` + `Upgrade: websocket`. " +
+          "The DO emits the anonymous projection (waitingCount, serving, " +
+          "waitingPreview) on every successful queue mutation. The current " +
+          "snapshot is sent immediately on connect.",
         responses: {
-          "200": {
-            description: "text/event-stream",
-            content: { "text/event-stream": { schema: { type: "string" } } },
+          "101": {
+            description: "Switching Protocols (WebSocket established)",
+          },
+          "426": {
+            description: "Upgrade Required (no Upgrade: websocket header)",
+            content: { "text/plain": { schema: { type: "string" } } },
           },
         },
       },

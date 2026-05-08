@@ -102,9 +102,31 @@ export const staffShopState = async (token: string): Promise<ApiResult<StaffShop
   return json(res)
 }
 
-/** Connect to the SSE projection feed. The caller closes the source. */
-export const queueEventSource = (): EventSource =>
-  new EventSource(`${baseUrl()}/api/v1/queue/events`)
+/**
+ * Connect to the DO Hibernating WebSocket projection feed.
+ *
+ * The DO emits the anonymous projection (`{ ok, waitingCount,
+ * serving, waitingPreview }`) on every successful mutation;
+ * `onmessage.data` is JSON, no `data:` prefix and no manual
+ * 2-second polling loop. The caller closes the socket via
+ * `socket.close()`.
+ *
+ * Reconnection is the caller's responsibility — Workers may
+ * hibernate the DO between events but the WebSocket itself stays
+ * up; close codes other than 1000 (normal) usually indicate a
+ * network drop and the caller schedules a fresh connection.
+ */
+export const queueWebSocket = (): WebSocket => {
+  const http = baseUrl()
+  // `apiBaseUrl()` returns either an empty string (same-origin
+  // production) or an `http(s)://...` URL (cross-origin dev).
+  // Translate to `ws(s)://` for the upgrade target.
+  const ws =
+    http === ""
+      ? `${typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws"}://${typeof window !== "undefined" ? window.location.host : ""}`
+      : http.replace(/^http/, "ws")
+  return new WebSocket(`${ws}/api/v1/queue/feed`)
+}
 
 /* -------------------------------------------------------------------------- */
 /* Staff actions — protected by x-staff-token.                                */

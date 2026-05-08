@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte"
-  import { cancelTicket, myTicket, queueEventSource, shopState, type Ticket } from "$lib/api.js"
+  import { cancelTicket, myTicket, queueWebSocket, shopState, type Ticket } from "$lib/api.js"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
 
@@ -18,7 +18,7 @@
   let position: number | null = $state(null)
   let error: string | null = $state(null)
   let cancelBusy = $state(false)
-  let source: EventSource | undefined
+  let socket: WebSocket | undefined
 
   const readStored = (): Stored | null => {
     if (typeof window === "undefined") return null
@@ -106,23 +106,23 @@
   onMount(async () => {
     stored = readStored()
     if (stored !== null) await refresh(stored)
-    source = queueEventSource()
-    source.onmessage = () => {
+    socket = queueWebSocket()
+    socket.onmessage = () => {
       // 直後に成功 event = backend 健在、 reconnect banner を解除
       if (error?.startsWith("live feed:") === true) error = null
       if (stored !== null) void refresh(stored)
     }
-    source.onerror = () => {
-      // SSE は 30 秒ごとに server 側で close → client 自動 reconnect
-      // (Workers の stream 予算対策)。 CONNECTING 中は表示せず、
-      // CLOSED に陥ったときだけ surface する。
-      if (source?.readyState === EventSource.CLOSED) {
+    socket.onclose = (ev) => {
+      // 1000 = client-initiated normal close (page navigation away).
+      // Anything else is a network drop → surface the reconnect
+      // banner; the user reloads to re-establish.
+      if (ev.code !== 1000) {
         error = "live feed: closed (再読み込みで再接続)"
       }
     }
   })
 
-  onDestroy(() => source?.close())
+  onDestroy(() => socket?.close(1000, "navigation"))
 </script>
 
 <section>

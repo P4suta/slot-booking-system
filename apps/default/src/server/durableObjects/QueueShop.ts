@@ -106,7 +106,7 @@ export class QueueShop extends DurableObject<Env> {
           return CancelTicket(action.ticketId, action.actor, action.reason, action.handle)
       }
     })()
-    return Effect.runPromise(
+    const result = await Effect.runPromise(
       Effect.matchCauseEffect(eff, {
         onSuccess: (ticket) =>
           Effect.succeed({ ok: true, ticket: encodeTicket(ticket) } satisfies QueueResult),
@@ -127,6 +127,13 @@ export class QueueShop extends DurableObject<Env> {
         },
       }).pipe(Effect.provide(layer)),
     )
+    if (result.ok) {
+      // The projection is broadcast on success only; failed actions
+      // do not change shop state, so re-emitting the same payload
+      // would just churn the wire without adding information.
+      await this.broadcastProjection()
+    }
+    return result
   }
 
   /**
@@ -139,6 +146,104 @@ export class QueueShop extends DurableObject<Env> {
     return rows.map((r) => JSON.parse(r.payload as string) as EncodedTicket)
   }
 
+  /**
+   * Hibernating WebSocket entry — Cloudflare Workers Durable Object
+   * runtime forwards `Upgrade: websocket` requests to this method
+   * (set up by the Hono router at `/api/v1/queue/feed`). The DO
+   * accepts the server side via `ctx.acceptWebSocket(...)` so the
+   * actor can hibernate between events without dropping live
+   * connections; ticket-state messages reach every attached socket
+   * through {@link broadcastProjection}.
+   *
+   * See ADR-0061 (DO Hibernating WebSocket projection feed).
+   */
+  override async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("upgrade") !== "websocket") {
+      return new Response("Expected websocket upgrade", { status: 426 })
+    }
+    const pair = new WebSocketPair()
+    const client = pair[0]
+    const server = pair[1]
+    this.ctx.acceptWebSocket(server)
+    // Send the current projection on connect so the new client has
+    // full state immediately rather than waiting for the next mutation.
+    await this.sendProjectionTo(server)
+    return new Response(null, { status: 101, webSocket: client })
+  }
+
+  /**
+   * Hibernating-WebSocket lifecycle handler. The projection feed is
+   * server-push only; client messages are accepted but not
+   * processed. Future bidirectional exchanges (e.g. resume-token
+   * negotiation) hook in here.
+   */
+  override async webSocketMessage(_ws: WebSocket, _msg: ArrayBuffer | string): Promise<void> {
+    // intentional no-op; the feed is unidirectional today
+  }
+
+  override async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    _reason: string,
+    _wasClean: boolean,
+  ): Promise<void> {
+    // Honour the client-initiated close with the same code so
+    // downstream proxies stay in sync. Hibernating runtime detaches
+    // the socket from `ctx.getWebSockets()` automatically.
+    ws.close(code, "client closed")
+  }
+
+  override async webSocketError(ws: WebSocket, _err: unknown): Promise<void> {
+    // 1011 = unexpected condition; the runtime will likewise drop
+    // the socket from `ctx.getWebSockets()`.
+    ws.close(1011, "internal error")
+  }
+
+  /**
+   * Build the anonymous projection payload — staff PII never crosses
+   * the WebSocket feed. Mirrors the public `GET /api/v1/queue` shape
+   * so the client renders the same view from either source.
+   */
+  private async projectionPayload(): Promise<string> {
+    const tickets = await this.listTickets()
+    const waiting = tickets.filter((t) => t.state === "Waiting").sort((a, b) => a.seq - b.seq)
+    const serving = tickets.find((t) => t.state === "Called") ?? null
+    return JSON.stringify({
+      ok: true,
+      waitingCount: waiting.length,
+      serving: serving === null ? null : { id: serving.id, seq: serving.seq },
+      waitingPreview: waiting.slice(0, 10).map((t) => ({ id: t.id, seq: t.seq })),
+    })
+  }
+
+  private async sendProjectionTo(ws: WebSocket): Promise<void> {
+    try {
+      ws.send(await this.projectionPayload())
+    } catch {
+      // The socket may have been closed between accept + send; the
+      // runtime evicts it from `ctx.getWebSockets()` on the next
+      // tick, so swallowing here is safe.
+    }
+  }
+
+  /**
+   * Fan out the current projection to every attached WebSocket.
+   * Called from {@link dispatch} after a successful state change so
+   * the customer landing page reflects the queue without polling.
+   */
+  private async broadcastProjection(): Promise<void> {
+    const sockets = this.ctx.getWebSockets()
+    if (sockets.length === 0) return
+    const payload = await this.projectionPayload()
+    for (const ws of sockets) {
+      try {
+        ws.send(payload)
+      } catch {
+        // ignore — see sendProjectionTo
+      }
+    }
+  }
+
   override async alarm(): Promise<void> {
     const timeoutSeconds = Number(
       this.env.NO_SHOW_TIMEOUT_SECONDS ?? NO_SHOW_TIMEOUT_DEFAULT_SECONDS,
@@ -147,12 +252,19 @@ export class QueueShop extends DurableObject<Env> {
     const stale = this.sql
       .exec("SELECT id FROM tickets WHERE state = 'Called' AND called_at <= ?", cutoff)
       .toArray()
+    let touched = false
     for (const row of stale) {
-      await this.dispatch({
+      const result = await this.dispatch({
         type: "MarkNoShow",
         ticketId: row.id as TicketId,
         actor: "system",
       })
+      if (result.ok) touched = true
     }
+    // `dispatch` already broadcasts on success, but if the alarm sweep
+    // produced multiple successful transitions we already emitted a
+    // payload per ticket. Skip the trailing one to avoid noise; the
+    // last `dispatch.broadcastProjection` carries the final state.
+    void touched
   }
 }

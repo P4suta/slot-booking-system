@@ -25,7 +25,7 @@ import type { Env } from "./types.js"
  *   POST  /tickets/:id/recall      staff: recall (Called -> Waiting)
  *   GET   /queue                   shop state (PII for staff, anon otherwise)
  *   POST  /queue/call-next         staff: call next
- *   GET   /queue/events            SSE stream (2 s polling, 30 s cap)
+ *   GET   /queue/feed              DO Hibernating WebSocket projection feed
  */
 
 const FreeTextOrNull = Schema.NullOr(Schema.String)
@@ -299,56 +299,20 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     })
   })
 
-  // GET /api/v1/queue/events — SSE projection feed (Workers stream
-  // lifetime cap mirrors the previous behaviour at 30 s; client
-  // reconnects on close).
-  app.get("/api/v1/queue/events", (c) => {
-    const env = c.env
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const encoder = new TextEncoder()
-        const send = (data: unknown) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
-        }
-        const sendOnce = async () => {
-          const tickets = await stub(env).listTickets()
-          const waiting = tickets.filter((t) => t.state === "Waiting")
-          const serving = tickets.find((t) => t.state === "Called") ?? null
-          send({
-            ok: true,
-            waitingCount: waiting.length,
-            serving,
-            waitingPreview: waiting
-              .sort((a, b) => a.seq - b.seq)
-              .slice(0, 10)
-              .map((t) => ({ id: t.id, seq: t.seq })),
-          })
-        }
-        await sendOnce()
-        const interval = setInterval(() => {
-          sendOnce().catch(() => {
-            controller.close()
-          })
-        }, 2000)
-        const cleanup = () => {
-          clearInterval(interval)
-          try {
-            controller.close()
-          } catch {
-            // controller already closed
-          }
-        }
-        setTimeout(cleanup, 30000)
-      },
-    })
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-store",
-        connection: "keep-alive",
-      },
-    })
+  // GET /api/v1/queue/feed — DO Hibernating WebSocket projection
+  // feed. Replaces the 2 s SSE polling loop with a server-push
+  // stream the QueueShop DO emits on every successful dispatch.
+  // The router forwards the upgrade unchanged; the DO's `fetch`
+  // handles the `Upgrade: websocket` exchange + acceptWebSocket so
+  // the actor can hibernate between events without dropping live
+  // connections (ADR-0061).
+  app.get("/api/v1/queue/feed", (c) => {
+    if (c.req.header("upgrade") !== "websocket") {
+      return c.text("Expected websocket upgrade", 426)
+    }
+    const id = c.env.QUEUE_SHOP.idFromName("shop")
+    const obj = c.env.QUEUE_SHOP.get(id)
+    return obj.fetch(c.req.raw)
   })
 
   return app

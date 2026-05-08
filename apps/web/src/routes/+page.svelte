@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte"
-  import { queueEventSource, type ShopState, shopState } from "$lib/api.js"
+  import { queueWebSocket, type ShopState, shopState } from "$lib/api.js"
 
   let waitingCount = $state(0)
   let serving: { id: string; seq: number } | null = $state(null)
-  let source: EventSource | undefined
+  let socket: WebSocket | undefined
 
   const refresh = (data: ShopState) => {
     waitingCount = data.waitingCount
@@ -16,12 +16,12 @@
       const initial = await shopState()
       if (initial.ok) refresh(initial.value as unknown as ShopState)
     } catch {
-      // initial fetch failure is non-fatal — SSE will catch up
+      // initial fetch failure is non-fatal — the WS feed catches up
     }
-    source = queueEventSource()
-    source.onmessage = (event) => {
+    socket = queueWebSocket()
+    socket.onmessage = (event) => {
       try {
-        const parsed = JSON.parse(event.data) as ShopState & { ok?: boolean }
+        const parsed = JSON.parse(event.data as string) as ShopState & { ok?: boolean }
         refresh(parsed)
       } catch {
         // ignore malformed event
@@ -29,7 +29,7 @@
     }
   })
 
-  onDestroy(() => source?.close())
+  onDestroy(() => socket?.close())
 </script>
 
 <section class="hero">

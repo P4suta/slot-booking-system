@@ -58,6 +58,7 @@ back.
 | [0058](./adr/0058-timing-safe-staff-guard.md)       | Constant-time staff token comparison                         | accepted |
 | [0059](./adr/0059-event-log-source-of-truth.md)     | Event log is the source of truth + aggregate snapshots       | accepted |
 | [0060](./adr/0060-comment-bans-lint-gate.md)        | comment-bans lint gate                                       | accepted |
+| [0061](./adr/0061-do-hibernating-websocket.md)      | DO Hibernating WebSocket projection feed                     | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).
