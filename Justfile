@@ -8,8 +8,8 @@ set dotenv-load := false
 # vitest live exclusively inside `docker compose dev`.
 # ---------------------------------------------------------------------------
 
-DEV  := "docker compose run --rm dev"
-DEVP := "docker compose run --rm --service-ports dev"   # publishes ports
+DEV  := "bash scripts/dev-exec.sh"
+DEVP := "bash scripts/dev-exec.sh"   # ports already bound by `up -d`
 CI   := "docker compose run --rm ci"
 
 # Common in-container CLIs through pnpm / corepack so they pin the workspace's
@@ -286,6 +286,21 @@ dev-up:
 # Tear down the observability profile services brought up by `dev-up`.
 dev-down:
     docker compose --profile observability down
+
+# Bring up the long-running `dev` container that the `{{DEV}}`
+# wrapper execs into. Idempotent — re-running while it's up is a
+# no-op. Auto-invoked by `scripts/dev-exec.sh` on first command,
+# but exposed as a recipe for explicit pre-warming + diagnostics.
+dev-shell-up:
+    bash scripts/dev-exec.sh true
+
+# Stop + remove the long-running `dev` container (and its sibling
+# `dev-web`). The pnpm-store / pnpm-home volumes survive so the
+# next `up` reuses the cache.
+dev-shell-down:
+    docker compose stop dev dev-web
+    docker compose rm -f dev dev-web
+    rm -f .cache/dev-cid
 
 # Run an arbitrary SQL statement against the local D1 fixture.
 # Usage: `just d1-shell SQL='SELECT count(*) FROM services'`

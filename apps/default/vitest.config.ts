@@ -41,6 +41,7 @@ export default defineConfig({
         test: {
           name: "workers",
           include: ["test/integration/**/*.integration.test.ts"],
+          setupFiles: ["./test/integration/_harness/teardown.ts"],
         },
       },
     ],

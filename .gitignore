@@ -16,6 +16,9 @@ Thumbs.db
 # Diagnose snapshot (just diagnose / scripts/diagnose.sh)
 .diagnose/
 
+# Long-running dev container ID cache (scripts/dev-exec.sh)
+.cache/
+
 # Direnv
 .envrc.local
 
