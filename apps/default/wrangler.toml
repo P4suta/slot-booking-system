@@ -22,6 +22,24 @@ migrations_dir = "migrations"
 name = "QUEUE_SHOP"
 class_name = "QueueShop"
 
+# Cloudflare rate-limit bindings (production only — Miniflare leaves
+# the binding undefined and the middleware fails open under
+# `wrangler dev --local`). namespace_id is opaque to the binding;
+# the (limit, period) tuple is the real contract.
+#   - RL_ISSUE  60 requests / minute, keyed on cf-connecting-ip
+#   - RL_OPERATE 300 requests / minute, keyed on x-staff-token
+[[unsafe.bindings]]
+name = "RL_ISSUE"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_OPERATE"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 300, period = 60 }
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["DaySchedule"]

@@ -2,7 +2,9 @@ import { codeOf, parseCustomerHandleStrict, parseTicketId } from "@booking/core"
 import { Result, Schema } from "effect"
 import { Hono } from "hono"
 import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
+import { timingSafeEqual } from "../security/timingSafeEqual.js"
 import { DEFECT_STATUS, statusForTag } from "./errorEnvelope.js"
+import { rateLimitMiddleware } from "./rateLimit.js"
 import { corsAllowlist, parseAllowlist, securityHeaders } from "./securityHeaders.js"
 import type { Env } from "./types.js"
 
@@ -97,11 +99,23 @@ const requireStaff = (c: {
     }
   }
   const presented = c.req.header("x-staff-token")
-  if (presented !== secret) {
+  if (presented === undefined) {
     return {
       ok: false,
       res: failResponse(401, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
-        reason: presented === undefined ? "absent" : "wrong_kind",
+        reason: "absent",
+      }),
+    }
+  }
+  // Constant-time comparison: `presented !== secret` short-circuits
+  // on the first mismatching byte, leaking the secret prefix via
+  // response timing (CWE-208). timingSafeEqual folds an XOR
+  // accumulator over the full encoded byte length.
+  if (!timingSafeEqual(presented, secret)) {
+    return {
+      ok: false,
+      res: failResponse(401, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
+        reason: "wrong_kind",
       }),
     }
   }
@@ -118,8 +132,8 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return cors(c as never, next)
   })
 
-  // POST /api/v1/tickets — issue a new ticket
-  app.post("/api/v1/tickets", async (c) => {
+  // Issue is rate-limited per CF-Connecting-IP (60 / min).
+  app.post("/api/v1/tickets", rateLimitMiddleware("RL_ISSUE"), async (c) => {
     const raw: unknown = await c.req.json().catch(() => null)
     const decoded = Schema.decodeUnknownResult(IssueTicketBodySchema)(raw)
     if (Result.isFailure(decoded)) return failResponse(422, "InvalidBody", "E_VAL_BODY")
@@ -225,8 +239,8 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     )
   })
 
-  // POST /api/v1/queue/call-next — staff
-  app.post("/api/v1/queue/call-next", async (c) => {
+  // Staff mutations rate-limited per token hash (300 / min).
+  app.post("/api/v1/queue/call-next", rateLimitMiddleware("RL_OPERATE"), async (c) => {
     const guard = requireStaff(c)
     if (!guard.ok) return guard.res
     return dispatchEnvelope(await stub(c.env).dispatch({ type: "CallNext", actor: "staff" }))
