@@ -37,9 +37,12 @@ DEPLOYMENT_TIMEZONE = "UTC"
 IS_DEV = "0"
 OTEL_EXPORTER_URL = "disabled"
 NO_SHOW_TIMEOUT_SECONDS = "300"
-# Local-dev placeholder. Production rotates this through
-# `wrangler secret put STAFF_SESSION_SECRET`.
-STAFF_SESSION_SECRET = "dev-placeholder-replace-in-prod-32-bytes-hex-0123456789abcdef"
+ALLOWED_ORIGINS = ""
+# STAFF_SESSION_SECRET is no longer wired in wrangler.toml so the
+# repo never carries a placeholder secret value (gitleaks-clean).
+# Local dev overrides come from `apps/default/.dev.vars`
+# (gitignored — see `.dev.vars.example`); production rotates the
+# real secret through `wrangler secret put STAFF_SESSION_SECRET`.
 
 # Daily cron at 04:00 UTC. Drives the `scheduled` handler in
 # `src/worker.ts` which NULLs PII fields on tickets whose terminal

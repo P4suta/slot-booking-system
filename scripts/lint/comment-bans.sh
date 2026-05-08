@@ -51,6 +51,33 @@ EXCLUDES=(
   --glob '!.svelte-kit/**'
 )
 
+# When lefthook passes explicit staged-file arguments, ripgrep's
+# `--glob '!pattern'` filters do NOT apply (globs only filter
+# directory traversal, not positional file args). Re-filter the
+# inputs here so the staged-files path matches the full-scan path.
+filtered=()
+for f in "$@"; do
+  case "$f" in
+    docs/adr/*) ;;
+    docs/ADR_INDEX.md|CHANGELOG.md|.gitleaks.toml|_typos.toml|docs/error-codes.md) ;;
+    */wrangler.toml|wrangler.toml) ;;
+    scripts/lint/*) ;;
+    docs/onboarding.md|docs/observability.md|docs/operator/runbook.md) ;;
+    docs/errors.md|docs/dev-workflow.md|docs/dev/diagnose.md) ;;
+    */paraglide/*|*/dist/*|*/node_modules/*|*/.svelte-kit/*) ;;
+    *) filtered+=("$f") ;;
+  esac
+done
+
+# `set --` clears positional args; re-set with the filtered list. If
+# no inputs remain after filtering, the gate is a no-op.
+if [ ${#filtered[@]} -eq 0 ] && [ "$#" -gt 0 ]; then
+  exit 0
+fi
+if [ ${#filtered[@]} -gt 0 ]; then
+  set -- "${filtered[@]}"
+fi
+
 if rg --color=never --no-heading --line-number --pcre2 \
      -f "$PATTERN_FILE" "${EXCLUDES[@]}" "$@" >&2; then
   cat >&2 <<'MSG'

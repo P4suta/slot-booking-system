@@ -1,0 +1,9 @@
+# Local dev overrides for `wrangler dev`. Copy to
+# `apps/default/.dev.vars` (gitignored) and replace the values.
+# Do NOT commit `.dev.vars` — `.gitignore` already excludes it.
+#
+# STAFF_SESSION_SECRET — the staff capability token. Production
+# uses `wrangler secret put STAFF_SESSION_SECRET`; this file only
+# matters for `wrangler dev --local` triage of staff-only paths.
+# Generate with `openssl rand -hex 32` (32-byte hex).
+STAFF_SESSION_SECRET=replace-me-with-a-32-byte-hex-secret-from-openssl
