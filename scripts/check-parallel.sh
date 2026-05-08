@@ -7,11 +7,17 @@
 # scripts/dev-exec.sh → docker exec → underlying tool` tree
 # instead of orphaning the docker exec.
 #
-# Output is line-prefixed `[<gate>]` and only printed once a gate
-# finishes — interleaving 12 streams of vitest / pnpm output in
-# real time would be unreadable. The trade-off is that you don't
-# see progress, but the per-gate timeout absorbs the hang risk
-# and prints a diagnostic line when a gate trips it.
+# Realtime progress: every fork prints `[start] <gate>` and every
+# completion prints `[done]  <gate> (Xs, exit=N)` plus the gate's
+# full log inline. A hung gate is therefore immediately visible
+# without waiting for its per-gate timeout — the operator sees
+# "started but not done" up to the deadline.
+#
+# The orchestrator detects completion via per-gate exit files
+# rather than `wait -n -p pid`. The latter races with already-
+# reaped children when fast gates finish before the parent gets
+# to call wait, so `pid` comes back unset and the diagnostic
+# attribution drifts.
 set -o pipefail
 
 GATES=(
@@ -29,15 +35,25 @@ GATES=(
   "error-docs-drift-check:60"
 )
 
-# Pre-warm the long-running dev container once. All gates exec
-# into the same container.
+now() { date +%s; }
+elapsed_since() { echo "$(( $(now) - $1 ))"; }
+
+session_started=$(now)
+
+echo "[boot] dev-exec warmup ..."
 bash scripts/dev-exec.sh true >/dev/null
+echo "[boot] dev-exec ready ($(elapsed_since "$session_started")s)"
 
 tmpdir=$(mktemp -d)
-declare -A pid_to_gate
+
+# Map: gate-name → "PID:STARTED_TS"
+declare -A gate_state
+gate_pid()     { echo "${gate_state[$1]%:*}"; }
+gate_started() { echo "${gate_state[$1]##*:}"; }
 
 cleanup() {
-  for pid in "${!pid_to_gate[@]}"; do
+  for g in "${!gate_state[@]}"; do
+    pid=$(gate_pid "$g")
     kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
   done
   rm -rf "$tmpdir"
@@ -48,47 +64,75 @@ for entry in "${GATES[@]}"; do
   gate=${entry%:*}
   timeout_sec=${entry#*:}
   log="$tmpdir/$gate.log"
-  setsid bash scripts/run-gate.sh "$gate" "$timeout_sec" "$log" &
-  pid_to_gate[$!]=$gate
+  exit_file="$tmpdir/$gate.exit"
+  echo "[start] $gate (timeout=${timeout_sec}s)"
+  setsid bash scripts/run-gate.sh "$gate" "$timeout_sec" "$log" "$exit_file" &
+  gate_state[$gate]="$!:$(now)"
 done
 
 fail=0
 failed=()
+killed_by_us=()
+fail_fast_triggered=0
 
-# `wait -n -p` (bash 5.1+) waits for the next-finished child and
-# stores its pid in the named variable, so we can fail-fast on the
-# first non-zero exit by killing the rest. The loop runs until the
-# pid_to_gate map is empty rather than over a fixed counter so a
-# missed wait-fill (signal interruption etc.) just retries.
-while [ "${#pid_to_gate[@]}" -gt 0 ]; do
-  pid=""
-  if wait -n -p pid; then
-    status=0
-  else
-    status=$?
-  fi
-  if [ -z "$pid" ]; then
-    # wait reported but didn't surface a pid (signal-interrupted
-    # wait, or all children already reaped). Spin once to let the
-    # zombie reaper land. Bounded by the per-gate timeout, so the
-    # outer just-recipe still has a hard deadline.
-    continue
-  fi
-  gate=${pid_to_gate[$pid]:-unknown}
-  unset "pid_to_gate[$pid]"
-  if [ -f "$tmpdir/$gate.log" ]; then
-    sed "s|^|[$gate] |" "$tmpdir/$gate.log"
-  fi
-  if [ "$status" -ne 0 ]; then
-    failed+=("$gate(exit=$status)")
-    fail=1
-    for other_pid in "${!pid_to_gate[@]}"; do
-      kill -TERM "-$other_pid" 2>/dev/null || kill -TERM "$other_pid" 2>/dev/null || true
+# Poll each gate's `.exit` file. 100 ms granularity is fine for
+# a 12-gate suite that takes 10-15 s end-to-end; we trade a tiny
+# busy-wait for not-having-to-fight `wait -n` race conditions.
+while [ "${#gate_state[@]}" -gt 0 ]; do
+  for gate in "${!gate_state[@]}"; do
+    exit_file="$tmpdir/$gate.exit"
+    [ -s "$exit_file" ] || continue
+    status=$(<"$exit_file")
+    started=$(gate_started "$gate")
+    pid=$(gate_pid "$gate")
+    unset "gate_state[$gate]"
+    # Ensure the child is fully reaped so its job-table entry
+    # doesn't linger (avoids the next iteration's `wait -n`
+    # confusion if we ever re-introduce it).
+    wait "$pid" 2>/dev/null || true
+    # Was this gate killed by our fail-fast? If so, label it
+    # `killed` rather than treating it as a fresh failure.
+    is_killed=0
+    for k in "${killed_by_us[@]}"; do
+      if [ "$k" = "$gate" ]; then
+        is_killed=1
+        break
+      fi
     done
+    if [ "$is_killed" -eq 1 ]; then
+      echo "[done]  $gate ($(elapsed_since "$started")s, killed by fail-fast)"
+    else
+      echo "[done]  $gate ($(elapsed_since "$started")s, exit=$status)"
+    fi
+    if [ -f "$tmpdir/$gate.log" ] && [ -s "$tmpdir/$gate.log" ]; then
+      sed "s|^|        [$gate] |" "$tmpdir/$gate.log"
+    fi
+    if [ "$status" -ne 0 ] && [ "$is_killed" -eq 0 ]; then
+      failed+=("$gate(exit=$status)")
+      fail=1
+      if [ "$fail_fast_triggered" -eq 0 ]; then
+        fail_fast_triggered=1
+        survivors=("${!gate_state[@]}")
+        if [ "${#survivors[@]}" -gt 0 ]; then
+          echo "[abort] killing ${#survivors[@]} siblings (fail-fast on $gate)"
+        fi
+        for surv_gate in "${survivors[@]}"; do
+          killed_by_us+=("$surv_gate")
+          surv_pid=$(gate_pid "$surv_gate")
+          kill -TERM "-$surv_pid" 2>/dev/null || kill -TERM "$surv_pid" 2>/dev/null || true
+        done
+      fi
+    fi
+  done
+  if [ "${#gate_state[@]}" -gt 0 ]; then
+    sleep 0.1
   fi
 done
 
+total=$(elapsed_since "$session_started")
 if [ $fail -ne 0 ]; then
-  printf '\n[check-parallel] failed gates: %s\n' "${failed[*]}" >&2
+  printf '\n[check-parallel] ✗ failed in %ss: %s\n' "$total" "${failed[*]}" >&2
+else
+  printf '\n[check-parallel] ✓ all gates green in %ss\n' "$total"
 fi
 exit $fail
