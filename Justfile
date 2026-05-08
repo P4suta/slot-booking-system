@@ -202,6 +202,12 @@ pack-core:
 dev-default:
     {{DEVP}} {{PNPM}} -F default run dev
 
+# apps/web の Vite dev server (port 5173)。 docker-compose.yml の
+# `dev-web` service で port を分離してあるので、 `just dev-default`
+# (8787) と並走できる。 ブラウザは http://localhost:5173 で開く。
+dev-web:
+    docker compose run --rm --service-ports dev-web {{PNPM}} -F web run dev -- --host 0.0.0.0
+
 migrate-local:
     {{DEV}} {{PNPM}} -F default exec wrangler d1 migrations apply DB --local
 

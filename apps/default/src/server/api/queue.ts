@@ -36,10 +36,23 @@ const CancelBodySchema = Schema.Struct({
   reason: Schema.String,
 })
 
+// CORS for the apps/web dev server (Vite on :5173) hitting wrangler
+// dev (:8787). Production uses a single Cloudflare zone so the path
+// stays same-origin; the dev-only `*` is gated by `IS_DEV` in the
+// caller's env wiring (see Phase 4 future-work for tighter origin
+// pinning). Today: any origin is allowed because the surface carries
+// no cookies and the staff token is opt-in via header.
+const corsHeaders = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-headers": "content-type, x-staff-token",
+  "access-control-max-age": "86400",
+}
+
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders },
   })
 
 const fail = (status: number, _tag: string, code: string, extra: Record<string, unknown> = {}) =>
@@ -120,6 +133,11 @@ const stub = (env: Env) =>
 export const routeQueueApi = async (request: Request, env: Env): Promise<Response | null> => {
   const url = new URL(request.url)
   const path = url.pathname
+
+  // CORS preflight — all `/api/v1/*` endpoints accept the same matrix.
+  if (request.method === "OPTIONS" && path.startsWith("/api/v1/")) {
+    return new Response(null, { status: 204, headers: corsHeaders })
+  }
 
   // --- Issue ---
   if (path === "/api/v1/tickets" && request.method === "POST") {
@@ -293,6 +311,7 @@ export const routeQueueApi = async (request: Request, env: Env): Promise<Respons
         "content-type": "text/event-stream; charset=utf-8",
         "cache-control": "no-store",
         connection: "keep-alive",
+        ...corsHeaders,
       },
     })
   }
