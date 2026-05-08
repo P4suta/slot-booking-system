@@ -341,6 +341,13 @@ gen-error-docs:
 diagnose:
     bash scripts/diagnose.sh
 
+# Multi-angle diagnose: wraps `just diagnose` and adds three
+# dimensions the diagnose-first train cares about (skip-by-TODO-
+# tag count, error-tag coverage matrix, silent-failure residual).
+# Output: `.diagnose/multi-angle.md`. See `docs/dev/diagnose-multi-angle.md`.
+diagnose-multi-angle:
+    bash scripts/diagnose-multi-angle.sh
+
 # Typecheck deep-dive — file 別 top 10 + error code 別 top 10 + (file ×
 # error code) pair top 10. Standalone; same data also fed into
 # `just diagnose` summary.

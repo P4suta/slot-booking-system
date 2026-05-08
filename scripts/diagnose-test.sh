@@ -17,16 +17,20 @@ log=".diagnose/test.log"
 status_file=".diagnose/test.status"
 detail=".diagnose/test-detail.md"
 
-DEV="docker compose run --rm -T dev"
+DEV="bash scripts/dev-exec.sh"
 
 # Each workspace runs its own vitest; concatenate the JSON outputs.
+# vitest-pool-workers 0.16 hangs after the apps/default suite passes,
+# so the workspace-specific deadlines (60 s for the others, 20 s for
+# apps/default) keep this aggregator bounded; see
+# `scripts/test-runner.sh` for the rationale.
 {
   echo "=== packages/core ==="
-  $DEV bash -c "cd packages/core && ./node_modules/.bin/vitest run --reporter=json --silent" 2>/dev/null
+  $DEV bash scripts/test-runner.sh @booking/core --reporter=json --silent 2>/dev/null
   echo "=== apps/default ==="
-  $DEV bash -c "cd apps/default && ./node_modules/.bin/vitest run --reporter=json --silent" 2>/dev/null
+  $DEV env TEST_DEADLINE=20 bash scripts/test-runner.sh default --reporter=json --silent 2>/dev/null
   echo "=== apps/web ==="
-  $DEV bash -c "cd apps/web && ./node_modules/.bin/vitest run --reporter=json --silent" 2>/dev/null
+  $DEV bash scripts/test-runner.sh web --reporter=json --silent 2>/dev/null
 } >"$log" 2>&1
 
 # Total exit code is implicit via the last one; track each package
