@@ -1,0 +1,39 @@
+/* Global styles for both customer and staff routes. Kept tiny — most
+   styling lives co-located with each page component. */
+
+button {
+  cursor: pointer;
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid #1d1d1f;
+  background: white;
+  border-radius: 0.5rem;
+}
+
+button:hover {
+  background: #f0f0f0;
+}
+
+button:focus-visible {
+  outline: 2px solid #0070f3;
+  outline-offset: 2px;
+}
+
+input,
+select {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid #999;
+  border-radius: 0.375rem;
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #0070f3;
+  outline-offset: 2px;
+}
+
+label {
+  display: block;
+  margin: 0.5rem 0;
+}

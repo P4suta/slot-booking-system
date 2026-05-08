@@ -1,0 +1,58 @@
+# Wrangler config for the generic demo deployment.
+# Replace `database_id` with a real D1 id before deploying anywhere
+# beyond `wrangler dev --local`.
+
+name = "default"
+main = "src/worker.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+account_id = ""
+
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "default-booking"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "DAY_SCHEDULE"
+class_name = "DaySchedule"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DaySchedule"]
+
+[vars]
+DEPLOYMENT_NAME = "default"
+DEPLOYMENT_TIMEZONE = "UTC"
+# `IS_DEV` flips RuntimeMode (ADR-0042). Default `"0"` so every
+# `wrangler deploy` lands in production mode; `wrangler dev` flips
+# the bit through `--var IS_DEV:1` (see `apps/default/package.json`
+# `dev` script). Named-env wiring is intentionally unused —
+# wrangler v4's `[env.<name>]` does not inherit `[vars]` / D1 / DO
+# bindings, so the CLI override is the simpler categorical lift.
+IS_DEV = "0"
+# OTel exporter triage (ADR-0044): `"disabled"` drops spans through
+# a NoopSpanExporter so the worker never opens a network round-trip
+# to a non-existent collector. `wrangler dev` overrides via
+# `--var OTEL_EXPORTER_URL:console` (stdout exporter); the
+# observability docker-compose profile + an explicit
+# `OTEL_EXPORTER_URL=http://otel-collector:4318/v1/traces` env var
+# is the path that posts to Jaeger.
+OTEL_EXPORTER_URL = "disabled"
+# Local-dev secret used by `signSlot` / `verifySlotToken`. The value
+# is a deterministic 32-byte hex string so the local fixtures (curl
+# smoke, SvelteKit dev) can sign and verify without coordinating an
+# out-of-band secret. Production deployments rotate this through
+# `wrangler secret put SLOT_HMAC_SECRET`.
+SLOT_HMAC_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+# Daily cron at 04:00 UTC. Drives the `scheduled` handler in
+# `src/worker.ts` which NULLs PII fields on bookings whose terminal
+# state was reached more than 2 years ago (ADR-0009 / SYSTEM §6).
+[triggers]
+crons = ["0 4 * * *"]

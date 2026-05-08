@@ -1,0 +1,8 @@
+[
+  {
+    "name": "Worker bundle (gzip)",
+    "path": "dist/_worker.js",
+    "limit": "200 KiB",
+    "gzip": true
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    "packages/core": {
+      "entry": ["test/**/*.test.ts", "test/**/*.bench.ts", "test/_fixtures/index.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "apps/default": {
+      "entry": ["test/**/*.test.ts", "test/integration/**/*.ts", "scripts/**/*.ts", "seed/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "seed/**/*.ts"],
+      "ignore": ["src/server/rest/openapiSpec.ts"],
+      "wrangler": {
+        "config": ["wrangler.toml"]
+      }
+    },
+    "apps/web": {
+      "entry": ["src/routes/**/*.{svelte,ts}", "src/app.html", "test/**/*.test.ts"],
+      "project": ["src/**/*.{ts,svelte}", "test/**/*.ts"],
+      "ignoreDependencies": ["@booking/core", "@cloudflare/workers-types"]
+    }
+  }
+}

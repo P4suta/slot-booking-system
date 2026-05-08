@@ -1,4 +1,24 @@
-# lefthook (https://lefthook.dev/) git hooks.
+# lefthook (https://lefthook.dev/) — git hooks.
+#
+# Layered cadence:
+#   pre-commit  — fast, runs only against staged files where possible.
+#                 Biome + typos + actionlint + yamllint guards. Heavy
+#                 type-checking and tests are deferred to pre-push.
+#   commit-msg  — conventional-commit format check via `committed`.
+#   pre-push    — full pipeline: tsc, vitest, dependency-cruiser, PII
+#                 guard, domain-purity guard, strict-code grep.
+#
+# **Warnings fail commits**: every linter is invoked with the strictest
+# exit-code policy it offers. Biome via `--error-on-warnings`, ESLint
+# via `--max-warnings=0`, knip via `--treat-config-hints-as-errors`.
+# Dependency-cruiser warnings are promoted to errors directly in
+# `.dependency-cruiser.cjs` (severity `error`) since the CLI has no
+# warnings-as-errors flag. The intent is one knob, in one place per
+# tool — no hidden silent failures, no "fix later" warnings drifting.
+#
+# Heavy work runs inside the Docker dev container so the toolchain
+# matches CI. Host needs only `just`, `lefthook`, `committed`, `typos`,
+# `actionlint`, `markdownlint-cli2` (managed by mise).
 #
 # Install:   just hooks
 # Uninstall: just hooks-uninstall
@@ -10,19 +30,70 @@ pre-commit:
     - merge
   commands:
     typos:
-      run: typos
+      run: typos {staged_files}
+      glob: "*"
     actionlint:
       glob: ".github/workflows/*.{yml,yaml}"
-      run: actionlint
-    yamllint:
-      glob: "**/*.{yml,yaml}"
-      run: yamllint
-    markdownlint:
-      glob: "**/*.md"
-      run: markdownlint-cli2 "**/*.md" "#target"
+      run: actionlint {staged_files}
+    biome-staged:
+      glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,json}"
+      run: docker compose run --rm dev ./node_modules/.bin/biome check --error-on-warnings --no-errors-on-unmatched {staged_files}
+    pii-guard-staged:
+      glob: "**/*.{ts,tsx,svelte,sql}"
+      run: |
+        docker compose run --rm dev bash -c '! rg -n --type-add "svelte:*.svelte" -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" {staged_files}'
+    domain-purity-staged:
+      glob: "{packages,apps}/**/*.{ts,tsx,svelte,sql}"
+      run: |
+        docker compose run --rm dev bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" {staged_files}'
+
+commit-msg:
+  commands:
+    committed:
+      run: committed --commit-file {1}
 
 pre-push:
-  parallel: true
+  parallel: false
   skip:
     - rebase
-  commands: {}
+  commands:
+    codegen:
+      # Compile generated code (paraglide messages + gql.tada
+      # introspection) so typecheck sees every generated artefact.
+      # Both targets are git-ignored, so a fresh checkout has no copy.
+      run: |
+        docker compose run --rm dev bash -c "cd apps/default && corepack pnpm run print-schema"
+        docker compose run --rm dev bash -c "cd apps/web && corepack pnpm run codegen"
+    typecheck:
+      run: docker compose run --rm dev ./node_modules/.bin/tsc -b --pretty
+    biome-full:
+      run: docker compose run --rm dev ./node_modules/.bin/biome check --error-on-warnings .
+    eslint-full:
+      run: docker compose run --rm dev ./node_modules/.bin/eslint . --max-warnings 0
+    arch:
+      run: docker compose run --rm dev ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
+    test:
+      run: docker compose run --rm dev bash -c "cd packages/core && ./node_modules/.bin/vitest run"
+    test-default:
+      run: docker compose run --rm dev bash -c "cd apps/default && ./node_modules/.bin/vitest run"
+    test-web:
+      run: docker compose run --rm dev bash -c "cd apps/web && ./node_modules/.bin/vitest run"
+    schema-drift:
+      run: bash apps/default/scripts/schema-drift-check.sh
+    pii-guard-full:
+      run: |
+        docker compose run --rm dev bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'
+    domain-purity-full:
+      run: |
+        docker compose run --rm dev bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
+    strict-code:
+      # Scope: packages/core/src only — the imperative shell in
+      # apps/default/src/server/durableObjects/ runs outside the
+      # Effect runtime and legitimately uses raw Date for alarm
+      # scheduling / outbox recordedAt.
+      run: |
+        docker compose run --rm dev bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
+    dead-code:
+      run: docker compose run --rm dev ./node_modules/.bin/knip --treat-config-hints-as-errors
+    type-coverage:
+      run: docker compose run --rm dev corepack pnpm -F @booking/core run type-coverage

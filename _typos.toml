@@ -4,10 +4,17 @@
 [default]
 extend-ignore-identifiers-re = [
     "[A-Fa-f0-9]{7,}",   # git SHAs in comments
+    # TypeID-shaped strings (book_…, serv_…, clos_…, …). Both real and
+    # synthetic-test prefixes (e.g. `clos_x`, `prov_aaa`).
+    "(book|serv|prov|rsrc|clos|absn|bhrs|evnt|audt|idem|staf)_[a-zA-Z0-9]+",
+    # `_fixtures` directory name (not a typo of "fixture").
+    "_fixtures",
 ]
 
 [default.extend-words]
 # Add project-specific words here as they crop up.
+clos = "clos"   # TypeID prefix for Closure; not a typo of "close".
+staf = "staf"   # TypeID prefix for Staff; not a typo of "staff".
 
 [files]
 extend-exclude = [

@@ -1,0 +1,63 @@
+services:
+  dev:
+    build:
+      context: .
+      target: dev
+    image: slot-booking-system-dev:latest
+    environment:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      PNPM_HOME: /workspace/.pnpm-home
+      PATH: /workspace/.pnpm-home:/usr/local/bin:/usr/bin:/bin
+    ports:
+      - "8787:8787"
+      - "5173:5173"
+    volumes:
+      - .:/workspace:rw
+      - pnpm-store:/workspace/.pnpm-store
+      - pnpm-home:/workspace/.pnpm-home
+    working_dir: /workspace
+    tty: true
+    stdin_open: true
+
+  ci:
+    build:
+      context: .
+      target: ci
+    image: slot-booking-system-ci:latest
+    environment:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      PNPM_HOME: /workspace/.pnpm-home
+      PATH: /workspace/.pnpm-home:/usr/local/bin:/usr/bin:/bin
+    volumes:
+      - .:/workspace:ro
+      - pnpm-store:/workspace/.pnpm-store
+      - pnpm-home:/workspace/.pnpm-home
+    working_dir: /workspace
+
+  # Observability stack — opt-in via `--profile observability`.
+  # Brought up by `just dev-up` so dev runs surface child spans in
+  # Jaeger. Stays out of the default profile because contributors
+  # without it set should still get a fast `dev` recipe.
+  otel-collector:
+    profiles: [observability]
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./apps/default/dev/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4318:4318" # OTLP/HTTP receiver (host-side curl debugging)
+    depends_on:
+      jaeger:
+        condition: service_started
+
+  jaeger:
+    profiles: [observability]
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI
+
+volumes:
+  pnpm-store: {}
+  pnpm-home: {}

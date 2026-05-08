@@ -23,6 +23,13 @@ MD041:
     - "**/PULL_REQUEST_TEMPLATE.md"
     - "**/ISSUE_TEMPLATE/**"
 
+# Table column style — strict "consistent" enforcement forces hand-
+# aligning every table cell when a row's content length changes,
+# which is editorial churn without information value. The
+# information that matters (column boundaries, header separator)
+# is enforced by the parser, not by this rule.
+MD060: false
+
 # Ignore generated outputs.
 ignores:
   - "target/"
@@ -30,3 +37,4 @@ ignores:
   - "**/CHANGELOG.md"
   - "**/PULL_REQUEST_TEMPLATE.md"
   - "**/ISSUE_TEMPLATE/**"
+  - "apps/web/src/paraglide/**"

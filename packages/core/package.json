@@ -1,0 +1,84 @@
+{
+  "name": "@booking/core",
+  "version": "0.0.0",
+  "description": "Industry-agnostic time-slot booking core: pure domain + application ports.",
+  "license": "(Apache-2.0 OR MIT)",
+  "type": "module",
+  "private": false,
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./domain": {
+      "types": "./dist/domain/index.d.ts",
+      "import": "./dist/domain/index.js"
+    },
+    "./application": {
+      "types": "./dist/application/index.d.ts",
+      "import": "./dist/application/index.js"
+    },
+    "./infrastructure": {
+      "types": "./dist/infrastructure/index.d.ts",
+      "import": "./dist/infrastructure/index.js"
+    },
+    "./derive": {
+      "types": "./dist/derive/index.d.ts",
+      "import": "./dist/derive/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE-*"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:property": "vitest run --reporter=verbose test/property",
+    "test:bench": "vitest bench --run",
+    "test:mutation": "stryker run",
+    "type-coverage": "type-coverage --at-least 99.5 --strict --detail --ignore-files \"test/**\" --project tsconfig.src.json",
+    "attw": "attw --pack . --ignore-rules cjs-resolves-to-esm no-resolution",
+    "size-limit": "size-limit"
+  },
+  "size-limit": [
+    {
+      "name": "core (esm, brotli, with deps)",
+      "path": "dist/index.js",
+      "limit": "200 KB",
+      "import": "*"
+    }
+  ],
+  "typeCoverage": {
+    "atLeast": 99.5,
+    "strict": true,
+    "ignoreFiles": [
+      "test/**"
+    ],
+    "project": "tsconfig.src.json"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "latest",
+    "drizzle-orm": "rc",
+    "effect": "beta",
+    "typeid-js": "latest",
+    "ulidx": "latest"
+  },
+  "devDependencies": {
+    "@size-limit/preset-small-lib": "latest",
+    "@stryker-mutator/core": "latest",
+    "@stryker-mutator/typescript-checker": "latest",
+    "@stryker-mutator/vitest-runner": "latest",
+    "@total-typescript/ts-reset": "latest",
+    "@vitest/coverage-v8": "latest",
+    "expect-type": "latest",
+    "fast-check": "latest",
+    "size-limit": "latest",
+    "type-coverage": "latest",
+    "vitest": "latest"
+  }
+}

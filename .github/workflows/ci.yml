@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_BUILDKIT: "1"
+
+jobs:
+  ci:
+    name: lint + typecheck + test + arch + guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ hashFiles('Dockerfile', 'docker-compose.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build CI container
+        run: |
+          docker buildx build \
+            --target ci \
+            --tag slot-booking-system-ci:latest \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            .
+
+      - name: Move buildx cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            corepack pnpm install --frozen-lockfile=false
+
+      - name: Build packages/core (emit dist consumed by apps)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            corepack pnpm --filter @booking/core run build
+
+      - name: Print GraphQL SDL
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace/apps/default \
+            slot-booking-system-ci:latest \
+            corepack pnpm run print-schema
+
+      - name: Compile codegen (paraglide + gql.tada + svelte-kit sync)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace/apps/web \
+            slot-booking-system-ci:latest \
+            bash -c "corepack pnpm run codegen && corepack pnpm exec svelte-kit sync"
+
+      - name: Lint (biome)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            ./node_modules/.bin/biome check --error-on-warnings .
+
+      - name: Lint (eslint)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            ./node_modules/.bin/eslint . --max-warnings 0
+
+      - name: Typecheck
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            corepack pnpm -r exec tsc --noEmit
+
+      - name: Architecture (dependency-cruiser)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
+
+      - name: Dead-code (knip)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            ./node_modules/.bin/knip
+
+      - name: PII guard
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\\b(email|phone_number|address|birthday|gender)\\s*[:=]|mailto:|@gmail\\.|@yahoo\\.)" packages apps -g "!**/CHANGELOG*"'
+
+      - name: Domain-purity guard
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            bash -c '! rg -n -i -e "\\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\\s*shop)\\b" packages apps -g "!**/docs/adr/**"'
+
+      - name: Strict-code guard (Date / throw / @ts-ignore)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            bash -c '! rg -n -t ts -e "\\bnew Date\\(|\\bDate\\.now\\(|@ts-ignore|@ts-expect-error|: any\\b" packages/core/src 2>/dev/null'
+
+      - name: Test (vitest + coverage, all packages)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -w /workspace \
+            slot-booking-system-ci:latest \
+            corepack pnpm -r run test:coverage
+
+      - name: Schema-drift gate (apps/default/schema.graphql)
+        run: bash apps/default/scripts/schema-drift-check.sh
