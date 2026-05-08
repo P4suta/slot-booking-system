@@ -58,10 +58,6 @@ pre-push:
     - rebase
   commands:
     codegen:
-      # Phase 0 of the queue pivot scrapped the GraphQL surface; the
-      # gql.tada-driven `apps/web` codegen will return in Phase 3
-      # alongside the new schema. For now compile only paraglide so
-      # typecheck still sees the generated message catalogues.
       run: docker compose run --rm dev bash -c "cd apps/web && corepack pnpm run paraglide"
     typecheck:
       run: docker compose run --rm dev ./node_modules/.bin/tsc -b --pretty

@@ -25,8 +25,7 @@ default:
 # ---------------------------------------------------------------------------
 
 # Build the dev image, install workspace deps, compile generated
-# code (paraglide messages, gql.tada introspection), register git
-# hooks.
+# code (paraglide messages), register git hooks.
 bootstrap: image install codegen hooks
 
 image:
@@ -43,10 +42,6 @@ install:
 paraglide:
     {{DEV}} bash -c "cd apps/web && {{PNPM}} run paraglide"
 
-# Phase 0 of the queue pivot scrapped the GraphQL schema; Phase 3
-# reintroduces `print-schema` + `graphql-env` once the queue surface
-# (5 mutations / 2 queries / 1 subscription) is in place. `codegen`
-# stays paraglide-only until then so bootstrap / typecheck still run.
 codegen: paraglide
 
 hooks:
@@ -97,8 +92,7 @@ markdownlint:
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**" \
         "#apps/web/src/paraglide/**" \
-        "#apps/web/project.inlang/**" \
-        "#apps/web/src/graphql-env.d.ts"
+        "#apps/web/project.inlang/**"
 
 lint: lint-biome lint-eslint markdownlint
 
@@ -248,14 +242,14 @@ seed:
       rm -f .seed.generated.sql'
 
 # ---------------------------------------------------------------------------
-# Observability stack (Phase 3 PR#8)
+# Observability stack
 # ---------------------------------------------------------------------------
 
 # Bring up the full local-dev stack: OTel collector + Jaeger UI under
 # the `observability` docker-compose profile (`docker-compose.yml`),
 # then `wrangler dev` in the foreground with the OTLP endpoint pinned
 # to the collector container. Exit Ctrl-C closes wrangler; collector
-# + jaeger keep running until `just dev-down`. usecase / graphql
+# + jaeger keep running until `just dev-down`. usecase / queue / DO
 # spans land in Jaeger at http://localhost:16686.
 dev-up:
     docker compose --profile observability up -d otel-collector jaeger

@@ -20,9 +20,7 @@
     "@microlabs/otel-cf-workers": "latest",
     "@opentelemetry/api": "latest",
     "drizzle-orm": "rc",
-    "effect": "beta",
-    "graphql": "latest",
-    "graphql-yoga": "latest"
+    "effect": "beta"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "latest",

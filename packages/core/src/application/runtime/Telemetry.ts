@@ -44,19 +44,11 @@ export const addAttributes = (attrs: Readonly<Record<string, unknown>>): Effect.
   Effect.annotateCurrentSpan(attrs)
 
 /**
- * Project a `DomainError` onto OTel semconv `error.*` attributes
- * and raise an `exception` event on the active span — Phase 2.6
- * BI-9 derivation point. Every concrete error class carries its
- * `code` + `severity` statics on the leaf class (Phase 2.0 / BI-2);
- * this function is the *only* boundary that materialises them as
- * OTel attributes, mirroring how `errorToGraphQLPayload` is the
- * only boundary for the GraphQL surface (`derivations.ts`).
- *
- * Adding a new `Schema.TaggedError` to the registry forces the
- * `code`/`severity` statics by type-check, which means the OTel
- * attributes are auto-populated with **zero manual catalogue
- * synchronisation** — one taxonomy, three projections (log, GraphQL,
- * trace).
+ * Project a `DomainError` onto OTel semconv `error.*` attributes and
+ * raise an `exception` event on the active span. Every error class
+ * carries its `code` / `severity` statics on the leaf type, so adding
+ * a new `Schema.TaggedError` to the registry auto-populates the OTel
+ * attributes by type-check — zero manual catalogue synchronisation.
  */
 export const recordTaggedError = (e: DomainError): Effect.Effect<void> =>
   Effect.flatMap(Effect.currentSpan, (span) =>

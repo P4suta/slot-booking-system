@@ -1,16 +1,6 @@
-import { graphqlEndpoint } from "./graphql/endpoint.js"
+import { apiBaseUrl } from "./baseUrl.js"
 
-/**
- * Resolve the queue REST base URL. The slot-graph era pointed
- * `/graphql` at the worker; the queue pivot's REST surface lives
- * under `/api/v1/`. The same env-driven endpoint resolver applies —
- * `PUBLIC_GRAPHQL_ENDPOINT` is overloaded as the worker base, with
- * the trailing `/graphql` segment trimmed if present.
- */
-const baseUrl = (): string => {
-  const raw = graphqlEndpoint()
-  return raw.replace(/\/graphql\/?$/, "")
-}
+const baseUrl = apiBaseUrl
 
 export type ErrorEnvelope = {
   readonly _tag: string

@@ -4,13 +4,12 @@ import { describe, expect, it } from "vitest"
 /**
  * Pin the static structural invariants of `errorClassRegistry` so a
  * future commit cannot widen / narrow the registry without updating
- * the matching `docs/error-codes.md` (drift-gated by
- * `just error-docs-drift-check`) and the prefix-grouping convention
- * the docs and ADR-0017 both rely on.
+ * `docs/error-codes.md` (drift-gated by `just error-docs-drift-check`)
+ * and the prefix-grouping convention ADR-0017 relies on.
  *
- * Queue-pivot layout: 6 validation entries → 8 domain entries → 3
- * infrastructure. The validity of `errorToGraphQLPayload` and the
- * i18n-key generator both rest on this contiguous severity ordering.
+ * Layout: 6 validation entries → 8 domain entries → 3 infrastructure.
+ * The i18n-key generator and the HTTP error envelope both rest on
+ * this contiguous severity ordering.
  */
 describe("errorClassRegistry", () => {
   it("has 17 entries", () => {
