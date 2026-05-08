@@ -54,7 +54,10 @@ back.
 | [0054](./adr/0054-customer-anonymous-handle.md)     | Customer anonymous handle (nameKana + phoneLast4)            | accepted |
 | [0055](./adr/0055-staff-single-capability.md)       | Staff single capability (`operate_queue`)                    | accepted |
 | [0056](./adr/0056-hono-router.md)                   | Hono as the queue REST router                                | accepted |
+| [0057](./adr/0057-cloudflare-rate-limit.md)         | Cloudflare rate-limit binding for queue mutations            | accepted |
+| [0058](./adr/0058-timing-safe-staff-guard.md)       | Constant-time staff token comparison                         | accepted |
 | [0059](./adr/0059-event-log-source-of-truth.md)     | Event log is the source of truth + aggregate snapshots       | accepted |
+| [0060](./adr/0060-comment-bans-lint-gate.md)        | comment-bans lint gate                                       | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).
