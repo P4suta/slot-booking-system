@@ -1,8 +1,15 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte"
   import { cancelTicket, myTicket, queueEventSource, shopState, type Ticket } from "$lib/api.js"
+  import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
+  import { toKatakana } from "$lib/kana.js"
 
   type Stored = { ticketId: string; nameKana: string; phoneLast4: string }
+
+  const onNameInput = (event: Event): void => {
+    const el = event.currentTarget as HTMLInputElement
+    lookupForm.nameKana = toKatakana(el.value)
+  }
 
   let stored: Stored | null = $state(null)
   let lookupForm = $state({ ticketId: "", nameKana: "", phoneLast4: "" })
@@ -122,18 +129,9 @@
       </label>
       <label>
         <span>お名前 (カタカナ)</span>
-        <input type="text" bind:value={lookupForm.nameKana} required />
+        <input type="text" value={lookupForm.nameKana} oninput={onNameInput} required />
       </label>
-      <label>
-        <span>電話番号末尾4桁</span>
-        <input
-          type="text"
-          inputmode="numeric"
-          bind:value={lookupForm.phoneLast4}
-          required
-          maxlength="4"
-        />
-      </label>
+      <PhoneOtpInput bind:value={lookupForm.phoneLast4} />
       <button type="submit">確認</button>
     </form>
   {:else if ticket !== null}

@@ -1,12 +1,22 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
   import { issueTicket } from "$lib/api.js"
+  import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
+  import { toKatakana } from "$lib/kana.js"
 
   let nameKana = $state("")
   let phoneLast4 = $state("")
   let freeText = $state("")
   let busy = $state(false)
   let error: string | null = $state(null)
+
+  // ひらがな入力を即座にカタカナへ昇格 (UX 配慮)。 worker 側の
+  // `parseNameKana` はカタカナ + 半角カナ + 空白のみ受け付けるため、
+  // ひらがなのまま submit すると即 InvalidNameKana で弾かれる。
+  const onNameInput = (event: Event): void => {
+    const el = event.currentTarget as HTMLInputElement
+    nameKana = toKatakana(el.value)
+  }
 
   const onSubmit = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
@@ -44,24 +54,14 @@
       <span>お名前 (カタカナ)</span>
       <input
         type="text"
-        bind:value={nameKana}
+        value={nameKana}
+        oninput={onNameInput}
         required
         placeholder="ヤマダ タロウ"
         autocomplete="off"
       />
     </label>
-    <label>
-      <span>電話番号末尾4桁</span>
-      <input
-        type="text"
-        inputmode="numeric"
-        pattern="[0-9]{'{4}'}"
-        bind:value={phoneLast4}
-        required
-        placeholder="1234"
-        autocomplete="off"
-      />
-    </label>
+    <PhoneOtpInput bind:value={phoneLast4} />
     <label>
       <span>用件 (任意)</span>
       <textarea bind:value={freeText} rows="2" placeholder="ご相談内容など" />
