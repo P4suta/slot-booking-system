@@ -119,7 +119,10 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
         const snap = snapRows[0]
         if (snap !== undefined) {
           baseRevision = Number(snap.revision ?? 0)
-          baseTicket = Schema.decodeUnknownSync(TicketSchema)(JSON.parse(snap.payload as string))
+          baseTicket = yield* Effect.try({
+            try: () => Schema.decodeUnknownSync(TicketSchema)(JSON.parse(snap.payload as string)),
+            catch: (e) => new StorageError({ reason: "decode.snapshot", cause: e }),
+          })
         }
         const evRows = yield* Effect.try({
           try: () =>
@@ -135,7 +138,11 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
         if (baseTicket !== null) {
           let acc: QueueSnapshot = { tickets: new Map([[id, baseTicket]]) }
           for (const r of evRows) {
-            const ev = Schema.decodeUnknownSync(TicketEventSchema)(JSON.parse(r.payload as string))
+            const ev = yield* Effect.try({
+              try: () =>
+                Schema.decodeUnknownSync(TicketEventSchema)(JSON.parse(r.payload as string)),
+              catch: (e) => new StorageError({ reason: "decode.event", cause: e }),
+            })
             acc = applyEvent(acc, ev)
           }
           const next = acc.tickets.get(id)
@@ -146,7 +153,11 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
         if (evRows.length > 0) {
           let acc: QueueSnapshot = emptySnapshot
           for (const r of evRows) {
-            const ev = Schema.decodeUnknownSync(TicketEventSchema)(JSON.parse(r.payload as string))
+            const ev = yield* Effect.try({
+              try: () =>
+                Schema.decodeUnknownSync(TicketEventSchema)(JSON.parse(r.payload as string)),
+              catch: (e) => new StorageError({ reason: "decode.event", cause: e }),
+            })
             acc = applyEvent(acc, ev)
           }
           const next = acc.tickets.get(id)
@@ -163,7 +174,10 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
         })
         const row = rows[0]
         if (row === undefined) return yield* Effect.fail(new AggregateNotFoundError({}))
-        const decoded = Schema.decodeUnknownSync(TicketSchema)(JSON.parse(row.payload as string))
+        const decoded = yield* Effect.try({
+          try: () => Schema.decodeUnknownSync(TicketSchema)(JSON.parse(row.payload as string)),
+          catch: (e) => new StorageError({ reason: "decode.ticket", cause: e }),
+        })
         return { state: decoded, revision: Number(row.revision ?? 0) }
       })
     },

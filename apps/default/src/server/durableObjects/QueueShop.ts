@@ -255,6 +255,7 @@ export class QueueShop extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
+    const startedAt = Date.now()
     const timeoutSeconds = Number(
       this.env.NO_SHOW_TIMEOUT_SECONDS ?? NO_SHOW_TIMEOUT_DEFAULT_SECONDS,
     )
@@ -262,19 +263,43 @@ export class QueueShop extends DurableObject<Env> {
     const stale = this.sql
       .exec("SELECT id FROM tickets WHERE state = 'Called' AND called_at <= ?", cutoff)
       .toArray()
-    let touched = false
+    let succeeded = 0
+    let failed = 0
     for (const row of stale) {
-      const result = await this.dispatch({
-        type: "MarkNoShow",
-        ticketId: row.id as TicketId,
-        actor: "system",
-      })
-      if (result.ok) touched = true
+      try {
+        const result = await this.dispatch({
+          type: "MarkNoShow",
+          ticketId: row.id as TicketId,
+          actor: "system",
+        })
+        if (result.ok) {
+          succeeded += 1
+        } else {
+          failed += 1
+        }
+      } catch (err) {
+        failed += 1
+        console.error(
+          JSON.stringify({
+            _tag: "AlarmSweepError",
+            code: "I_DO_ALARM_ERROR",
+            severity: "infrastructure",
+            ticketId: typeof row.id === "string" ? row.id : JSON.stringify(row.id),
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        )
+      }
     }
-    // `dispatch` already broadcasts on success, but if the alarm sweep
-    // produced multiple successful transitions we already emitted a
-    // payload per ticket. Skip the trailing one to avoid noise; the
-    // last `dispatch.broadcastProjection` carries the final state.
-    void touched
+    console.warn(
+      JSON.stringify({
+        _tag: "AlarmSweep",
+        code: "I_DO_ALARM",
+        severity: "infrastructure",
+        candidates: stale.length,
+        succeeded,
+        failed,
+        ms: Date.now() - startedAt,
+      }),
+    )
   }
 }
