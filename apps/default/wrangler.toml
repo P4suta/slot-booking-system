@@ -1,11 +1,6 @@
-# Wrangler config for the generic demo deployment.
+# Wrangler config for the generic demo deployment of the queue pivot.
 # Replace `database_id` with a real D1 id before deploying anywhere
 # beyond `wrangler dev --local`.
-#
-# Phase 0 of the queue-pivot (ADR-0050) drops the DaySchedule DO
-# binding, the slot-token HMAC secret, and the daily PII-purge cron.
-# Phase 2 reintroduces a `QueueShop` DO binding (single-writer actor),
-# Phase 4 a `STAFF_SESSION_SECRET` for cookie-based staff auth.
 
 name = "default"
 main = "src/worker.ts"
@@ -23,14 +18,27 @@ database_name = "default-booking"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
+[[durable_objects.bindings]]
+name = "QUEUE_SHOP"
+class_name = "QueueShop"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["QueueShop"]
+deleted_classes = ["DaySchedule"]
+
 [vars]
 DEPLOYMENT_NAME = "default"
 DEPLOYMENT_TIMEZONE = "UTC"
-# `IS_DEV` flips RuntimeMode (ADR-0042). Default `"0"` so every
-# `wrangler deploy` lands in production mode; `wrangler dev` flips the
-# bit through `--var IS_DEV:1`.
 IS_DEV = "0"
-# OTel exporter triage (ADR-0044): `"disabled"` drops spans through a
-# NoopSpanExporter so the Worker never opens a network round-trip to a
-# non-existent collector.
 OTEL_EXPORTER_URL = "disabled"
+NO_SHOW_TIMEOUT_SECONDS = "300"
+# Local-dev placeholder. Production rotates this through
+# `wrangler secret put STAFF_SESSION_SECRET`.
+STAFF_SESSION_SECRET = "dev-placeholder-replace-in-prod-32-bytes-hex-0123456789abcdef"
+
+# Daily cron at 04:00 UTC. Drives the `scheduled` handler in
+# `src/worker.ts` which NULLs PII fields on tickets whose terminal
+# state was reached more than 2 years ago (ADR-0009 / SYSTEM §6).
+[triggers]
+crons = ["0 4 * * *"]

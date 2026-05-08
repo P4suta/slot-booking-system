@@ -1,40 +1,39 @@
+import { PiiPurger, SystemClockLive } from "@booking/core"
 import { instrument, type ResolveConfigFn } from "@microlabs/otel-cf-workers"
+import { Duration, Effect, Layer } from "effect"
+import { makeD1AuditLogger } from "./server/adapters/D1AuditLoggerLive.js"
+import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
+import { makeRuntimeModeLayer } from "./server/adapters/RuntimeModeLive.js"
+import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
+import type { QueueShop } from "./server/durableObjects/QueueShop.js"
 import { chooseExporter } from "./server/observability/otelConfig.js"
 import { buildOpenAPISpec } from "./server/rest/openapiSpec.js"
 
+export { QueueShop } from "./server/durableObjects/QueueShop.js"
+
 type Env = {
   DB: D1Database
+  QUEUE_SHOP: DurableObjectNamespace<QueueShop>
   DEPLOYMENT_NAME: string
   DEPLOYMENT_TIMEZONE: string
-  /**
-   * `"1"` flips RuntimeMode to dev (verbose error extensions, permissive
-   * log sampling, console OTel exporter). Anything else (including
-   * missing) maps to prod. The `dev` script flips the bit via
-   * `wrangler dev --var IS_DEV:1`.
-   */
   IS_DEV?: string
-  /**
-   * Three-way exporter triage:
-   *   - `"console"`              → ConsoleSpanExporter (stdout, dev local)
-   *   - `"disabled"` (default in prod) → NoopSpanExporter (no traffic)
-   *   - any other string         → OTLP HTTP endpoint URL
-   */
   OTEL_EXPORTER_URL?: string
-  /** Optional — vendor-specific auth header (e.g. Honeycomb / Axiom). */
   OTEL_EXPORTER_KEY?: string
+  STAFF_SESSION_SECRET?: string
+  NO_SHOW_TIMEOUT_SECONDS?: string
 }
 
+const TWO_YEARS = Duration.days(365 * 2)
+
 /**
- * Phase 0 stub. The queue-pivot (ADR-0050) scrapped the slot-graph
- * domain and its Worker entry routes. Phase 2 reintroduces the
- * QueueShop Durable Object (single-writer actor for the FIFO queue),
- * Phase 3 the GraphQL surface (5 mutations / 2 queries / 1 SSE
- * subscription), Phase 4 the staff session auth flow.
+ * Worker entry for the queue pivot. Routes:
+ *   - GET  /healthz                readiness probe
+ *   - GET  /api/v1/openapi.json    OpenAPI 3.1 spec
+ *   - *    /graphql                queue GraphQL surface (Phase 3)
  *
- * In the meantime the Worker exposes only:
- *   - `GET /healthz`               readiness probe
- *   - `GET /api/v1/openapi.json`   the OpenAPI 3.1 emission for `/healthz`
- *   - default JSON                 deployment metadata
+ * The QueueShop DurableObject (single instance, idFromName("shop"))
+ * is exported so wrangler can construct it. The scheduled handler
+ * runs the daily PII-purge over the D1 mirror (ADR-0009).
  */
 const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -55,8 +54,7 @@ const handler = {
       {
         deployment: env.DEPLOYMENT_NAME,
         timezone: env.DEPLOYMENT_TIMEZONE,
-        message:
-          "queue pivot in progress — Phase 2 reintroduces the QueueShop DO + GraphQL surface",
+        message: "queue pivot Phase 2 — Phase 3 reintroduces the GraphQL surface",
       },
       null,
       2,
@@ -65,6 +63,26 @@ const handler = {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     })
+  },
+
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
+    const auditLayer = makeD1AuditLogger(env.DB).pipe(Layer.provide(WorkersLoggerLive))
+    const layer = Layer.mergeAll(
+      makeD1PiiPurger(env.DB),
+      auditLayer,
+      SystemClockLive,
+      WorkersLoggerLive,
+      makeRuntimeModeLayer(env),
+    )
+    const purge = Effect.gen(function* () {
+      const purger = yield* PiiPurger
+      yield* purger.purgeOlderThan(TWO_YEARS)
+    })
+    await Effect.runPromise(purge.pipe(Effect.provide(layer)))
   },
 } satisfies ExportedHandler<Env>
 
