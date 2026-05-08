@@ -65,10 +65,16 @@
    * Run an action against the worker. Guarantees `busy` is released
    * even on fetch reject; surfaces the error tag/code in `error` so
    * stalls are debuggable from the UI alone.
+   *
+   * Generic-free signature on purpose: Svelte's TS preprocessor was
+   * treating `<A>` as JSX-like and silently dropping the argument
+   * list, surfacing as `ReferenceError: label is not defined` at
+   * runtime. `ApiResult<unknown>` is sufficient — runAction never
+   * touches the success `value`, only `ok` / `error`.
    */
-  const runAction = async <A>(
+  const runAction = async (
     label: string,
-    fn: () => Promise<ApiResult<A>>,
+    fn: () => Promise<ApiResult<unknown>>,
   ): Promise<void> => {
     busy = true
     error = null
