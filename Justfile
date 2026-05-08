@@ -43,22 +43,11 @@ install:
 paraglide:
     {{DEV}} bash -c "cd apps/web && {{PNPM}} run paraglide"
 
-# Print the apps/default Pothos GraphQL schema to SDL
-# (`apps/default/schema.graphql`) — the source of truth gql.tada
-# walks against to type the apps/web query catalogue.
-print-schema:
-    {{DEV}} bash -c "cd apps/default && {{PNPM}} run print-schema"
-
-# Regenerate apps/web's gql.tada introspection from the freshly
-# printed SDL. Chains print-schema (server-side schema export) and
-# graphql-env (client-side type emission).
-graphql-env: print-schema
-    {{DEV}} bash -c "cd apps/web && {{PNPM}} run graphql-env"
-
-# Aggregate codegen for apps/web — paraglide messages plus the
-# gql.tada schema introspection. Bootstrap and CI invoke this so
-# typecheck has every generated artefact in place.
-codegen: paraglide graphql-env
+# Phase 0 of the queue pivot scrapped the GraphQL schema; Phase 3
+# reintroduces `print-schema` + `graphql-env` once the queue surface
+# (5 mutations / 2 queries / 1 subscription) is in place. `codegen`
+# stays paraglide-only until then so bootstrap / typecheck still run.
+codegen: paraglide
 
 hooks:
     {{DEV}} lefthook install
@@ -216,22 +205,11 @@ dev-default:
 migrate-local:
     {{DEV}} {{PNPM}} -F default exec wrangler d1 migrations apply DB --local
 
-# Smoke-check `availableSlots` against a running `just dev-default`.
-# Preconditions (documented in the script): migrations applied + seed
-# loaded + wrangler dev up on :8787. Override host with
-# `SMOKE_GRAPHQL_ENDPOINT=http://...`. The recipe runs on the host
-# (not in the dev container) so it can reach the dev process.
-smoke-available-slots:
-    bash apps/default/scripts/smoke-available-slots.sh
-
-# End-to-end smoke for the customer flow:
-# `availableSlots` → `holdSlot`. Same preconditions as above.
-# The Miniflare integration suite (`just test-integration`) is the
-# in-process counterpart; this recipe is the host-level signal that
-# every layer (resolver, token verify, DO RPC, SQL, outbox, audit)
-# is wired up against `wrangler dev --local`.
-smoke-booking-flow:
-    bash apps/default/scripts/smoke-booking-flow.sh
+# Smoke recipes (`smoke-available-slots`, `smoke-booking-flow`,
+# `smoke-all`) and `trigger-scheduled` lived against the slot-graph
+# domain. Phase 2/3 of the queue pivot will reintroduce a single
+# `smoke-queue-flow` recipe (issue → callNext → markServed) once the
+# QueueShop DO + GraphQL surface are in place.
 
 # Apply the catalog seed to the local D1. Idempotent — re-running
 # refreshes the rows. Generates the SQL document on the fly via
@@ -263,15 +241,6 @@ dev-up:
 dev-down:
     docker compose --profile observability down
 
-# Manually trigger the `scheduled()` handler on a running
-# `dev-default` / `dev-up`. Wrangler dev exposes the cron entrypoint
-# at `/__scheduled` when `compatibility_date` is recent enough; the
-# call wakes `PurgeStalePii()` so the operator can verify the path
-# without waiting for a real cron firing.
-trigger-scheduled:
-    curl -fsS -X POST http://localhost:8787/__scheduled -H "content-type: application/json" -d '{}' || \
-      echo "trigger-scheduled: ensure 'just dev-up' (or 'just dev-default') is running"
-
 # Run an arbitrary SQL statement against the local D1 fixture.
 # Usage: `just d1-shell SQL='SELECT count(*) FROM services'`
 d1-shell SQL:
@@ -283,29 +252,6 @@ d1-shell SQL:
 # so `just log-tail` is what an operator follows during a smoke run.
 log-tail:
     docker compose logs -f --no-log-prefix dev 2>/dev/null | jq -Rc 'fromjson? | select(.code != null)'
-
-# Apply migrations + seed + run both smoke scripts in sequence. Stops
-# at the first failure (set -e); each step prints its own status so
-# the failure mode is immediately visible. Pre-condition: a running
-# `just dev-up` (or `just dev-default`).
-smoke-all:
-    just migrate-local
-    just seed
-    just smoke-available-slots
-    just smoke-booking-flow
-
-# Drift gate for `apps/default/schema.graphql`. Re-renders the SDL
-# via `pnpm print-schema` and fails if the working tree disagrees
-# with the regenerated output (Phase 3 PR#8 / ADR-0036 / ADR-0041).
-schema-drift-check:
-    bash apps/default/scripts/schema-drift-check.sh
-
-# Run the Miniflare-backed integration test suite (Phase 3 PR#8).
-# Out-of-process worker + DO + D1 fixtures so holdSlot /
-# confirmBooking / cancelBooking / rescheduleBooking exercise the
-# full lifecycle that smoke-booking-flow only sketches.
-test-integration:
-    {{DEV}} bash -c "cd apps/default && corepack pnpm run test:integration"
 
 # Regenerate `docs/error-codes.md` from `errorClassRegistry`. Drift
 # gate runs as part of `just check`; editing this file by hand fails.
@@ -321,7 +267,7 @@ gen-error-docs:
 # binary is mise-managed and faster to invoke directly), plus the
 # core library size-limit gate. Skip mutation testing (heavy) and
 # bench (informational).
-check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage size-limit-core schema-drift-check error-docs-drift-check
+check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
 
 # Drift gate for `docs/error-codes.md`. Re-runs `gen-error-docs`
 # and fails if the working tree disagrees — adding a new error

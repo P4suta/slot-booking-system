@@ -58,12 +58,11 @@ pre-push:
     - rebase
   commands:
     codegen:
-      # Compile generated code (paraglide messages + gql.tada
-      # introspection) so typecheck sees every generated artefact.
-      # Both targets are git-ignored, so a fresh checkout has no copy.
-      run: |
-        docker compose run --rm dev bash -c "cd apps/default && corepack pnpm run print-schema"
-        docker compose run --rm dev bash -c "cd apps/web && corepack pnpm run codegen"
+      # Phase 0 of the queue pivot scrapped the GraphQL surface; the
+      # gql.tada-driven `apps/web` codegen will return in Phase 3
+      # alongside the new schema. For now compile only paraglide so
+      # typecheck still sees the generated message catalogues.
+      run: docker compose run --rm dev bash -c "cd apps/web && corepack pnpm run paraglide"
     typecheck:
       run: docker compose run --rm dev ./node_modules/.bin/tsc -b --pretty
     biome-full:
@@ -78,8 +77,6 @@ pre-push:
       run: docker compose run --rm dev bash -c "cd apps/default && ./node_modules/.bin/vitest run"
     test-web:
       run: docker compose run --rm dev bash -c "cd apps/web && ./node_modules/.bin/vitest run"
-    schema-drift:
-      run: bash apps/default/scripts/schema-drift-check.sh
     pii-guard-full:
       run: |
         docker compose run --rm dev bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'
