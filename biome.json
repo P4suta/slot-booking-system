@@ -20,6 +20,8 @@
       "!**/build",
       "!**/.svelte-kit",
       "!**/.wrangler",
+      "!**/.pnpm-home",
+      "!**/.pnpm-store",
       "!**/coverage",
       "!**/migrations/*.sql",
       "!**/*.svelte",

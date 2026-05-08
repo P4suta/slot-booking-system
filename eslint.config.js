@@ -22,6 +22,8 @@ export default tseslint.config(
       "**/.svelte-kit/**",
       "**/build/**",
       "**/.template/**",
+      "**/.pnpm-home/**",
+      "**/.pnpm-store/**",
       ".stryker-tmp/**",
       "packages/core/.stryker-tmp/**",
       "packages/core/reports/**",

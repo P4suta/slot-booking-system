@@ -19,6 +19,7 @@ Thumbs.db
 # Node / pnpm
 node_modules/
 .pnpm-store/
+.pnpm-home/
 pnpm-debug.log*
 
 # Build output
