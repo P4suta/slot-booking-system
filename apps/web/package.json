@@ -13,18 +13,28 @@
     "check": "pnpm run codegen && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "pnpm run codegen && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "vitest run",
-    "test:coverage": "vitest run"
+    "test:coverage": "vitest run",
+    "size-limit": "size-limit"
   },
+  "size-limit": [
+    {
+      "name": "web client (entry chunk, gzip)",
+      "path": ".svelte-kit/output/client/_app/immutable/entry/*.js",
+      "limit": "250 KB"
+    }
+  ],
   "dependencies": {
     "@booking/core": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
     "@inlang/paraglide-js": "latest",
+    "@size-limit/file": "latest",
     "@sveltejs/adapter-cloudflare": "latest",
     "@sveltejs/kit": "latest",
     "@sveltejs/vite-plugin-svelte": "latest",
     "@types/node": "latest",
+    "size-limit": "latest",
     "svelte": "latest",
     "svelte-check": "latest",
     "typescript": "latest",

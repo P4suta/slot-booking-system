@@ -133,6 +133,38 @@ size-limit-core:
     {{DEV}} {{PNPM}} -F @booking/core run build
     {{DEV}} {{PNPM}} -F @booking/core run size-limit
 
+# size-limit gate for the worker bundle. Wrangler `--dry-run` builds
+# `apps/default/dist/index.js`; the cap is the conservative
+# Cloudflare Workers free-tier limit (1 MB). Threshold lives in
+# `apps/default/package.json#size-limit`.
+size-limit-default:
+    {{DEV}} {{PNPM}} -F default run build
+    {{DEV}} {{PNPM}} -F default run size-limit
+
+# size-limit gate for the SvelteKit bundle. Vite emits the entry
+# chunks under `.svelte-kit/output/client/_app/immutable/entry/`;
+# the cap is 250 KB gzip per chunk. Threshold lives in
+# `apps/web/package.json#size-limit`.
+size-limit-web:
+    {{DEV}} {{PNPM}} -F web run build
+    {{DEV}} {{PNPM}} -F web run size-limit
+
+# Aggregate size-limit recipe — fail-fast across all three.
+size-limit: size-limit-core size-limit-default size-limit-web
+
+# Refresh the size-limit baselines after a deliberate budget change.
+# Echoes the current sizes so the operator copies the new limit into
+# the per-package `size-limit` array; the recipe itself does not edit
+# package.json (a budget change is a code-review event, not a build
+# step).
+size-limit-refresh:
+    {{DEV}} {{PNPM}} -F @booking/core run build
+    {{DEV}} {{PNPM}} -F default run build
+    {{DEV}} {{PNPM}} -F web run build
+    {{DEV}} {{PNPM}} -F @booking/core run size-limit
+    {{DEV}} {{PNPM}} -F default run size-limit
+    {{DEV}} {{PNPM}} -F web run size-limit
+
 # Comment-bans: reject historical narrative tokens (queue-pivot
 # milestone names, scrapped framework names) outside the ADR archive
 # / CHANGELOG. Source describes the present; git log + ADRs own the
