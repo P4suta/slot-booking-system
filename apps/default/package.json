@@ -40,6 +40,7 @@
     "@vitest/coverage-v8": "latest",
     "cloudflare": "latest",
     "drizzle-kit": "rc",
+    "fast-check": "latest",
     "size-limit": "latest",
     "tsx": "latest",
     "vitest": "latest",

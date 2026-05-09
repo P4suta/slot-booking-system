@@ -55,13 +55,27 @@ heartbeat_pid=$!
 trap 'kill "$heartbeat_pid" 2>/dev/null || true' EXIT
 
 status=0
-# Call vitest directly so the `--test-timeout` flag isn't shadowed
-# by pnpm's arg-passing quirks (pnpm 10 places `-- args` AFTER the
-# script's positional args, which vitest then reads as file
-# patterns).
+
+# Stage 1 — core property tests (in-process domain + Effect).
+# These iterate fast (~1 ms / iteration) so 100k+ runs in seconds.
+echo "[fuzz] stage 1 / 2 — core property tests (packages/core)"
 bash scripts/dev-exec.sh env "FC_NUM_RUNS=$NUM_RUNS" \
   corepack pnpm -F @booking/core exec vitest run --reporter=verbose \
   --test-timeout="$TEST_TIMEOUT_MS" test/property || status=$?
+
+# Stage 2 — integration property tests through the full HTTP +
+# DurableObject + D1 stack. Each iteration is heavier (~10-50 ms
+# Miniflare round-trip), so the per-test fuzz cap inside
+# `numRunsIntegration` keeps the budget realistic regardless of
+# `FC_NUM_RUNS`. The vitest-pool-workers 0.16 runner-exit hang
+# is absorbed by the integration-side test deadline as usual.
+if [ "$status" -eq 0 ]; then
+  echo "[fuzz] stage 2 / 2 — integration property tests (apps/default workers project)"
+  bash scripts/dev-exec.sh env "FC_NUM_RUNS=$NUM_RUNS" "TEST_DEADLINE=120" \
+    bash scripts/test-runner.sh default --test-timeout="$TEST_TIMEOUT_MS" \
+    test/integration/property || status=$?
+fi
+
 elapsed=$(( $(date +%s) - started ))
 
 kill "$heartbeat_pid" 2>/dev/null || true

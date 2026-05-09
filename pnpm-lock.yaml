@@ -81,6 +81,9 @@ importers:
       drizzle-kit:
         specifier: rc
         version: 1.0.0-rc.2
+      fast-check:
+        specifier: latest
+        version: 4.7.0
       size-limit:
         specifier: latest
         version: 12.1.0(jiti@2.7.0)
