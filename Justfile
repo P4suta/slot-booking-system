@@ -435,6 +435,16 @@ error-docs-drift-check:
 smoke-queue:
     bash apps/default/scripts/smoke-queue-flow.sh
 
+# WebSocket smoke for the QueueShop projection feed. Requires
+# `websocat` (mise-installable). Drives WS open → REST Issue →
+# broadcast receive → WS close. See ADR-0061 for the protocol.
+smoke-queue-ws:
+    bash apps/default/scripts/smoke-queue-ws.sh
+
+# Aggregator: every smoke recipe in registration order. Matches
+# `just check` for normative gates but for the live-server side.
+smoke: smoke-queue smoke-queue-ws
+
 # Full CI gate: check + build (and the apps/default dev smoke happens
 # externally on demand via `just dev-default`).
 ci: check build
