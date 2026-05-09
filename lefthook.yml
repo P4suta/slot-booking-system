@@ -63,11 +63,13 @@ pre-push:
     arch:
       run: bash scripts/dev-exec.sh ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
     test:
-      run: bash scripts/dev-exec.sh bash scripts/test-runner.sh @booking/core
+      run: bash scripts/dev-exec.sh corepack pnpm exec tsx scripts/test/runner.ts @booking/core
     test-default:
-      run: bash scripts/dev-exec.sh env TEST_DEADLINE=20 bash scripts/test-runner.sh default
+      run: bash scripts/dev-exec.sh env TEST_DEADLINE=20 corepack pnpm exec tsx scripts/test/runner.ts default
     test-web:
-      run: bash scripts/dev-exec.sh bash scripts/test-runner.sh web
+      run: bash scripts/dev-exec.sh corepack pnpm exec tsx scripts/test/runner.ts web
+    test-scripts:
+      run: bash scripts/dev-exec.sh corepack pnpm exec tsx scripts/test/runner.ts @booking/scripts
     comment-bans-full:
       run: bash scripts/dev-exec.sh bash scripts/lint/comment-bans.sh
     strict-code:
