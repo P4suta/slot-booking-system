@@ -44,7 +44,7 @@ jobs:
       # actually changed. The cache key includes the mutate-scope
       # hash so a `stryker.config.json` edit invalidates correctly.
       - name: Restore Stryker incremental cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: packages/core/.stryker-tmp
           key: stryker-${{ runner.os }}-${{ hashFiles('packages/core/src/**', 'packages/core/stryker.config.json') }}

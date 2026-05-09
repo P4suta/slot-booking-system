@@ -77,16 +77,7 @@ jobs:
             slot-booking-system-ci:latest \
             corepack pnpm --filter @booking/core run build
 
-      - name: Print GraphQL SDL
-        run: |
-          docker run --rm \
-            -v "$PWD:/workspace" \
-            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-            -w /workspace/apps/default \
-            slot-booking-system-ci:latest \
-            corepack pnpm run print-schema
-
-      - name: Compile codegen (paraglide + gql.tada + svelte-kit sync)
+      - name: Compile codegen (paraglide + svelte-kit sync)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
@@ -168,6 +159,3 @@ jobs:
             -w /workspace \
             slot-booking-system-ci:latest \
             corepack pnpm -r run test:coverage
-
-      - name: Schema-drift gate (apps/default/schema.graphql)
-        run: bash apps/default/scripts/schema-drift-check.sh

@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version: lts/*
@@ -49,10 +49,11 @@ jobs:
         run: pnpm install --recursive --frozen-lockfile
       # OSV-Scanner walks the lockfile + the project source for known
       # vulnerable versions across npm + transitive deps. The
-      # action's default ruleset covers the npm ecosystem; we keep
-      # the default to avoid drift between local CLI runs and CI.
+      # action lives at the repository root (`google/osv-scanner-action@…`,
+      # not the deprecated `/osv-scanner-action` sub-path); the
+      # default ruleset covers the npm ecosystem.
       - name: Run OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@v2
+        uses: google/osv-scanner-action@v2.3.5
         with:
           scan-args: |-
             --recursive
@@ -75,22 +76,26 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version: lts/*
           cache: pnpm
       - run: pnpm install --recursive --frozen-lockfile
-      # @cyclonedx/cyclonedx-npm builds a CycloneDX 1.5 JSON SBOM
-      # of the workspace's resolved dependency tree. The artifact is
-      # the input to the SLSA build-provenance attestation below
-      # (NIST SSDF v1.1 PS.3).
+      # `cdxgen` is the CycloneDX-OWASP multi-ecosystem SBOM
+      # generator; unlike `@cyclonedx/cyclonedx-npm` (which calls
+      # `npm ls` internally and chokes on pnpm's symlinked
+      # workspace store), cdxgen reads `pnpm-lock.yaml` natively.
+      # Output is a CycloneDX 1.5 JSON document, the same shape the
+      # SLSA attestor below consumes (NIST SSDF v1.1 PS.3).
       - name: Generate CycloneDX SBOM
         run: |-
-          npx --yes @cyclonedx/cyclonedx-npm@latest \
-            --output-file bom.cdx.json \
-            --output-format JSON
-      - uses: actions/upload-artifact@v4
+          npx --yes @cyclonedx/cdxgen@latest \
+            --type pnpm \
+            --output bom.cdx.json \
+            --no-recurse \
+            --spec-version 1.5
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom-cyclonedx
           path: bom.cdx.json
@@ -100,7 +105,7 @@ jobs:
       # verify the supply-chain trace through `gh attestation
       # verify`.
       - name: Attest build provenance for SBOM
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: bom.cdx.json
 
@@ -143,7 +148,7 @@ jobs:
       # transitive dependency CVEs that surface through OS-level
       # package metadata. SARIF upload feeds the Code Scanning tab
       # alongside Semgrep + CodeQL.
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .

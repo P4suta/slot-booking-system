@@ -5,11 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    # Weekly mainstream-language scan; Dependabot stays the
-    # primary supply-chain gate (see ADR-0016 / repo Dependabot
-    # config).
-    - cron: "0 6 * * 1"
+  # Schedule trigger intentionally omitted: ~/.claude/CLAUDE.md §5
+  # forbids `on.schedule` (Dependabot weekly is the only exception).
+  # Push + PR cover the regression-detection envelope alongside
+  # Dependabot's weekly supply-chain pass.
 
 permissions:
   contents: read
