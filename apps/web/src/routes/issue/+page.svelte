@@ -32,12 +32,22 @@
         error = `issue: ${result.error._tag} (${result.error.code})`
         return
       }
-      const ticketId = result.value.ticket.id
+      // Persist the **server-canonical** handle (NFKC + whitespace
+      // collapse + trim already applied by NameKanaSchema) so the
+      // /ticket route's myTicket query carries a value that
+      // round-trips through the same boundary schema. Storing the
+      // raw form here would re-introduce the asymmetric-mismatch
+      // class of bugs (issue normalised, my-ticket compared raw).
+      const ticket = result.value.ticket
       sessionStorage.setItem(
         "queue.ticket",
-        JSON.stringify({ ticketId, nameKana, phoneLast4 }),
+        JSON.stringify({
+          ticketId: ticket.id,
+          nameKana: ticket.nameKana,
+          phoneLast4: ticket.phoneLast4,
+        }),
       )
-      await goto(`/ticket#id=${ticketId}`)
+      await goto(`/ticket#id=${ticket.id}`)
     } catch (e) {
       error = `issue: ${e instanceof Error ? e.message : String(e)}`
     } finally {
