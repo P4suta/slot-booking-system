@@ -238,10 +238,14 @@ export class QueueShop extends DurableObject<Env> {
   private async sendProjectionTo(ws: WebSocket): Promise<void> {
     try {
       ws.send(await this.projectionPayload())
-    } catch {
+    } catch (err) {
       // The socket may have been closed between accept + send; the
       // runtime evicts it from `ctx.getWebSockets()` on the next
-      // tick, so swallowing here is safe.
+      // tick. The send failure is therefore expected during normal
+      // disconnect, but the operator dashboard still wants the
+      // signal so a regression that drops every on-connect frame is
+      // attributable.
+      logWsError(`on-connect send failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 

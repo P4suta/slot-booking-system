@@ -21,7 +21,7 @@
   onMount(async () => {
     try {
       const initial = await shopState()
-      if (initial.ok) refresh(initial.value as unknown as ShopState)
+      if (initial.ok) refresh(initial.value)
     } catch {
       // initial fetch failure is non-fatal — the WS feed catches up
     }

@@ -3,9 +3,11 @@
   import {
     type ApiResult,
     callNext,
+    connectQueueFeed,
     markNoShow,
     markServed,
-    queueWebSocket,
+    type QueueFeedHandle,
+    type QueueFeedState,
     recall,
     staffCancel,
     staffShopState,
@@ -21,7 +23,8 @@
   let preview: ReadonlyArray<Ticket> = $state([])
   let busy = $state(false)
   let error: string | null = $state(null)
-  let socket: WebSocket | undefined
+  let feedState: QueueFeedState = $state("connecting")
+  let feed: QueueFeedHandle | undefined
   // 直前の待ち人数。 WebSocket refresh で増分を検出して、 タブが背面
   // にある間だけ Notification を発火する。 null = 初回 refresh 前
   // (= ページロード直後の「5件溜まってます」では鳴らさない)。
@@ -46,19 +49,14 @@
         if (r.error._tag === "MissingStaffCapability") onLogout()
         return
       }
-      const data = r.value as unknown as {
-        waitingCount: number
-        serving: Ticket | null
-        waitingPreview: ReadonlyArray<Ticket>
-      }
-      const nextCount = data.waitingCount
+      const nextCount = r.value.waitingCount
       if (prevWaitingCount !== null && nextCount > prevWaitingCount) {
         notifyArrival(nextCount - prevWaitingCount)
       }
       prevWaitingCount = nextCount
       waitingCount = nextCount
-      serving = data.serving
-      preview = data.waitingPreview
+      serving = r.value.serving
+      preview = r.value.waitingPreview
     } catch (e) {
       error = `refresh: ${String(e)}`
     }
@@ -99,23 +97,18 @@
 
   const startLiveFeed = async (): Promise<void> => {
     await refresh()
-    if (socket === undefined) {
-      socket = queueWebSocket()
-      socket.onmessage = () => {
-        // 直後に event = backend 健在、 過去の reconnect banner を解除
-        if (error?.startsWith("live feed:") === true) error = null
-        // The staff dashboard wants the PII-bearing projection, so we
-        // re-fetch via REST after every WS push instead of trusting
-        // the anonymous projection the WS carries.
-        void refresh()
-      }
-      socket.onclose = (ev) => {
-        // 1000 = client-initiated normal close (logout). Anything
-        // else is a network drop and warrants the reconnect banner.
-        if (ev.code !== 1000) {
-          error = "live feed: closed (再読み込みで再接続)"
-        }
-      }
+    if (feed === undefined) {
+      feed = connectQueueFeed({
+        onProjection: () => {
+          // The staff dashboard wants the PII-bearing projection, so we
+          // re-fetch via REST after every WS push instead of trusting
+          // the anonymous projection the WS carries.
+          void refresh()
+        },
+        onState: (next) => {
+          feedState = next
+        },
+      })
     }
   }
 
@@ -175,8 +168,8 @@
     localStorage.removeItem("queue.staffToken")
     token = ""
     authenticated = false
-    socket?.close(1000, "logout")
-    socket = undefined
+    feed?.close()
+    feed = undefined
     waitingCount = 0
     serving = null
     preview = []
@@ -231,7 +224,7 @@
     }
   })
 
-  onDestroy(() => socket?.close(1000, "navigation"))
+  onDestroy(() => feed?.close())
 </script>
 
 <section>
@@ -287,6 +280,9 @@
     </div>
     {#if error !== null}
       <p class="error">エラー: {error}</p>
+    {/if}
+    {#if feedState === "reconnecting"}
+      <p class="banner">再接続中…</p>
     {/if}
     <h2>待ち行列</h2>
     {#if preview.length === 0}
@@ -430,6 +426,14 @@
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 0.85rem;
     word-break: break-word;
+  }
+  .banner {
+    background: #fff4d6;
+    border: 1px solid #f0c040;
+    color: #8a5a00;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
   }
   h2 {
     margin: 1.5rem 0 0.75rem;

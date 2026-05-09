@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte"
-  import { cancelTicket, myTicket, queueWebSocket, shopState, type Ticket } from "$lib/api.js"
+  import {
+    cancelTicket,
+    connectQueueFeed,
+    myTicket,
+    type QueueFeedHandle,
+    type QueueFeedState,
+    shopState,
+    type Ticket,
+  } from "$lib/api.js"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
 
@@ -18,7 +26,8 @@
   let position: number | null = $state(null)
   let error: string | null = $state(null)
   let cancelBusy = $state(false)
-  let socket: WebSocket | undefined
+  let feedState: QueueFeedState = $state("connecting")
+  let feed: QueueFeedHandle | undefined
 
   const readStored = (): Stored | null => {
     if (typeof window === "undefined") return null
@@ -52,17 +61,13 @@
         error = `myTicket: ${r.error._tag} (${r.error.code})`
         return
       }
-      ticket = (r.value as unknown as { ticket: Ticket }).ticket
+      ticket = r.value.ticket
       error = null
       const s = await shopState()
       if (s.ok) {
-        const data = s.value as unknown as {
-          waitingCount: number
-          waitingPreview: { id: string; seq: number }[]
-        }
-        waitingCount = data.waitingCount
-        if (ticket?.state === "Waiting") {
-          const idx = data.waitingPreview.findIndex((t) => t.id === ticket?.id)
+        waitingCount = s.value.waitingCount
+        if (ticket.state === "Waiting") {
+          const idx = s.value.waitingPreview.findIndex((t) => t.id === ticket?.id)
           position = idx >= 0 ? idx : null
         } else {
           position = null
@@ -95,7 +100,7 @@
         error = `cancel: ${r.error._tag} (${r.error.code})`
         return
       }
-      ticket = (r.value as unknown as { ticket: Ticket }).ticket
+      ticket = r.value.ticket
     } catch (e) {
       error = `cancel: ${e instanceof Error ? e.message : String(e)}`
     } finally {
@@ -106,23 +111,17 @@
   onMount(async () => {
     stored = readStored()
     if (stored !== null) await refresh(stored)
-    socket = queueWebSocket()
-    socket.onmessage = () => {
-      // 直後に成功 event = backend 健在、 reconnect banner を解除
-      if (error?.startsWith("live feed:") === true) error = null
-      if (stored !== null) void refresh(stored)
-    }
-    socket.onclose = (ev) => {
-      // 1000 = client-initiated normal close (page navigation away).
-      // Anything else is a network drop → surface the reconnect
-      // banner; the user reloads to re-establish.
-      if (ev.code !== 1000) {
-        error = "live feed: closed (再読み込みで再接続)"
-      }
-    }
+    feed = connectQueueFeed({
+      onProjection: () => {
+        if (stored !== null) void refresh(stored)
+      },
+      onState: (next) => {
+        feedState = next
+      },
+    })
   })
 
-  onDestroy(() => socket?.close(1000, "navigation"))
+  onDestroy(() => feed?.close())
 </script>
 
 <section>
@@ -163,6 +162,9 @@
     {/if}
     {#if error !== null}
       <p class="error">エラー: {error}</p>
+    {/if}
+    {#if feedState === "reconnecting"}
+      <p class="banner">再接続中…</p>
     {/if}
   {:else if error !== null}
     <p class="error">エラー: {error}</p>
@@ -259,6 +261,14 @@
     color: #c11;
     background: #fff1f0;
     padding: 0.75rem;
+    border-radius: 8px;
+    margin: 1rem 0 0;
+  }
+  .banner {
+    background: #fff4d6;
+    border: 1px solid #f0c040;
+    color: #8a5a00;
+    padding: 0.75rem 1rem;
     border-radius: 8px;
     margin: 1rem 0 0;
   }

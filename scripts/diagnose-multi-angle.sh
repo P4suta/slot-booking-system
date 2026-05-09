@@ -72,12 +72,13 @@ for t in "${all_tags[@]}"; do
 done
 
 # ---- silent-failure residual ------------------------------------
-silent_lines=$(rg --pcre2 -n -t ts \
+silent_lines=$(rg -U --pcre2 -n -t ts \
   -e '\.catch\(\(\)\s*=>\s*null\)' \
-  -e '^\s*console\.error\((?!\s*JSON\.stringify)' \
+  -e 'console\.error\((?![^)]*JSON\.stringify)' \
   apps packages 2>/dev/null \
   | grep -v 'node_modules' \
   | grep -v 'silentJsonParse.integration.test.ts' \
+  | grep -v 'WorkersLoggerLive.ts' \
   || true)
 silent_count=$(printf '%s\n' "$silent_lines" | grep -c . || true)
 

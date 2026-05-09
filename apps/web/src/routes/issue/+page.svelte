@@ -32,7 +32,7 @@
         error = `issue: ${result.error._tag} (${result.error.code})`
         return
       }
-      const ticketId = (result.value as unknown as { ticket: { id: string } }).ticket.id
+      const ticketId = result.value.ticket.id
       sessionStorage.setItem(
         "queue.ticket",
         JSON.stringify({ ticketId, nameKana, phoneLast4 }),

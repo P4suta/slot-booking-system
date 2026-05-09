@@ -173,15 +173,6 @@ const wsUrl = (): string => {
     : http.replace(/^http/, "ws")
 }
 
-/**
- * Connect to the DO Hibernating WebSocket projection feed (legacy
- * surface kept for callers that own their own reconnect strategy).
- * The DO emits the anonymous projection on every successful
- * mutation; `onmessage.data` is JSON. The caller closes the socket
- * via `socket.close()`.
- */
-export const queueWebSocket = (): WebSocket => new WebSocket(`${wsUrl()}/api/v1/queue/feed`)
-
 export type QueueFeedState = "connecting" | "open" | "reconnecting" | "closed"
 
 export type QueueFeedHandle = {
