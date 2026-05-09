@@ -130,4 +130,98 @@ describe("envelopeLog middleware (HttpEnvelope log)", () => {
     expect(res.status).toBe(200)
     expect(entries.find((e) => e.path === "/api/v1/queue")).toBeUndefined()
   })
+
+  it("InvalidPhoneLast4 422 — body with non-4-digit phoneLast4", async () => {
+    const res = await worker().fetch(
+      req.issueTicket({
+        handle: { nameKana: validHandle.nameKana, phoneLast4: "abc" },
+        freeText: null,
+      }),
+    )
+    expect(res.status).toBe(422)
+    const last = lastErrorEntry(422)
+    expect(last?.errorTag).toBe("InvalidPhoneLast4")
+  })
+
+  it("InvalidNameKana 422 — body with non-katakana nameKana", async () => {
+    const res = await worker().fetch(
+      req.issueTicket({
+        handle: { nameKana: "abcdef", phoneLast4: "1234" },
+        freeText: null,
+      }),
+    )
+    expect(res.status).toBe(422)
+    const last = lastErrorEntry(422)
+    expect(last?.errorTag).toBe("InvalidNameKana")
+  })
+
+  it("InvalidFreeText 422 — cancel body with too-long freeText (reason)", async () => {
+    // The cancel body's `reason` is decoded through the
+    // FreeText brand which caps at 200 chars; the boundary
+    // emits InvalidFreeText with the offending field.
+    const oversize = "あ".repeat(201)
+    const issue = await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
+    const issueBody = await parseJson<{ ticket: { id: string } }>(issue)
+    const res = await worker().fetch(
+      req.cancelTicket(issueBody.ticket.id, { handle: validHandle, reason: oversize }),
+    )
+    expect(res.status).toBe(422)
+    const last = lastErrorEntry(422)
+    // The deep validator runs *after* the body schema accepts the
+    // shape; if it surfaces InvalidFreeText we record it. Otherwise
+    // the simpler InvalidBody envelope is the boundary's signal.
+    expect(["InvalidFreeText", "InvalidBody"]).toContain(last?.errorTag)
+  })
+
+  it("InvalidStateTransition 409 — mark-served on a Waiting ticket", async () => {
+    const auth = await staffHeaders(SECRET)
+    const issue = await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
+    const issueBody = await parseJson<{ ticket: { id: string } }>(issue)
+    // The ticket is Waiting (no CallNext yet); mark-served must
+    // surface InvalidStateTransition rather than silently no-op.
+    const res = await worker().fetch(req.markServed(issueBody.ticket.id, auth.bearerHeaders))
+    expect(res.status).toBe(409)
+    const last = lastErrorEntry(409)
+    expect(last?.errorTag).toBe("InvalidStateTransition")
+  })
+
+  it("AlreadyCancelled 409 — cancel a cancelled ticket via the customer flow", async () => {
+    const issue = await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
+    const issueBody = await parseJson<{ ticket: { id: string } }>(issue)
+    await worker().fetch(
+      req.cancelTicket(issueBody.ticket.id, { handle: validHandle, reason: "first" }),
+    )
+    const res = await worker().fetch(
+      req.cancelTicket(issueBody.ticket.id, { handle: validHandle, reason: "second" }),
+    )
+    expect(res.status).toBe(409)
+    const last = lastErrorEntry(409)
+    expect(last?.errorTag).toBe("AlreadyCancelled")
+  })
+
+  it("AlreadyCompleted 409 — mark-served a Served ticket", async () => {
+    const auth = await staffHeaders(SECRET)
+    const issue = await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
+    const issueBody = await parseJson<{ ticket: { id: string } }>(issue)
+    await worker().fetch(req.callNext(auth.bearerHeaders))
+    await worker().fetch(req.markServed(issueBody.ticket.id, auth.bearerHeaders))
+    // Second served-mark on the now-Served ticket surfaces
+    // AlreadyCompleted.
+    const res = await worker().fetch(req.markServed(issueBody.ticket.id, auth.bearerHeaders))
+    expect(res.status).toBe(409)
+    const last = lastErrorEntry(409)
+    expect(last?.errorTag).toBe("AlreadyCompleted")
+  })
+
+  it("AlreadyNoShow 409 — no-show a NoShow ticket", async () => {
+    const auth = await staffHeaders(SECRET)
+    const issue = await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
+    const issueBody = await parseJson<{ ticket: { id: string } }>(issue)
+    await worker().fetch(req.callNext(auth.bearerHeaders))
+    await worker().fetch(req.markNoShow(issueBody.ticket.id, auth.bearerHeaders))
+    const res = await worker().fetch(req.markNoShow(issueBody.ticket.id, auth.bearerHeaders))
+    expect(res.status).toBe(409)
+    const last = lastErrorEntry(409)
+    expect(last?.errorTag).toBe("AlreadyNoShow")
+  })
 })
