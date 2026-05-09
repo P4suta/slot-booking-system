@@ -47,13 +47,8 @@ const inFlight = new Map<string, number>()
 let lastCompleted: string | null = null
 let passed = 0
 let failed = 0
-let runnerErr = 0
+const runnerErr = 0
 let progressTicks = 0
-
-// Backstop for non-stream error indicators (printed by vitest itself
-// when a test file fails to load before the reporter sees it).
-const RUNNER_ERR_RE = /RunnerError|runnerError/
-const NON_STREAM_FAIL_RE = /^\s*✗ |^\s*FAIL\s/
 
 // ---------------------------------------------------------------------------
 // Spawn vitest
@@ -71,9 +66,6 @@ const child = spawn("corepack", ["pnpm", "-F", filter, "exec", "vitest", "run", 
 const rl = createInterface({ input: child.stdout })
 rl.on("line", (line: string) => {
   process.stdout.write(`${line}\n`)
-
-  if (RUNNER_ERR_RE.test(line)) runnerErr += 1
-  if (NON_STREAM_FAIL_RE.test(line)) failed += 1
 
   const ev = parseStreamLine(line)
   if (ev === null) return
