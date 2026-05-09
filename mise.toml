@@ -9,6 +9,7 @@
 #   - typos          : optional host-side typo check
 #   - actionlint     : optional host-side workflow lint
 #   - markdownlint   : optional host-side markdown lint
+#   - websocat       : drives `just smoke-queue-ws` (WS projection feed)
 #
 # Node / pnpm / wrangler / biome / vitest / tsc are deliberately NOT
 # listed here — they live inside the container.
@@ -20,3 +21,4 @@ lefthook                      = "latest"
 actionlint                    = "latest"
 "npm:markdownlint-cli2"      = "latest"
 "github:crate-ci/committed"  = "latest"
+"github:vi/websocat"         = { version = "latest", bin = "websocat" }
