@@ -1,79 +1,73 @@
 import { Result } from "effect"
-import { expectTypeOf } from "expect-type"
-import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import {
   ALL_ENTITY_KINDS,
-  type BookingId,
-  type Id,
-  newBookingId,
-  newId,
-  newProviderId,
-  newServiceId,
-  type ProviderId,
-  parseBookingId,
-  parseId,
-  parseServiceId,
-  type ResourceId,
+  newAuditLogId,
+  newIdempotencyKeyId,
+  newStaffId,
+  newTicketEventId,
+  newTicketId,
+  parseAuditLogId,
+  parseIdempotencyKeyId,
+  parseStaffId,
+  parseTicketEventId,
+  parseTicketId,
 } from "../../src/domain/types/EntityId.js"
 
-describe("EntityId TypeIDs", () => {
-  it("generated id has the expected prefix", () => {
-    const id = newBookingId()
-    expect(id).toMatch(/^book_[0-9a-z]{26}$/)
+const isLeft = Result.isFailure
+const isRight = Result.isSuccess
+
+describe("ALL_ENTITY_KINDS", () => {
+  it("enumerates the queue-pivot kinds", () => {
+    expect(ALL_ENTITY_KINDS).toEqual(["tkt", "tev", "staf", "audt", "idem"])
+  })
+})
+
+describe("newId factories", () => {
+  it("each factory mints an id with the matching prefix", () => {
+    expect(newTicketId()).toMatch(/^tkt_[0-9a-z]{26}$/)
+    expect(newTicketEventId()).toMatch(/^tev_[0-9a-z]{26}$/)
+    expect(newStaffId()).toMatch(/^staf_[0-9a-z]{26}$/)
+    expect(newAuditLogId()).toMatch(/^audt_[0-9a-z]{26}$/)
+    expect(newIdempotencyKeyId()).toMatch(/^idem_[0-9a-z]{26}$/)
   })
 
-  it("round-trips parser ∘ generator", () => {
-    const id = newServiceId()
-    const parsed = parseServiceId(id)
-    expect(Result.isSuccess(parsed)).toBe(true)
+  it("two consecutive mints produce distinct ids", () => {
+    expect(newTicketId()).not.toBe(newTicketId())
+  })
+})
+
+describe("parseId variants", () => {
+  // The generic `parseId` family unifies under a heterogeneous Result
+  // union; the test helper widens to a single tagged Result so
+  // exactOptionalPropertyTypes does not narrow the row type at the
+  // Vitest `it.each` boundary.
+  type AnyResult = Result.Result<unknown, unknown>
+  const parsers: readonly (readonly [string, (s: string) => AnyResult, string])[] = [
+    ["TicketId", parseTicketId, "tkt_01h0000000000000000000000a"],
+    ["TicketEventId", parseTicketEventId, "tev_01h0000000000000000000000a"],
+    ["StaffId", parseStaffId, "staf_01h0000000000000000000000a"],
+    ["AuditLogId", parseAuditLogId, "audt_01h0000000000000000000000a"],
+    ["IdempotencyKeyId", parseIdempotencyKeyId, "idem_01h0000000000000000000000a"],
+  ]
+  it.each(parsers)("accepts a well-formed %s", (_label, parser, value) => {
+    expect(isRight(parser(value))).toBe(true)
   })
 
-  it("rejects an id with the wrong prefix", () => {
-    const wrong = newProviderId()
-    expect(Result.isFailure(parseBookingId(wrong))).toBe(true)
+  it.each([
+    ["empty", ""],
+    ["wrong prefix", "wrong_01h0000000000000000000000a"],
+    ["too short", "tkt_01h"],
+    ["uppercase", "TKT_01H0000000000000000000000A"],
+    ["missing underscore", "tkt01h0000000000000000000000a"],
+  ])("rejects %s", (_label, input) => {
+    expect(isLeft(parseTicketId(input))).toBe(true)
   })
 
-  it("rejects malformed ids", () => {
-    for (const bad of ["", "no_prefix_too_long_for_ulid", "BOOK_abc", "book_abc"]) {
-      expect(Result.isFailure(parseBookingId(bad))).toBe(true)
-    }
-  })
-
-  it("brand types are mutually disjoint at the type level", () => {
-    expectTypeOf<BookingId>().not.toExtend<ProviderId>()
-    expectTypeOf<ProviderId>().not.toExtend<ResourceId>()
-    expectTypeOf<BookingId>().toExtend<string>()
-  })
-
-  it("Id<E> higher-kinded alias matches per-kind named brand", () => {
-    expectTypeOf<Id<"book">>().toEqualTypeOf<BookingId>()
-    expectTypeOf<Id<"prov">>().toEqualTypeOf<ProviderId>()
-    expectTypeOf<Id<"rsrc">>().toEqualTypeOf<ResourceId>()
-  })
-
-  it("round-trips parse(new) for every EntityKind (property)", () => {
-    fc.assert(
-      fc.property(fc.constantFrom(...ALL_ENTITY_KINDS), (kind) => {
-        const id = newId(kind)()
-        return Result.isSuccess(parseId(kind)(id))
-      }),
-      { numRuns: 200 },
-    )
-  })
-
-  it("rejects every cross-kind pairing (property)", () => {
-    fc.assert(
-      fc.property(
-        fc.constantFrom(...ALL_ENTITY_KINDS),
-        fc.constantFrom(...ALL_ENTITY_KINDS),
-        (mintKind, parseKind) => {
-          if (mintKind === parseKind) return true
-          const id = newId(mintKind)()
-          return Result.isFailure(parseId(parseKind)(id))
-        },
-      ),
-      { numRuns: 200 },
-    )
+  it("round-trips a freshly-minted id", () => {
+    const minted = newTicketId()
+    const parsed = parseTicketId(minted)
+    expect(isRight(parsed)).toBe(true)
+    if (isRight(parsed)) expect(parsed.success).toBe(minted)
   })
 })

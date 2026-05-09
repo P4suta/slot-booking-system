@@ -1,16 +1,17 @@
+import { sql } from "drizzle-orm"
 import { sqliteTable, text } from "drizzle-orm/sqlite-core"
 
 /**
- * Operator-facing audit trail. Long-retention (5y per ADR-0009);
- * never carries PII — only structured `data` keyed by entity ids and
- * `traceId` so an investigator can correlate against the request log.
+ * Long-retention audit log (5y per ADR-0009). Carries one row per
+ * staff or customer command, accepted or rejected. PII-free by
+ * construction: only ids, capability subjects, action verbs and
+ * structured `data` (never `name_kana` / `phone_last4` / `free_text`).
  */
 export const auditLog = sqliteTable("audit_log", {
-  id: text("id").primaryKey(),
-  at: text("at").notNull(),
-  actor: text("actor", { enum: ["customer", "staff", "system"] }).notNull(),
+  id: text("id").primaryKey().notNull(),
+  actor: text("actor").notNull(),
   action: text("action").notNull(),
-  bookingId: text("booking_id"),
   traceId: text("trace_id"),
-  data: text("data", { mode: "json" }).$type<Readonly<Record<string, unknown>>>(),
+  data: text("data").notNull(),
+  recordedAt: text("recorded_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`),
 })

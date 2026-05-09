@@ -1,151 +1,141 @@
-import { Effect, HashMap, Layer, Option, Ref } from "effect"
-import { BookingEventSourcedRepository } from "../../application/ports/EventSourcedRepository.js"
-import type { Booking } from "../../domain/booking/Booking.js"
+import { Effect, Layer, Ref } from "effect"
+import {
+  type NonEmptyReadonlyArray,
+  TicketRepository,
+} from "../../application/ports/EventSourcedRepository.js"
 import { AggregateNotFoundError, ConcurrencyError } from "../../domain/errors/Errors.js"
-import type { BookingEvent } from "../../domain/events/BookingEvent.js"
-import type { BookingId } from "../../domain/types/EntityId.js"
-import type { BookingCode } from "../../domain/value-objects/BookingCode.js"
+import { applyEvent, type QueueSnapshot } from "../../domain/queue/projection.js"
+import type { Ticket } from "../../domain/queue/Ticket.js"
+import type { TicketEvent } from "../../domain/queue/TicketEvent.js"
+import type { TicketId } from "../../domain/types/EntityId.js"
+
+type Row = {
+  readonly state: Ticket
+  readonly revision: number
+}
 
 /**
- * Single-`Ref`-backed in-memory {@link BookingEventSourcedRepository}.
- * One `Ref<Store>` is the atomic boundary; every mutation funnels
- * through `Ref.update` (or `Ref.modify` when a return value is needed),
- * which guarantees no concurrent reader observes a half-applied write.
- *
- *   - `events`    `HashMap<BookingId, readonly BookingEvent[]>`
- *                 the source of truth (ADR-0024). Append-only;
- *                 revision = `events.length`.
- *   - `snapshots` `HashMap<BookingId, Booking>`
- *                 the read-side projection. Refreshed on every save
- *                 (snapshot interval = 1, ADR-0029 D1) so `load`
- *                 is O(1) — replay never folds the entire log.
- *   - `byCode`    `HashMap<BookingCode, BookingId>`
- *                 secondary index used by `findByKey`.
- *
- * Effect 4 removed STM; the unified `Ref<Store>` keeps the same
- * atomic-across-three-maps invariant by reducing the boundary to a
- * single immutable record. Optimistic concurrency on `save` is
- * resolved inside the Ref update closure: the closure inspects the
- * current revision and returns either the new store or signals a
- * `ConcurrencyError` via the modify channel.
+ * In-memory adapter for the queue's `TicketRepository`. Backed by a
+ * single `Ref<Map<TicketId, Row>>` plus a monotonic seq counter and
+ * an append-only event log; used by domain unit tests. The
+ * Cloudflare-DurableObject adapter writes the same contract on top
+ * of `ctx.storage.sql`.
  */
+/**
+ * Default snapshot cadence — matches the DO adapter so the in-memory
+ * mirror exercises the same load-replay path under test. Lifted to a
+ * factory parameter so tests can pin a smaller K to drive the
+ * snapshot boundary inside a realistic ticket lifecycle.
+ */
+export const DEFAULT_SNAPSHOT_INTERVAL = 200
 
-type Store = {
-  readonly events: HashMap.HashMap<BookingId, readonly BookingEvent[]>
-  readonly snapshots: HashMap.HashMap<BookingId, Booking>
-  readonly byCode: HashMap.HashMap<BookingCode, BookingId>
-}
+/**
+ * Layer factory parametrised by the snapshot interval. Production
+ * uses {@link InMemoryTicketRepositoryLive} (K=200); tests that need
+ * to assert the snapshot path is exercised pass a small K (e.g. 2)
+ * so a 3-event Issue / Call / Served lifecycle reaches a snapshot
+ * boundary.
+ */
+export const makeInMemoryTicketRepositoryLive = (
+  snapshotInterval: number = DEFAULT_SNAPSHOT_INTERVAL,
+) =>
+  Layer.effect(
+    TicketRepository,
+    Effect.gen(function* () {
+      const store = yield* Ref.make<Map<TicketId, Row>>(new Map())
+      const seq = yield* Ref.make(0)
+      const events = yield* Ref.make<readonly TicketEvent[]>([])
+      const snapshots = yield* Ref.make<Map<TicketId, Row>>(new Map())
+      return {
+        load: (id: TicketId) =>
+          Effect.gen(function* () {
+            // Snapshot path mirrors the DO adapter: the snapshot row
+            // anchors the replay start; the delta tail in the event
+            // log brings the state forward to the current revision.
+            const snaps = yield* Ref.get(snapshots)
+            const snap = snaps.get(id)
+            if (snap !== undefined) {
+              const allEvents = yield* Ref.get(events)
+              const ticketEvents = allEvents.filter((e) => e.ticketId === id)
+              const delta = ticketEvents.slice(snap.revision)
+              if (delta.length === 0) {
+                return { state: snap.state, revision: snap.revision }
+              }
+              let acc: QueueSnapshot = {
+                tickets: new Map([[id, snap.state]]),
+              }
+              for (const ev of delta) {
+                acc = applyEvent(acc, ev)
+              }
+              const next = acc.tickets.get(id)
+              /* v8 ignore next */
+              if (next === undefined) {
+                return yield* Effect.fail(new AggregateNotFoundError({}))
+              }
+              return { state: next, revision: snap.revision + delta.length }
+            }
+            const m = yield* Ref.get(store)
+            const row = m.get(id)
+            if (row === undefined) {
+              return yield* Effect.fail(new AggregateNotFoundError({}))
+            }
+            return { state: row.state, revision: row.revision }
+          }),
+        save: (
+          id: TicketId,
+          expected: number,
+          evs: NonEmptyReadonlyArray<TicketEvent>,
+          next: Ticket,
+        ) =>
+          Effect.gen(function* () {
+            const m = yield* Ref.get(store)
+            const row = m.get(id)
+            if (row?.revision !== expected) {
+              return yield* Effect.fail(
+                new ConcurrencyError({ expected, actual: row?.revision ?? 0 }),
+              )
+            }
+            const nextRevision = row.revision + evs.length
+            const updated = new Map(m)
+            updated.set(id, { state: next, revision: nextRevision })
+            yield* Ref.set(store, updated)
+            yield* Ref.update(events, (xs) => xs.concat(...evs))
+            if (nextRevision % snapshotInterval === 0) {
+              yield* Ref.update(snapshots, (snaps) => {
+                const copy = new Map(snaps)
+                copy.set(id, { state: next, revision: nextRevision })
+                return copy
+              })
+            }
+          }),
+        issue: (_id: TicketId, evs: NonEmptyReadonlyArray<TicketEvent>, next: Ticket) =>
+          Effect.gen(function* () {
+            const m = yield* Ref.get(store)
+            if (m.has(next.id)) {
+              return yield* Effect.fail(new ConcurrencyError({ expected: 0, actual: 1 }))
+            }
+            const nextRevision = evs.length
+            const updated = new Map(m)
+            updated.set(next.id, { state: next, revision: nextRevision })
+            yield* Ref.set(store, updated)
+            yield* Ref.update(events, (xs) => xs.concat(...evs))
+            if (nextRevision % snapshotInterval === 0) {
+              yield* Ref.update(snapshots, (snaps) => {
+                const copy = new Map(snaps)
+                copy.set(next.id, { state: next, revision: nextRevision })
+                return copy
+              })
+            }
+          }),
+        nextSeq: () =>
+          Ref.modify(seq, (n) => {
+            const next = n + 1
+            return [next, next] as const
+          }),
+        listAll: () =>
+          Ref.get(store).pipe(Effect.map((m) => Array.from(m.values()).map((r) => r.state))),
+      }
+    }),
+  )
 
-const emptyStore = (): Store => ({
-  events: HashMap.empty<BookingId, readonly BookingEvent[]>(),
-  snapshots: HashMap.empty<BookingId, Booking>(),
-  byCode: HashMap.empty<BookingCode, BookingId>(),
-})
-
-const revisionOf = (store: Store, id: BookingId): number =>
-  Option.match(HashMap.get(store.events, id), {
-    onNone: () => 0,
-    onSome: (es) => es.length,
-  })
-
-const loadFromStore = (
-  store: Store,
-  id: BookingId,
-): Effect.Effect<{ readonly state: Booking; readonly revision: number }, AggregateNotFoundError> =>
-  Option.match(HashMap.get(store.snapshots, id), {
-    onNone: () => Effect.fail(new AggregateNotFoundError({})),
-    onSome: (state) => Effect.succeed({ state, revision: revisionOf(store, id) }),
-  })
-
-const tryAppend = (
-  store: Store,
-  id: BookingId,
-  expected: number,
-  events: readonly BookingEvent[],
-  next: Booking,
-): { readonly store: Store; readonly result: { readonly revision: number } } | ConcurrencyError => {
-  const current = revisionOf(store, id)
-  if (current !== expected) return new ConcurrencyError({ expected, actual: current })
-  const merged: readonly BookingEvent[] = Option.match(HashMap.get(store.events, id), {
-    onNone: () => [...events],
-    onSome: (existing) => [...existing, ...events],
-  })
-  return {
-    store: {
-      events: HashMap.set(store.events, id, merged),
-      snapshots: HashMap.set(store.snapshots, id, next),
-      byCode: HashMap.set(store.byCode, next.code, id),
-    },
-    result: { revision: current + events.length },
-  }
-}
-
-const findIdByKey = (
-  store: Store,
-  code: BookingCode,
-): Effect.Effect<BookingId, AggregateNotFoundError> =>
-  Option.match(HashMap.get(store.byCode, code), {
-    onNone: () => Effect.fail(new AggregateNotFoundError({})),
-    onSome: (id) => Effect.succeed(id),
-  })
-
-const wireRepository = (ref: Ref.Ref<Store>) =>
-  BookingEventSourcedRepository.of({
-    load: (id) => Effect.flatMap(Ref.get(ref), (store) => loadFromStore(store, id)),
-    save: (id, expected, evs, next) =>
-      Effect.flatten(
-        Ref.modify(
-          ref,
-          (
-            store,
-          ): readonly [Effect.Effect<{ readonly revision: number }, ConcurrencyError>, Store] => {
-            const outcome = tryAppend(store, id, expected, evs, next)
-            if (outcome instanceof ConcurrencyError) return [Effect.fail(outcome), store]
-            return [Effect.succeed(outcome.result), outcome.store]
-          },
-        ),
-      ),
-    findByKey: (code) => Effect.flatMap(Ref.get(ref), (store) => findIdByKey(store, code)),
-  })
-
-export const makeInMemoryEventSourcedBookingRepository =
-  (): Layer.Layer<BookingEventSourcedRepository> =>
-    Layer.effect(
-      BookingEventSourcedRepository,
-      Effect.gen(function* () {
-        const ref = yield* Ref.make<Store>(emptyStore())
-        return wireRepository(ref)
-      }),
-    )
-
-/** Convenience: a fresh, empty repository per test or per Effect runtime. */
-export const InMemoryEventSourcedBookingRepositoryLive = makeInMemoryEventSourcedBookingRepository()
-
-/* -------------------------------------------------------------------------- */
-/* Inspection handle — used only by tests that need a peek at the log/snapshot */
-/* state alongside the layer. The port itself never exposes these escape      */
-/* hatches.                                                                   */
-/* -------------------------------------------------------------------------- */
-
-const hashMapToMap = <K, V>(hm: HashMap.HashMap<K, V>): ReadonlyMap<K, V> => {
-  const m = new Map<K, V>()
-  for (const [k, v] of hm) m.set(k, v)
-  return m
-}
-
-export type InMemoryEventSourcedHandle = {
-  readonly layer: Layer.Layer<BookingEventSourcedRepository>
-  readonly readEvents: Effect.Effect<ReadonlyMap<BookingId, readonly BookingEvent[]>>
-  readonly readSnapshots: Effect.Effect<ReadonlyMap<BookingId, Booking>>
-}
-
-export const makeInMemoryEventSourcedHandle = (): Effect.Effect<InMemoryEventSourcedHandle> =>
-  Effect.gen(function* () {
-    const ref = yield* Ref.make<Store>(emptyStore())
-    const layer = Layer.succeed(BookingEventSourcedRepository, wireRepository(ref))
-    return {
-      layer,
-      readEvents: Effect.map(Ref.get(ref), (s) => hashMapToMap(s.events)),
-      readSnapshots: Effect.map(Ref.get(ref), (s) => hashMapToMap(s.snapshots)),
-    }
-  })
+export const InMemoryTicketRepositoryLive = makeInMemoryTicketRepositoryLive()

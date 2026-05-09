@@ -1,99 +1,63 @@
-import { type Brand, Schema } from "effect"
-import * as B from "../slot/Bitmap.js"
+import { Schema } from "effect"
 
 /**
- * Permissioned action the staff member may issue while bearing the
- * capability.
- *
- *   - `cancel` / `reschedule` / `complete` / `noshow` — per-booking
- *     state transitions (`Booking.apply` consults `hasScope`).
- *   - `manage_catalog` — create / update / delete on the six catalog
- *     entities. Granted to operators who own the deployment's day-to-day
- *     catalog edits; not granted to front-desk staff who only operate on
- *     bookings.
- *
- * Defined here (not in `Capability.ts`) because `ScopeSet` owns the bit
- * indexing — keeping the literal universe co-located with the lattice
- * keeps `Capability.ts ↔ ScopeSet.ts` acyclic.
+ * Permissioned action a staff member may issue while bearing the
+ * capability. ADR-0055 fixes the scope universe at the single
+ * `operate_queue` value — the staff command surface is the queue
+ * dashboard (callNext / markServed / markNoShow / recall / cancel),
+ * so a single bit suffices. The lattice machinery below stays
+ * general so a future scope addition is one entry in
+ * {@link ALL_SCOPES} and the bounded-semilattice laws hold unchanged.
  */
-export const StaffScopeSchema = Schema.Literals([
-  "cancel",
-  "reschedule",
-  "complete",
-  "noshow",
-  "manage_catalog",
-])
+export const StaffScopeSchema = Schema.Literals(["operate_queue"])
 export type StaffScope = Schema.Schema.Type<typeof StaffScopeSchema>
 
 /**
- * Bounded join-semilattice over `StaffScope`. Each scope claims one bit
- * in a 5-bit `Bitmap`; capability composition is bitwise `or`, scope
- * containment is bitwise `isSet` (`O(1)` either way). The bitmap is the
- * **internal representation**: the wire shape (`StaffCapability.scopes:
- * NonEmptyArray<StaffScope>`) is unchanged — `fromScopes` lifts an array
- * into the lattice exactly when a bitmap operation is needed.
+ * Stable order over `StaffScope`. Decoded as a tuple so iteration is
+ * deterministic — `toScopes` walks this order.
+ */
+export const ALL_SCOPES = ["operate_queue"] as const satisfies readonly StaffScope[]
+
+/**
+ * Bounded join-semilattice over `StaffScope`. The internal
+ * representation is a `ReadonlySet<StaffScope>`; capability composition
+ * is set union, scope containment is `Set.has` (O(1) either way).
  *
  * Lattice laws:
  *   - associative / commutative / idempotent under {@link merge}
  *   - {@link empty} is the identity for merge (⊥ ∪ x = x)
- *   - {@link full} is the absorbing element under intersection (⊤ ∩ x = x)
+ *   - {@link full} is the absorbing element under intersection
  *
- * Reuses the existing `Bitmap` primitive (`domain/slot/Bitmap.ts`) so
- * the same algebraic structure backing `IntervalSet<G,D>` carries the
- * permission lattice.
+ * The internal representation is a plain `ReadonlySet<StaffScope>` —
+ * correct, simple, and import-free.
  */
-export type ScopeSet = B.Bitmap & Brand.Brand<"ScopeSet">
+declare const ScopeSetBrand: unique symbol
+export type ScopeSet = ReadonlySet<StaffScope> & { readonly [ScopeSetBrand]: never }
 
-const SCOPE_BIT_INDEX: Record<StaffScope, number> = {
-  cancel: 0,
-  reschedule: 1,
-  complete: 2,
-  noshow: 3,
-  manage_catalog: 4,
-}
-
-/**
- * Stable order over `StaffScope` mirroring {@link SCOPE_BIT_INDEX}.
- * Decoded as a tuple so iteration is deterministic.
- */
-export const ALL_SCOPES = [
-  "cancel",
-  "reschedule",
-  "complete",
-  "noshow",
-  "manage_catalog",
-] as const satisfies readonly StaffScope[]
-
-const SCOPE_COUNT = ALL_SCOPES.length
+const lift = (s: ReadonlySet<StaffScope>): ScopeSet => s as ScopeSet
 
 /** Bottom element ⊥. No scopes granted. */
-export const empty = (): ScopeSet => B.empty(SCOPE_COUNT) as ScopeSet
+export const empty = (): ScopeSet => lift(new Set<StaffScope>())
 
 /** Top element ⊤. Every scope granted. */
-export const full = (): ScopeSet => B.full(SCOPE_COUNT) as ScopeSet
+export const full = (): ScopeSet => lift(new Set(ALL_SCOPES))
 
 /** Materialise a singleton scope set. */
-export const singleton = (s: StaffScope): ScopeSet => {
-  const idx = SCOPE_BIT_INDEX[s]
-  return B.setRange(B.empty(SCOPE_COUNT), idx, idx + 1) as ScopeSet
-}
+export const singleton = (s: StaffScope): ScopeSet => lift(new Set([s]))
 
 /** Lift a wire-shape `NonEmptyArray<StaffScope>` (or any array) into the lattice. */
-export const fromScopes = (scopes: readonly StaffScope[]): ScopeSet =>
-  scopes.reduce<B.Bitmap>(
-    (acc, s) => B.setRange(acc, SCOPE_BIT_INDEX[s], SCOPE_BIT_INDEX[s] + 1),
-    B.empty(SCOPE_COUNT),
-  ) as ScopeSet
+export const fromScopes = (scopes: readonly StaffScope[]): ScopeSet => lift(new Set(scopes))
 
 /** Project the lattice element back to its canonical-order scope array. */
 export const toScopes = (set: ScopeSet): readonly StaffScope[] =>
-  ALL_SCOPES.filter((s) => B.isSet(set, SCOPE_BIT_INDEX[s]))
+  ALL_SCOPES.filter((s) => set.has(s))
 
 /** Join (set union) — the semilattice's only binary operation. */
-export const merge = (a: ScopeSet, b: ScopeSet): ScopeSet => B.or(a, b) as ScopeSet
+export const merge = (a: ScopeSet, b: ScopeSet): ScopeSet => lift(new Set([...a, ...b]))
 
-/** Containment query. `O(1)` bitwise read. */
-export const hasScope = (set: ScopeSet, s: StaffScope): boolean => B.isSet(set, SCOPE_BIT_INDEX[s])
+/** Containment query. */
+export const hasScope = (set: ScopeSet, s: StaffScope): boolean => set.has(s)
 
-/** Structural equality on the underlying bitmap. */
-export const equals = (a: ScopeSet, b: ScopeSet): boolean => B.equals(a, b)
+/** Structural equality. */
+export const equals = (a: ScopeSet, b: ScopeSet): boolean =>
+  a.size === b.size && Array.from(a).every((s) => b.has(s))

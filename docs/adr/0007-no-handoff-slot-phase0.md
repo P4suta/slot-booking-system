@@ -1,6 +1,7 @@
 # 0007. Item-handoff is not its own time slot in Phase 0
 
-- Status: accepted
+- Status: superseded by [ADR-0050](./0050-queue-pivot.md) — the slot-graph reservation surface no longer exists; the queue domain has no item-handoff modelling.
+- Superseded-By: ADR-0050
 - Date: 2026-05-05
 - Deciders: Yasunobu
 - Tags: domain, scope

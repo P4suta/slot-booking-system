@@ -4,16 +4,13 @@ import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
 /*
- * Phase 3 / PR#9 M25 — ADR supersession marker invariant.
+ * ADR supersession marker invariant.
  *
  * Every ADR file whose body declares `superseded by ADR-NNNN` (or
  * `superseded by [ADR-NNNN]`) must also carry a grep-friendly
  * `Superseded-By: ADR-NNNN` line, so a `git grep "Superseded-By:"`
- * query finds every superseded ADR in one shot.
- *
- * The reverse implication is checked too: every `Superseded-By:`
- * marker must be backed by a `superseded by` mention so the two
- * forms cannot drift.
+ * query finds every superseded ADR in one shot. The reverse
+ * implication is checked too — the two forms cannot drift.
  */
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..")

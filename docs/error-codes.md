@@ -9,7 +9,7 @@ downstream surfaces (ADR-0017): the `code`, the `severity`, the `i18nKey`
 (`error.<tag>` per `errorToI18nKey`), and the `__typename` of the
 `BookingError` GraphQL union arm.
 
-**Total**: 33 tags (validation 17 / domain 13 / infrastructure 3).
+**Total**: 17 tags (validation 6 / domain 8 / infrastructure 3).
 
 ## Validation
 
@@ -20,20 +20,9 @@ Recoverable client-input failures. The frontend renders the
 |---|---|---|
 | `InvalidPhoneLast4` | `E_VAL_PHONE_LAST4` | `error.InvalidPhoneLast4` |
 | `InvalidNameKana` | `E_VAL_NAME_KANA` | `error.InvalidNameKana` |
-| `InvalidBookingCode` | `E_VAL_BOOKING_CODE` | `error.InvalidBookingCode` |
 | `InvalidFreeText` | `E_VAL_FREE_TEXT` | `error.InvalidFreeText` |
-| `InvalidDuration` | `E_VAL_DURATION` | `error.InvalidDuration` |
-| `InvalidHoldingDays` | `E_VAL_HOLDING_DAYS` | `error.InvalidHoldingDays` |
-| `InvalidTimeSlot` | `E_VAL_TIME_SLOT` | `error.InvalidTimeSlot` |
-| `InvalidBitmap` | `E_VAL_BITMAP` | `error.InvalidBitmap` |
-| `InvalidSkill` | `E_VAL_SKILL` | `error.InvalidSkill` |
-| `InvalidResourceType` | `E_VAL_RESOURCE_TYPE` | `error.InvalidResourceType` |
-| `InvalidWeekday` | `E_VAL_WEEKDAY` | `error.InvalidWeekday` |
-| `InvalidOpenWindow` | `E_VAL_OPEN_WINDOW` | `error.InvalidOpenWindow` |
-| `InvalidAbsence` | `E_VAL_ABSENCE` | `error.InvalidAbsence` |
 | `InvalidBusinessTimeZone` | `E_VAL_BUSINESS_TZ` | `error.InvalidBusinessTimeZone` |
 | `InvalidEntityId` | `E_VAL_ENTITY_ID` | `error.InvalidEntityId` |
-| `InvalidCatalogInput` | `E_VAL_CATALOG_INPUT` | `error.InvalidCatalogInput` |
 | `MissingStaffCapability` | `E_VAL_MISSING_STAFF_CAPABILITY` | `error.MissingStaffCapability` |
 
 ## Domain
@@ -45,17 +34,12 @@ the same way it does validation errors.
 
 | Tag | Code | i18n key |
 |---|---|---|
-| `BookingNotFound` | `E_DOM_BOOKING_NOT_FOUND` | `error.BookingNotFound` |
 | `PhoneMismatch` | `E_DOM_PHONE_MISMATCH` | `error.PhoneMismatch` |
+| `TicketNotFound` | `E_DOM_TICKET_NOT_FOUND` | `error.TicketNotFound` |
+| `QueueEmpty` | `E_DOM_QUEUE_EMPTY` | `error.QueueEmpty` |
 | `AlreadyCancelled` | `E_DOM_ALREADY_CANCELLED` | `error.AlreadyCancelled` |
 | `AlreadyCompleted` | `E_DOM_ALREADY_COMPLETED` | `error.AlreadyCompleted` |
 | `AlreadyNoShow` | `E_DOM_ALREADY_NO_SHOW` | `error.AlreadyNoShow` |
-| `SlotExpired` | `E_DOM_SLOT_EXPIRED` | `error.SlotExpired` |
-| `SlotUnavailable` | `E_DOM_SLOT_UNAVAILABLE` | `error.SlotUnavailable` |
-| `OutsideBusinessHours` | `E_DOM_OUTSIDE_HOURS` | `error.OutsideBusinessHours` |
-| `ServiceDisabled` | `E_DOM_SERVICE_DISABLED` | `error.ServiceDisabled` |
-| `ProviderUnavailable` | `E_DOM_PROVIDER_UNAVAILABLE` | `error.ProviderUnavailable` |
-| `ResourceUnavailable` | `E_DOM_RESOURCE_UNAVAILABLE` | `error.ResourceUnavailable` |
 | `InvalidStateTransition` | `E_DOM_INVALID_TRANSITION` | `error.InvalidStateTransition` |
 | `InsufficientCapability` | `E_DOM_INSUFFICIENT_CAPABILITY` | `error.InsufficientCapability` |
 

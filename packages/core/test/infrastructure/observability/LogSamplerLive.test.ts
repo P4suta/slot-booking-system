@@ -9,8 +9,8 @@ import {
 } from "../../../src/infrastructure/observability/LogSamplerLive.js"
 
 /**
- * Phase 3 PR#8 / commit 15 — pin the env-indexed access-log sampler
- * (ADR-0042 sister-pattern). The contract:
+ * Pin the env-indexed access-log sampler (ADR-0042 sister-pattern).
+ * The contract:
  *
  *   1. `passThroughSampler` — always emits (dev arm).
  *   2. `prodSamplingRates()` — exposes the canonical rate table for

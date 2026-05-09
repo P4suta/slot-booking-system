@@ -5,8 +5,7 @@
 
 <header>
   <nav aria-label="Primary">
-    <a href="/">Customer</a>
-    <a href="/staff">Staff</a>
+    <a href="/">Queue</a>
   </nav>
 </header>
 

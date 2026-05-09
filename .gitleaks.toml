@@ -1,0 +1,32 @@
+# gitleaks config — secret-detection allowlist for this repo. Drives
+# the workflow at `.github/workflows/security.yml` and is also picked
+# up by local `gitleaks detect` runs.
+#
+# The base ruleset is gitleaks' built-in (Cloudflare API tokens,
+# generic high-entropy strings, AWS keys, etc.); we extend the
+# allowlist below so domain identifiers do not surface as false
+# positives.
+title = "slot-booking-system"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project-specific allowlist"
+
+# TypeID prefixes the queue domain mints. The gitleaks generic
+# high-entropy rule fires on any sufficiently random-looking
+# string; pinning the prefix tells it these are well-known IDs.
+regexes = [
+  '''(tkt|tev|staf|audt|idem)_[A-Za-z0-9]{8,}''',
+]
+
+# Files that legitimately contain secret-shaped strings (templates,
+# example env files, generated migration metadata, third-party
+# fixtures). gitleaks should walk past these without complaint.
+paths = [
+  '''apps/default/.dev.vars.example''',
+  '''pnpm-lock\.yaml''',
+  '''package-lock\.json''',
+  '''.*/migrations/meta/.*\.json''',
+]

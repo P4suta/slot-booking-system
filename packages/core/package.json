@@ -63,10 +63,8 @@
   },
   "dependencies": {
     "@js-temporal/polyfill": "latest",
-    "drizzle-orm": "rc",
     "effect": "beta",
-    "typeid-js": "latest",
-    "ulidx": "latest"
+    "typeid-js": "latest"
   },
   "devDependencies": {
     "@size-limit/preset-small-lib": "latest",
@@ -75,7 +73,6 @@
     "@stryker-mutator/vitest-runner": "latest",
     "@total-typescript/ts-reset": "latest",
     "@vitest/coverage-v8": "latest",
-    "expect-type": "latest",
     "fast-check": "latest",
     "size-limit": "latest",
     "type-coverage": "latest",

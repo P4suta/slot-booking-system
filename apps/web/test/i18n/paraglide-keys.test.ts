@@ -3,8 +3,7 @@ import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
 /**
- * Phase 3 PR#8 / commit 13 — pin the i18n message catalogue's two
- * invariants:
+ * Pin the i18n message catalogue's two invariants:
  *
  * 1. **Locale parity** — `messages/ja.json` and `messages/en.json`
  *    have an identical key set. Adding a new key in one without the
@@ -52,9 +51,10 @@ describe("paraglide message catalogue parity (commit 13)", () => {
 
   it("docs/error-codes.md exposes the expected number of tags", () => {
     // The catalogue is drift-gated against errorClassRegistry — the
-    // count is part of the contract. If this assertion changes, the
-    // i18n catalogue must follow.
-    expect(extractedTags.length).toBeGreaterThanOrEqual(33)
+    // count is part of the contract. The post-pivot queue domain has
+    // 17 tags (5 validation + 9 domain + 3 infrastructure); this
+    // floor moves with the registry.
+    expect(extractedTags.length).toBeGreaterThanOrEqual(17)
   })
 
   it("every error_<Tag> from docs/error-codes.md exists in ja.json", () => {

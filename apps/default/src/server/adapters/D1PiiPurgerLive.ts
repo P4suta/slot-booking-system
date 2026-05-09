@@ -1,52 +1,43 @@
-import { PiiPurger } from "@booking/core"
-import { and, inArray, isNotNull, lt, or } from "drizzle-orm"
-import { drizzle } from "drizzle-orm/d1"
+import { PiiPurger, StorageError } from "@booking/core"
 import { Duration, Effect, Layer } from "effect"
-import { bookings } from "../schema/bookings.js"
 
 /**
- * D1-backed {@link PiiPurger}. NULLs out `name_kana`, `phone_last4`,
- * `free_text` on every terminal-state booking whose terminal timestamp
- * is older than the supplied {@link Duration.Duration}.
+ * D1-backed PiiPurger for the queue domain. Nulls `name_kana` /
+ * `phone_last4` / `free_text` on tickets whose terminal state was
+ * reached more than `olderThan` ago (default 2y per ADR-0009 +
+ * SYSTEM §6).
  *
- * "Terminal timestamp" = `cancelled_at` ∪ `completed_at` ∪ `marked_at`,
- * whichever is set for the row's state. We compare against the cutoff
- * via SQLite's ISO-8601 string ordering, which is correct because the
- * timestamps are written in canonical Z-suffixed RFC 3339 form by
- * `Schema.encodeSync(InstantSchema)`.
- *
- * The audit-log table (`audit_log`) is NOT touched — its retention is
- * 5 years per ADR-0009 and it carries no customer PII by construction.
+ * Returns the count of rows touched so the scheduled handler can
+ * emit a structured log entry / alert if the count is unexpectedly
+ * high. A DB-side failure (D1 unreachable, statement rejected,
+ * etc.) surfaces as `StorageError` rather than the previous
+ * silent `0`-row coercion — the scheduled handler's caller logs
+ * the row count on success and re-throws so the Cloudflare
+ * runtime's error metric still fires.
  */
-export const makeD1PiiPurger = (db: D1Database): Layer.Layer<PiiPurger> =>
+export const makeD1PiiPurger = (db: D1Database) =>
   Layer.succeed(
     PiiPurger,
     PiiPurger.of({
-      purgeOlderThan: (olderThan) =>
-        Effect.promise(async () => {
-          const orm = drizzle(db)
-          const cutoffMs = Date.now() - Duration.toMillis(olderThan)
-          const cutoffIso = new Date(cutoffMs).toISOString()
-          const result = await orm
-            .update(bookings)
-            .set({
-              nameKana: null,
-              phoneLast4: null,
-              freeText: null,
-            })
-            .where(
-              and(
-                inArray(bookings.state, ["Cancelled", "Completed", "NoShow"]),
-                or(
-                  and(isNotNull(bookings.cancelledAt), lt(bookings.cancelledAt, cutoffIso)),
-                  and(isNotNull(bookings.completedAt), lt(bookings.completedAt, cutoffIso)),
-                  and(isNotNull(bookings.markedAt), lt(bookings.markedAt, cutoffIso)),
-                ),
-                isNotNull(bookings.nameKana),
-              ),
-            )
-            .run()
-          return result.meta.changes
+      purgeOlderThan: (olderThan: Duration.Duration) =>
+        Effect.tryPromise({
+          try: async () => {
+            const seconds = Math.round(Duration.toSeconds(olderThan))
+            const result = await db
+              .prepare(
+                `UPDATE tickets
+                 SET name_kana = NULL, phone_last4 = NULL, free_text = NULL
+                 WHERE (state IN ('Cancelled', 'Served', 'NoShow'))
+                   AND (
+                     COALESCE(cancelled_at, served_at, marked_at) <= datetime('now', '-' || ? || ' seconds')
+                   )
+                   AND name_kana IS NOT NULL`,
+              )
+              .bind(seconds)
+              .run()
+            return result.meta.changes
+          },
+          catch: (e) => new StorageError({ reason: "purge", cause: e }),
         }),
     }),
   )

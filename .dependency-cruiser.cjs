@@ -63,11 +63,19 @@ module.exports = {
           "|^packages/core/src/derive/index\\.ts" +
           "|^apps/default/seed/seed\\.ts" +
           "|^apps/default/scripts/" +
+          // Integration test harness modules are imported only by
+          // their sibling `*.integration.test.ts` files (which the
+          // cruise considers test code, hence outside the production
+          // graph). Without this exemption the harness scaffolds
+          // appear as orphans the moment they land but before the
+          // first test consumer wires up.
+          "|^apps/.*/test/integration/_harness/.*\\.ts$" +
           // SvelteKit's file-system routing loads these by convention.
           "|^apps/web/src/routes/.*\\.svelte$" +
           "|^apps/web/src/(app\\.d\\.ts|app\\.html|app\\.css|hooks\\.server\\.ts)$" +
           // Imported by .svelte files which dep-cruiser does not parse.
-          "|^apps/web/src/lib/(graphql/endpoint|graphql/client|graphql/queries|i18n)\\.ts$)",
+          "|^apps/web/src/lib/(graphql/endpoint|graphql/client|graphql/queries|i18n|kana)\\.ts$" +
+          "|^apps/web/src/lib/components/.*\\.svelte$)",
       },
       to: {},
     },

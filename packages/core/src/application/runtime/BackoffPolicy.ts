@@ -1,21 +1,11 @@
 /**
- * Phase 3 / outbox-relay generic groundwork.
- *
- * The transactional outbox relay needs three pluggable concerns: the
- * source store (where messages queue), the destination (where messages
- * land), and the retry schedule. Today only the third is shaped as a
- * pure value; the other two are still inlined into
- * `apps/default/.../relay.ts`. Hoisting `BackoffPolicy` first lets the
- * relay swap the schedule (e.g. introduce jitter, switch to a
- * progressively-rounded fibonacci sequence) without touching the
- * outbox loop, and lets `core` test the schedule in isolation.
+ * Retry schedule for the transactional-outbox relay. The schedule is
+ * a pure value so the relay can swap the policy (introduce jitter,
+ * switch to fibonacci, etc.) without touching the outbox loop, and
+ * `core` can test the schedule in isolation.
  *
  * Reference — Hohpe & Woolf "Guaranteed Delivery" / Kleppmann's
- * transactional-outbox pattern. The full pluggable
- * `OutboxStore<Msg>` + `Destination<Msg>` adapter pair is reserved
- * for a follow-up phase (see ADR draft notes); the relay's other
- * concerns stay DO/D1-specific until a second destination justifies
- * the abstraction.
+ * transactional-outbox pattern.
  */
 
 /**
@@ -49,12 +39,16 @@ export const fixedBackoff = (delaysMs: readonly number[]): BackoffPolicy => {
   if (delaysMs.length === 0) {
     return { nextDelayMs: () => 0, maxAttempts: 1 }
   }
-  const tail = delaysMs[delaysMs.length - 1] ?? 0
+  const last = delaysMs.length - 1
+  // Clamp the attempt counter into `[0, last]` so the indexed read is
+  // total. The trailing `?? 0` only exists because `noUncheckedIndexedAccess`
+  // widens the read to `number | undefined` — the clamp guarantees it
+  // never fires, so the branch is structurally unreachable.
   return {
     nextDelayMs: (attempts) => {
-      if (attempts < 0) return delaysMs[0] ?? 0
-      if (attempts >= delaysMs.length) return tail
-      return delaysMs[attempts] ?? tail
+      const i = attempts < 0 ? 0 : attempts > last ? last : attempts
+      /* v8 ignore next */
+      return delaysMs[i] ?? 0
     },
     maxAttempts: delaysMs.length + 1,
   }
@@ -71,3 +65,48 @@ export const fixedBackoff = (delaysMs: readonly number[]): BackoffPolicy => {
  */
 export const nextAttemptMs = (policy: BackoffPolicy, attempts: number, nowMs: number): number =>
   nowMs + policy.nextDelayMs(attempts)
+
+/**
+ * Decorrelated Jitter — AWS Architecture Blog "Exponential Backoff
+ * and Jitter" (Marc Brooker). The recurrence
+ *
+ *     sleep_n = min(cap, U(base, prev_sleep * 3))
+ *
+ * (with `prev_sleep := base` initially, `U(a, b)` uniform on `[a, b)`)
+ * spreads retries more evenly across the cap window than equal-jitter
+ * or full-jitter, which matters when many writers contend on the same
+ * downstream queue. The constant `3` is the AWS-recommended growth
+ * factor — large enough that the schedule reaches `cap` quickly,
+ * small enough that the variance stays bounded.
+ *
+ * The returned policy is stateful: it caches `prev_sleep` in a
+ * closure so successive `nextDelayMs(n)` calls walk the recurrence.
+ * Tests inject a deterministic `rng` (e.g. `() => 0.5`) to pin the
+ * sequence; production sees the source through the {@link Random}
+ * port and adapts it to the synchronous callback shape.
+ *
+ * Bounds invariant: `base <= delay <= cap` for every attempt; the
+ * outer `Math.max(base, ...)` keeps the policy total even when a
+ * caller inverts the inputs (`cap < base`).
+ */
+export const decorrelatedJitter = (
+  config: {
+    readonly base: number
+    readonly cap: number
+    readonly maxAttempts: number
+  },
+  rng: () => number,
+): BackoffPolicy => {
+  let prev = config.base
+  return {
+    nextDelayMs: () => {
+      const lo = config.base
+      const hi = prev * 3
+      const sample = Math.floor(lo + rng() * (hi - lo))
+      const next = Math.max(config.base, Math.min(config.cap, sample))
+      prev = next
+      return next
+    },
+    maxAttempts: config.maxAttempts,
+  }
+}

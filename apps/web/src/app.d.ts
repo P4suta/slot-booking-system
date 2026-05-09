@@ -14,7 +14,6 @@ import type { Locale } from "./paraglide/runtime.js"
 declare global {
   namespace App {
     interface Locals {
-      readonly graphqlEndpoint: string
       // Set by `hooks.server.ts` via paraglide middleware so route
       // load functions can branch on the resolved request locale
       // without rerunning the strategy chain.

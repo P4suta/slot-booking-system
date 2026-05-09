@@ -10,93 +10,68 @@ import { Effect, Layer } from "effect"
 import { auditLog } from "../schema/index.js"
 
 /**
- * D1-backed {@link AuditLogger}. Persists each {@link AuditEntry}
- * to the long-retention `audit_log` table (5y per ADR-0009). The
- * row carries `actor` / `action` / `traceId` plus a JSON `data` blob
- * with non-PII context (booking id, capability subject); customer
- * PII never lands here by construction.
+ * D1-backed AuditLogger. Persists each AuditEntry to the
+ * long-retention `audit_log` table (5y, ADR-0009). Customer PII is
+ * never persisted here by construction (errors only carry IDs and
+ * operator-facing reason strings; the `pii-guard` CI step rejects
+ * the patterns at source).
  *
- * The mint of `id` happens in the adapter rather than at the call
- * site so the use cases stay free of TypeID generation; the
- * ULID-encoded TypeID serialises monotonic-ish per-instance, which
- * matches the audit table's natural read-by-time pattern.
+ * The AuditEntry shape (declared in `domain/errors/derivations.ts`) is:
+ *   `{ ts, actor, outcome: "denied", errorTag, errorCode, traceId? }`
  *
- * **Failure routing (Phase 2.6 / BI-9)**: an audit-write failure
- * never propagates to the caller — the user action either succeeded
- * or already failed for its own reason — but the failure is no
- * longer silently swallowed. The adapter forwards the failure to
- * the `Logger` port at `error` level with OTel semconv-aligned
- * fields (`error.type` = `"AuditWriteFailure"`, `error.code` =
- * `"E_INF_AUDIT_WRITE"`, `error.severity` = `"infrastructure"`),
- * so the operator dashboard sees the audit miss and can correlate
- * it back to the originating request via the shared `traceId`
- * derived from the active OTel span (the `Logger`-side decorator
- * merges it automatically).
- *
- * The Logger dependency is declared on the layer's R channel
- * (`Layer.Layer<AuditLogger, never, Logger>`). Production wires it
- * to `WorkersLoggerLive` upstream, and the same wiring naturally
- * carries through — no per-call-site Logger lifting needed.
+ * Failure routing: an audit-write failure never propagates to the
+ * caller. The Logger port records the event so the operator can spot
+ * a degraded audit channel in dashboards.
  */
-export const makeD1AuditLogger = (database: D1Database): Layer.Layer<AuditLogger, never, Logger> =>
+export const makeD1AuditLogger = (db: D1Database) =>
   Layer.effect(
     AuditLogger,
     Effect.gen(function* () {
       const logger = yield* Logger
       return AuditLogger.of({
         write: (entry: AuditEntry) =>
-          Effect.withSpan("audit_write", {
-            attributes: {
-              "db.system.name": "d1",
-              "db.operation.name": "INSERT",
-              "db.collection.name": "audit_log",
-              "db.query.text":
-                "INSERT INTO audit_log (id, at, actor, action, booking_id, trace_id, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
-              "audit.actor": entry.actor,
-              "audit.action": entry.errorTag,
-              "audit.outcome": entry.outcome,
-              ...(entry.traceId !== undefined ? { "audit.trace_id": entry.traceId } : {}),
-            },
-          })(
-            Effect.tryPromise({
-              try: async () => {
-                const db = drizzle(database)
-                await db
+          Effect.gen(function* () {
+            const traceId = yield* getCurrentTraceId
+            const id = newAuditLogId()
+            const driz = drizzle(db)
+            yield* Effect.tryPromise({
+              try: () =>
+                driz
                   .insert(auditLog)
                   .values({
-                    id: newAuditLogId(),
-                    at: entry.ts,
+                    id,
                     actor: entry.actor,
-                    action: entry.errorTag,
-                    bookingId: null,
-                    traceId: entry.traceId ?? null,
-                    data: { code: entry.errorCode, outcome: entry.outcome },
+                    action: `${entry.outcome}:${entry.errorTag}`,
+                    traceId: entry.traceId ?? traceId ?? null,
+                    data: JSON.stringify({
+                      ts: entry.ts,
+                      errorCode: entry.errorCode,
+                    }),
                   })
-                  .run()
-              },
+                  .run(),
               catch: (e) => e,
             }).pipe(
-              Effect.catch((cause) =>
-                Effect.flatMap(getCurrentTraceId, (traceId) =>
-                  logger.error({
-                    _tag: "AuditWriteFailure",
-                    code: "E_INF_AUDIT_WRITE",
-                    severity: "infrastructure",
-                    data: {
-                      "error.type": "AuditWriteFailure",
-                      "error.code": "E_INF_AUDIT_WRITE",
-                      "error.severity": "infrastructure",
-                      actor: entry.actor,
-                      action: entry.errorTag,
-                      cause: cause instanceof Error ? cause.message : String(cause),
-                    },
-                    ...(traceId !== undefined ? { traceId } : {}),
-                    ...(entry.traceId !== undefined ? { traceId: entry.traceId } : {}),
-                  }),
-                ),
+              Effect.tap(() =>
+                logger.info({
+                  _tag: "AuditWriteOk",
+                  code: "I_INF_AUDIT_OK",
+                  severity: "infrastructure",
+                  data: {
+                    actor: entry.actor,
+                    errorTag: entry.errorTag,
+                  },
+                }),
               ),
-            ),
-          ),
+              Effect.catch((err) =>
+                logger.error({
+                  _tag: "AuditWriteFailed",
+                  code: "E_INF_AUDIT",
+                  severity: "infrastructure",
+                  data: { reason: String(err) },
+                }),
+              ),
+            )
+          }),
       })
     }),
   )

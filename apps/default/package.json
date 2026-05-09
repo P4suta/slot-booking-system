@@ -8,31 +8,40 @@
     "dev": "wrangler dev --ip 0.0.0.0 --test-scheduled --var IS_DEV:1 --var OTEL_EXPORTER_URL:console",
     "build": "wrangler deploy --dry-run --outdir dist",
     "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --project node",
     "migrate:local": "wrangler d1 migrations apply DB --local",
     "seed:render": "tsx seed/seed.ts",
-    "print-schema": "tsx scripts/print-schema.ts",
-    "gen:api-spec": "tsx scripts/gen-api-spec.ts"
+    "size-limit": "size-limit"
   },
+  "size-limit": [
+    {
+      "name": "worker bundle (uncompressed)",
+      "path": "dist/index.js",
+      "limit": "1 MB",
+      "brotli": false,
+      "gzip": false
+    }
+  ],
   "dependencies": {
     "@booking/core": "workspace:*",
-    "@js-temporal/polyfill": "latest",
     "@microlabs/otel-cf-workers": "latest",
     "@opentelemetry/api": "latest",
     "drizzle-orm": "rc",
     "effect": "beta",
-    "graphql": "latest",
-    "graphql-yoga": "latest"
+    "hono": "latest",
+    "jose": "latest"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "latest",
     "@cloudflare/workers-types": "latest",
     "@opentelemetry/sdk-trace-base": "latest",
+    "@size-limit/file": "latest",
     "@types/node": "latest",
     "@vitest/coverage-v8": "latest",
     "cloudflare": "latest",
     "drizzle-kit": "rc",
+    "fast-check": "latest",
+    "size-limit": "latest",
     "tsx": "latest",
     "vitest": "latest",
     "wrangler": "latest"

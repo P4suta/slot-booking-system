@@ -1,14 +1,26 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreDependencies": ["tsx"],
   "workspaces": {
+    "scripts": {
+      "entry": [
+        "check.ts",
+        "diagnose.ts",
+        "diagnose/multiAngle.ts",
+        "fuzz/runSoak.ts",
+        "test/runner.ts",
+        "test/**/*.test.ts"
+      ],
+      "project": ["**/*.ts"],
+      "ignoreDependencies": ["tsx"]
+    },
     "packages/core": {
-      "entry": ["test/**/*.test.ts", "test/**/*.bench.ts", "test/_fixtures/index.ts"],
+      "entry": ["test/**/*.test.ts", "test/**/*.bench.ts"],
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "apps/default": {
-      "entry": ["test/**/*.test.ts", "test/integration/**/*.ts", "scripts/**/*.ts", "seed/**/*.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "seed/**/*.ts"],
-      "ignore": ["src/server/rest/openapiSpec.ts"],
+      "entry": ["test/**/*.test.ts", "test/integration/**/*.ts", "scripts/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
       "wrangler": {
         "config": ["wrangler.toml"]
       }

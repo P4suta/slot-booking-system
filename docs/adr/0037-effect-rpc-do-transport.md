@@ -1,6 +1,7 @@
 # 0037. `@effect/rpc` over a Cloudflare Durable Object dispatch method
 
-- Status: accepted
+- Status: superseded by [ADR-0050](./0050-queue-pivot.md) — the queue uses a plain DurableObjectNamespace stub method (`dispatch(action)`) for RPC; @effect/rpc + the cross-realm envelope sanitiser (ADR-0044) are no longer in the worker bundle.
+- Superseded-By: ADR-0050
 - Date: 2026-05-07
 - Deciders: Yasunobu
 - Tags: durable-object, rpc, effect-rpc, transport, schema-source-of-truth

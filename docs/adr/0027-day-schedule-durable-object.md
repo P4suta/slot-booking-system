@@ -1,6 +1,7 @@
 # 0027. Per-day DurableObject + outbox-to-D1 — write-side architecture
 
-- Status: accepted
+- Status: superseded by [ADR-0053](./0053-single-writer-do.md) — the per-day DO partition is replaced by the single-writer QueueShop; the outbox + alarm patterns survive but the actor lifetime + partition key changed.
+- Superseded-By: ADR-0053
 - Date: 2026-05-05
 - Deciders: Yasunobu
 - Tags: durable-object, persistence, concurrency

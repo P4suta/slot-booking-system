@@ -1,82 +1,51 @@
-import { Effect, Layer, Ref, Result } from "effect"
+import { Effect, Layer, Ref } from "effect"
 import { IdGenerator } from "../../application/ports/IdGenerator.js"
 import type {
   AuditLogId,
-  BookingEventId,
-  BookingId,
-  BusinessHoursId,
-  ClosureId,
   IdempotencyKeyId,
-  ProviderAbsenceId,
-  ProviderId,
-  ResourceId,
-  ServiceId,
+  StaffId,
+  TicketEventId,
+  TicketId,
 } from "../../domain/types/EntityId.js"
-import {
-  BOOKING_CODE_KEYSPACE,
-  type BookingCode,
-  encodeBookingCode,
-} from "../../domain/value-objects/BookingCode.js"
 
-const CROCKFORD_LOWER = "0123456789abcdefghjkmnpqrstvwxyz"
+const SUFFIX_LEN = 26
+const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
 
-/**
- * Render a non-negative `bigint` as a fixed-width 26-char ULID body
- * using Crockford Base32 in **lower case** to match typeid-js's
- * canonical surface (`<prefix>_<26 lowercase chars>`). Tail-padded with
- * `'0'` so the leading bytes deterministically encode the counter.
- */
-const ulidLikeBody = (counter: bigint): string => {
-  let v = counter
-  const buf: string[] = []
-  for (let i = 0; i < 26; i++) {
-    buf.push(CROCKFORD_LOWER.charAt(Number(v & 31n)))
-    v >>= 5n
+const encodeCounter = (n: number): string => {
+  let acc = ""
+  let x = n
+  for (let i = 0; i < SUFFIX_LEN; i++) {
+    const idx = x % ALPHABET.length
+    acc = ALPHABET.charAt(idx) + acc
+    x = Math.floor(x / ALPHABET.length)
   }
-  return buf.reverse().join("")
+  return acc
 }
 
 /**
- * Build a {@link IdGenerator} layer whose every method draws from a
- * shared, atomically-incremented counter seeded by `seed` (default `0`).
- * Across one test run the same call sequence always produces the same
- * id sequence, eliminating the wall-clock leak that ULID-based
- * generators introduce.
+ * Test adapter for `IdGenerator`. Each kind has its own counter so
+ * fixtures can assert "the third ticket id is `tkt_…01v`" without
+ * relying on cross-kind ordering. Reproducible under property tests.
  */
-export const makeDeterministicIdGenerator = (seed = 0n): Layer.Layer<IdGenerator> =>
-  Layer.effect(
-    IdGenerator,
-    Effect.gen(function* () {
-      const counter = yield* Ref.make(seed)
-      const next = Ref.updateAndGet(counter, (n) => n + 1n)
-      const make = <Id extends string>(prefix: string): Effect.Effect<Id> =>
-        Effect.map(next, (n) => `${prefix}_${ulidLikeBody(n)}` as unknown as Id)
-      return IdGenerator.of({
-        newBookingId: make<BookingId>("book"),
-        newServiceId: make<ServiceId>("serv"),
-        newProviderId: make<ProviderId>("prov"),
-        newResourceId: make<ResourceId>("rsrc"),
-        newClosureId: make<ClosureId>("clos"),
-        newProviderAbsenceId: make<ProviderAbsenceId>("absn"),
-        newBusinessHoursId: make<BusinessHoursId>("bhrs"),
-        newBookingEventId: make<BookingEventId>("evnt"),
-        newAuditLogId: make<AuditLogId>("audt"),
-        newIdempotencyKeyId: make<IdempotencyKeyId>("idem"),
-        newBookingCode: Effect.map(
-          next,
-          (n): BookingCode =>
-            Result.getOrThrow(
-              encodeBookingCode(
-                ((n % BOOKING_CODE_KEYSPACE) + BOOKING_CODE_KEYSPACE) % BOOKING_CODE_KEYSPACE,
-              ),
-            ),
-        ),
+export const DeterministicIdGeneratorLive = Layer.effect(
+  IdGenerator,
+  Effect.gen(function* () {
+    const tkt = yield* Ref.make(0)
+    const tev = yield* Ref.make(0)
+    const staf = yield* Ref.make(0)
+    const audt = yield* Ref.make(0)
+    const idem = yield* Ref.make(0)
+    const mint = <T extends string>(prefix: string, ref: Ref.Ref<number>): Effect.Effect<T> =>
+      Ref.modify(ref, (n) => {
+        const next = n + 1
+        return [`${prefix}_${encodeCounter(next)}` as T, next] as const
       })
-    }),
-  )
-
-/**
- * Convenience layer for tests that don't need to specify a seed.
- * Equivalent to `makeDeterministicIdGenerator(0n)`.
- */
-export const DeterministicIdGeneratorLive = makeDeterministicIdGenerator()
+    return {
+      newTicketId: mint<TicketId>("tkt", tkt),
+      newTicketEventId: mint<TicketEventId>("tev", tev),
+      newStaffId: mint<StaffId>("staf", staf),
+      newAuditLogId: mint<AuditLogId>("audt", audt),
+      newIdempotencyKeyId: mint<IdempotencyKeyId>("idem", idem),
+    }
+  }),
+)

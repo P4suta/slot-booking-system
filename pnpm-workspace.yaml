@@ -1,3 +1,18 @@
 packages:
   - "packages/*"
   - "apps/*"
+  - "scripts"
+
+onlyBuiltDependencies:
+  - "@biomejs/biome"
+  - esbuild
+  - msgpackr-extract
+  - protobufjs
+  - sharp
+  - workerd
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
+  protobufjs: true
+  sharp: true
+  workerd: true

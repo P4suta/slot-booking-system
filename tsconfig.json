@@ -1,5 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "files": [],
-  "references": [{ "path": "./packages/core" }, { "path": "./apps/default" }]
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./apps/default" },
+    { "path": "./scripts" }
+  ]
 }

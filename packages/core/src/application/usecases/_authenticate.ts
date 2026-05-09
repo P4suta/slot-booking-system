@@ -1,51 +1,71 @@
 import { Effect } from "effect"
-import type { Booking } from "../../domain/booking/Booking.js"
-import { type DomainError, PhoneMismatchError } from "../../domain/errors/Errors.js"
-import type { BookingCode } from "../../domain/value-objects/BookingCode.js"
-import type { PhoneLast4 } from "../../domain/value-objects/PhoneLast4.js"
 import {
-  BookingEventSourcedRepository,
-  type LoadedAggregate,
-} from "../ports/EventSourcedRepository.js"
+  type DomainError,
+  PhoneMismatchError,
+  type StorageError,
+  TicketNotFoundError,
+} from "../../domain/errors/Errors.js"
+import type { Ticket } from "../../domain/queue/Ticket.js"
+import type { TicketId } from "../../domain/types/EntityId.js"
+import type { CustomerHandle } from "../../domain/value-objects/CustomerHandle.js"
+import { type LoadedAggregate, TicketRepository } from "../ports/EventSourcedRepository.js"
 
 /**
- * Self-service authentication for customer mutations.
+ * Self-service authentication for customer mutations. The customer
+ * presents `(ticketId, nameKana, phoneLast4)`; the helper:
  *
- * `repo.findByKey` is an exact O(1) lookup against the secondary index
- * the persistence layer maintains in lockstep with `save` (DO local
- * SQLite UNIQUE column + in-memory STM TMap), so the previous bloom-
- * filter pre-screen (Phase 0.5) is gone — the bloom's only job was to
- * dodge a slow lookup, but the lookup is now trivially cheap. Removing
- * the indexer port also drops a probabilistic data structure (with
- * non-zero false-positive rate) from the architecture in favour of a
- * deterministic exact match (ADR-0033).
+ *   1. Loads the ticket aggregate from the repository.
+ *   2. Maps `AggregateNotFoundError` (storage miss) to the
+ *      domain-level `TicketNotFoundError` so the customer-facing
+ *      surface speaks one vocabulary.
+ *   3. Verifies `(nameKana, phoneLast4)` against the stored fields;
+ *      mismatch fails with `PhoneMismatchError`. The mismatch covers
+ *      *either* component to defend against ticket-id enumeration
+ *      that already knows one factor.
  *
- * The `phoneLast4` check defends against a code-only enumeration attack
- * — an attacker who guesses a valid code still cannot mutate the booking
- * without the matching weak factor.
- *
- * Returns the {@link LoadedAggregate} so the caller can pass `revision`
- * into the next `save` and assert no concurrent writer slipped in.
- *
- * Failure modes:
- *   - findByKey miss → `AggregateNotFoundError`
- *   - load miss → `AggregateNotFoundError`
- *   - phone mismatch → `PhoneMismatchError`
- *
- * `AggregateNotFoundError` and `PhoneMismatchError` deliberately carry
- * no `code` / `phoneLast4` field so the operator's log payload stays
- * PII-clean (ADR-0009).
+ * Returns the {@link LoadedAggregate} so the caller can pass
+ * `revision` into the next `save` and assert no concurrent writer
+ * slipped in.
  */
 export const authenticateCustomer = (
-  code: BookingCode,
-  phoneLast4: PhoneLast4,
-): Effect.Effect<LoadedAggregate<Booking>, DomainError, BookingEventSourcedRepository> =>
+  ticketId: TicketId,
+  handle: CustomerHandle,
+): Effect.Effect<LoadedAggregate<Ticket>, DomainError | StorageError, TicketRepository> =>
   Effect.gen(function* () {
-    const repo = yield* BookingEventSourcedRepository
-    const id = yield* repo.findByKey(code)
-    const loaded = yield* repo.load(id)
-    if (loaded.state.phoneLast4 !== phoneLast4) {
-      return yield* Effect.fail(new PhoneMismatchError({}))
+    const repo = yield* TicketRepository
+    const loaded = yield* repo
+      .load(ticketId)
+      .pipe(
+        Effect.catchTag("AggregateNotFound", () =>
+          Effect.fail<DomainError>(new TicketNotFoundError({})),
+        ),
+      )
+    const t = loaded.state
+    if (
+      (t.nameKana as string) !== (handle.nameKana as string) ||
+      (t.phoneLast4 as string) !== (handle.phoneLast4 as string)
+    ) {
+      return yield* Effect.fail<DomainError>(new PhoneMismatchError({}))
     }
     return loaded
+  })
+
+/**
+ * Surface a non-found ticket as `TicketNotFoundError` for staff
+ * commands too. The staff dashboard already passes the id through;
+ * this helper just retags the storage miss for consistent error
+ * narration.
+ */
+export const loadOrTicketNotFound = (
+  ticketId: TicketId,
+): Effect.Effect<LoadedAggregate<Ticket>, DomainError | StorageError, TicketRepository> =>
+  Effect.gen(function* () {
+    const repo = yield* TicketRepository
+    return yield* repo
+      .load(ticketId)
+      .pipe(
+        Effect.catchTag("AggregateNotFound", () =>
+          Effect.fail<DomainError>(new TicketNotFoundError({})),
+        ),
+      )
   })

@@ -1,123 +1,150 @@
-# SYSTEM — booking-system contracts
+# SYSTEM — queue contracts
 
-> Canonical, normative description of what the system is, what it promises,
-> and what it refuses to do. ADRs in `docs/adr/` capture each load-bearing
-> decision in detail. When SYSTEM and an ADR disagree, the ADR wins (it is
-> dated and reviewed); when SYSTEM and the code disagree, fix one of them
-> and document why in an ADR.
+> Canonical, normative description of what the system is, what it
+> promises, and what it refuses to do. ADRs in `docs/adr/` capture
+> each load-bearing decision in detail. When SYSTEM and an ADR
+> disagree, the ADR wins (it is dated and reviewed); when SYSTEM
+> and the code disagree, fix one of them and document why in an ADR.
 
 ## What it is
 
-A generic, time-slot-based reservation system for in-person service
-businesses. One deployment serves one business; the core code stays
-industry-agnostic so future deployments (haircuts, repairs, consultations,
-…) can reuse it unchanged. Scale target: tens of bookings per day,
-≤ ~10 concurrent users. Standard data retention: 2 years for customer PII,
-5 years for staff-action audit logs.
+A FIFO **walk-in queue** for one in-person service business. One
+deployment serves one shop; the core code stays industry-agnostic so
+future deployments (haircuts, repairs, consultations, …) can reuse
+it unchanged. Scale target: dozens of customers per day, ≤10
+concurrent users. Data retention: 2 years for customer PII, 5 years
+for staff-action audit logs.
+
+The customer takes a number; the shop sees the queue advance. That
+is the entire shape of the product.
+
+The original time-windowed booking design (provider/resource
+matching) was scrapped under ADR-0050 once the domain was reframed
+as "the customer queues; the shop sees the queue."
 
 ## Iron principles (non-negotiable)
 
-1. **Number-tag model** — no accounts, no logins, no email, no SMS, no
-   notifications. Customers remember a `BookingCode` + last-4 phone.
-   Reminders are the customer's responsibility (screenshot, paper).
-2. **Minimum PII** — collect kana name, phone last 4, service+slot,
-   optional free text. Never collect: email, full phone, address,
-   birthday, gender, IP, UA, persistent cookies.
-3. **Zero external dependencies** beyond Cloudflare. No mail/SMS/auth
-   provider, no payments, no monitoring SaaS. The exception is local
-   `.ics` generation for customer download (server-built, not sent).
-4. **Architecturally impossible double-booking** — concurrency is
-   serialised through a per-day Durable Object, not through code-level
-   locks.
-5. **Customer self-service** — customers cancel and reschedule with
-   `BookingCode + phoneLast4`. Staff are not the bottleneck.
-6. **Architecture beauty over expedience** (memory-anchored). Type-level
-   correctness, total functions, parse-don't-validate, illegal states
-   unrepresentable, consistent abstraction levels.
-7. **Industry-agnostic vocabulary** in the core. `Service`, `Provider`,
-   `Resource` — never `appointment`, `mechanic`, `patient`. Enforced by
-   `domain-purity` guard.
-8. **Operability is a first-class feature** — runbooks, DR plan, cost
-   alerts, audit logs ship with the feature, not after.
+1. **Number-tag model** — no accounts, no logins, no email, no SMS,
+   no notifications. The customer holds a `TicketId` plus the
+   `(nameKana, phoneLast4)` handle they typed in. Reminders are the
+   customer's responsibility (keep the tab open, screenshot the
+   ticket).
+2. **Minimum PII** — collect kana name, phone last 4, optional free
+   text. Never collect: email, full phone, address, birthday,
+   gender, IP, UA, persistent cookies. (See ADR-0054.)
+3. **Zero external dependencies** beyond Cloudflare. No mail / SMS /
+   auth / payment / monitoring SaaS.
+4. **Architecturally impossible double-call** — concurrency is
+   serialised through the single `QueueShop` Durable Object actor
+   (ADR-0053), not through code-level locks.
+5. **Customer self-service** — every action a customer needs (issue,
+   check position, cancel) lives behind handle verification. Staff
+   never types a customer's data.
+6. **Beauty over expedience** — the domain is the composition of
+   three classical structures (event-sourced log + type-state
+   machine + single-writer actor; ADR-0050). New code reuses the
+   existing vocabulary or proposes an ADR.
+7. **Operations as a feature** — observability (OTel), audit log
+   retention, PII purge cron, staff capability gating, and the
+   error-codes registry are first-class members of the contract,
+   not after-thoughts.
 
-## Domain model (summary; see `docs/glossary.md` for vocabulary)
+## Domain model
 
-- Entities: `Service`, `Provider`, `Resource`, `Booking`, `BusinessHours`,
-  `Closure`, `ProviderAbsence`, `BookingEvent`, `AuditLog`.
-- Booking lifecycle: `Held` (5 min TTL) → `Confirmed` → {`Cancelled`,
-  `Rescheduled` (back to `Confirmed`), `Completed`, `NoShow`}.
-- Provider assignment for "any provider" picks happens at **hold time**,
-  deterministically by ascending TypeID. HOLD expiry releases the slot,
-  Provider, and Resource together.
-- Walk-in / phone bookings are first-class: same `Booking` rows, with a
-  `source` field of `online | walkin | phone | staff`.
-- Resource capacity is expressed by registering N separate `Resource`
-  rows (no `capacity` integer). See ADR-0008 inheritance and the
-  glossary.
+- Aggregate: `Ticket` with a type-state phantom `TicketT<S>` (ADR-0052).
+  States: `Waiting | Called | Served | NoShow | Cancelled`.
+- Event log: `TicketEvent` (`Issued | Called | Served | NoShowed |
+  Cancelled`); the truth is the totally-ordered log, the aggregate
+  is the left fold (ADR-0051).
+- Identity: `TicketId` is a TypeID `tkt_<ULID>`. Other kinds:
+  `TicketEventId`, `StaffId`, `AuditLogId`, `IdempotencyKeyId`.
+- Customer credential: `(TicketId, nameKana, phoneLast4)` triple
+  (ADR-0054). No session, no cookie.
+- Staff credential: single `operate_queue` capability scope
+  (ADR-0055), keyed off `STAFF_SESSION_SECRET` via the
+  `x-staff-token` header. The follow-up plan replaces the shared
+  bearer with HS256 JWT + signed cookie session (ADR-0058).
 
-## Technology choices (all decided; see ADRs)
+## Lifecycle
 
-| Layer                | Choice                                       | Rationale ADR / spec |
+```text
+                     ┌──── Cancel ────┐
+                     ▼                │
+   Waiting ──Call──→ Called ──Served──→ Served (terminal)
+       │                │  ──NoShow──→ NoShow (terminal)
+       └─Cancel─────────┴─Cancel─────→ Cancelled (terminal)
+```
+
+`Issued` events monotonically pre-allocate `seq` per deployment.
+The lowest-`seq` `Waiting` ticket is "next"; the staff "次を呼ぶ"
+button picks it. The DO `alarm()` tick fires the no-show TTL sweep
+(`Called → NoShow` for `called_at < now - NO_SHOW_TIMEOUT_SECONDS`,
+default 300).
+
+## Surfaces
+
+- Customer (apps/web public): `/`, `/issue`, `/ticket`.
+- Staff (apps/web token-gated): `/staff` (dashboard).
+- API (apps/default REST + SSE):
+  - `POST /api/v1/tickets` — issue
+  - `GET  /api/v1/tickets/me?ticketId&nameKana&phoneLast4` — myTicket
+  - `POST /api/v1/tickets/:id/cancel` — cancel (customer | staff)
+  - `GET  /api/v1/queue` — shopState
+  - `POST /api/v1/queue/call-next` — callNext (staff)
+  - `POST /api/v1/tickets/:id/served` — markServed (staff)
+  - `POST /api/v1/tickets/:id/no-show` — markNoShow (staff)
+  - `GET  /api/v1/queue/events` — SSE projection feed
+- OpenAPI: `/api/v1/openapi.json`.
+- Health: `/healthz`.
+
+## Technology choices
+
+| Layer                | Choice                                       | Rationale ADR        |
 | -------------------- | -------------------------------------------- | -------------------- |
-| Language             | TypeScript 6, strictest flags ON             | tsconfig.base.json   |
+| Language             | TypeScript, strictest flags ON               | tsconfig.base.json   |
 | Runtime (edge)       | Cloudflare Workers (V8 isolates)             | infra                |
-| Persistence (auth.)  | Durable Object SQLite (per day)              | ADR-0005, ADR-0006   |
-| Persistence (long)   | Cloudflare D1 + Drizzle ORM                  | ADR-0006             |
-| Persistence (rate)   | Cloudflare KV (rate limit only)              | ADR-0005             |
-| UI / SSR             | SvelteKit 2 + Svelte 5 runes                 | (Phase 1)            |
-| Service composition  | Effect (TS) — `Effect`, `Layer`, `Schema`    | ADR-0010             |
-| Schema / parsing     | Effect Schema (Effect.Schema)                | ADR-0010             |
+| Persistence (auth.)  | DurableObject SQLite (single QueueShop)      | ADR-0053             |
+| Persistence (long)   | Cloudflare D1 + Drizzle ORM                  | ADR-0006 (refined)   |
+| UI / SSR             | SvelteKit 2 + Svelte 5 runes                 | apps/web             |
+| Service composition  | Effect — `Effect`, `Layer`, `Schema`         | ADR-0010             |
+| Schema / parsing     | Effect Schema                                | ADR-0010             |
 | Time                 | `Temporal` polyfill; `Date` forbidden        | ADR-0004             |
 | IDs                  | TypeID (`prefix_ULID`)                       | ADR-0003             |
-| Booking codes        | Crockford Base32 + mod-37 checksum           | ADR-0002, ADR-0014   |
-| Slot calculation     | Bitmap × bitwise AND                         | ADR-0012             |
-| Style                | Tailwind v4                                  | (Phase 1)            |
-| Test                 | Vitest 4 + fast-check + expect-type + Stryker | (Phase 0/1)         |
+| Wire format          | REST + JSON + SSE                            | ADR-0050             |
 | Lint / format        | Biome                                        | biome.json           |
 | Dev / CI             | Docker compose `dev` / `ci` stages           | ADR-0015             |
 
-## Out of scope (forever, not just for now)
+## Out of scope (forever)
 
-Reminders / notifications (email, SMS, push), authentication of
-customers, payment processing, native apps, third-party calendar
-write-back, points / coupons, customer history, inventory, reviews,
-recommendations, A/B testing, multi-tenancy, dark/light theme switching,
-no-show penalties, automated alerts.
+- Multi-shop / multi-tenant. Each deployment is one shop. (ADR-0053
+  records this as a permanent non-goal.)
+- Time-slot reservation. ADR-0050 scraps the original framing;
+  future requests for "let me book 14:00 specifically" belong in a
+  different project.
+- Provider / resource matching. The customer joins the line; the
+  next available staff member serves them.
+- Reminders / notifications (email, SMS, push), customer
+  authentication beyond the handle, payment processing, native
+  apps, third-party calendar write-back, points / coupons, customer
+  history, inventory, reviews, recommendations.
 
-If a request maps to any of those, the answer is "different project".
+If a request maps to any of those, the answer is "different
+project".
 
 ## Deployment shape
 
 - This repo: `packages/core` (industry-agnostic library) +
   `apps/default` (generic, deployable demo). See ADR-0008, ADR-0011.
-- Each real business is a separate repo (e.g. the future
-  `bikeshop-booking`) that depends on `@booking/core` and supplies its
-  own configuration in `config/services.ts`, `config/providers.ts`, etc.
-- Deployment configuration that names a specific industry stays out of
-  this repo. The `domain-purity` guard fails the build otherwise.
+- Each real business is a separate repo that depends on
+  `@booking/core` (the workspace root) and supplies its own
+  configuration. The public surface is the queue domain.
 
 ## Privacy lifecycle
 
-- PII fields (`nameKana`, `phoneLast4`, `freeText`) are nullable.
-- A scheduled job NULLs them out 2 years after `Completed`. The
-  `BookingEvent` log keeps the audit trail without PII.
-- The `AuditLog` table has its own 5-year retention and contains no
-  customer PII.
-
-## Verification gates (CI-enforced)
-
-- `tsc --noEmit` strict, every package.
-- `biome check` clean, every file.
-- C1 branch coverage 100 % over `packages/core/src/{domain,application}`.
-- `dependency-cruiser` rules: `core` cannot import `infrastructure` or
-  `presentation`; no `cloudflare:`, no `Date`, no `throw` inside
-  `domain/` or `application/`.
-- `pii-guard` greps for forbidden vocabulary.
-- `domain-purity` greps for industry-specific terms.
-- Property tests pass 1 000 cases per scenario in `domain/slot/` and
-  state transitions.
-
-## Living document
-
-Updates to SYSTEM happen via PR. A change here that contradicts an
-existing ADR must include the superseding ADR in the same PR.
+- Customer PII (`nameKana`, `phoneLast4`, `freeText`) is purged from
+  the D1 `tickets` mirror 2 years after the ticket reaches a
+  terminal state (`Served` / `NoShow` / `Cancelled`). The DO local
+  storage carries the same data only for the active day.
+- The audit log (5y retention) carries `actor`, `action`, `data` (PII-
+  free by construction), `traceId`, and `recorded_at`. PII never
+  reaches it (ADR-0009).

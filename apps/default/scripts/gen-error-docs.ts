@@ -1,17 +1,15 @@
 import { errorClassRegistry, errorToI18nKey } from "@booking/core"
 
 /**
- * Phase 3 PR#8 — generate `docs/error-codes.md` from
- * `errorClassRegistry`. Drift-gated by `just gen-error-docs` plus
- * `git diff --exit-code -- docs/error-codes.md` so adding a new
- * `Schema.TaggedErrorClass` to the registry forces a docs refresh
- * in the same commit, and the generated table is the canonical
- * single-source-of-truth surface for all 33 tags.
+ * Generate `docs/error-codes.md` from `errorClassRegistry`. Drift-
+ * gated by `just gen-error-docs` plus `git diff --exit-code` on the
+ * generated file, so adding a new `Schema.TaggedErrorClass` to the
+ * registry forces a docs refresh in the same commit.
  *
  * Categorisation rule — the registry is structurally ordered as
- * Validation (17) → Domain (13) → Infrastructure (3). Each entry's
- * static `severity` matches its category, so the table groups by
- * severity directly without re-listing the static order.
+ * Validation → Domain → Infrastructure. Each entry's static
+ * `severity` matches its category, so the table groups by severity
+ * directly without re-listing the static order.
  */
 
 type ErrorRow = {

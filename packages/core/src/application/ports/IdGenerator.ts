@@ -1,41 +1,27 @@
 import { Context, type Effect } from "effect"
 import type {
   AuditLogId,
-  BookingEventId,
-  BookingId,
-  BusinessHoursId,
-  ClosureId,
   IdempotencyKeyId,
-  ProviderAbsenceId,
-  ProviderId,
-  ResourceId,
-  ServiceId,
+  StaffId,
+  TicketEventId,
+  TicketId,
 } from "../../domain/types/EntityId.js"
-import type { BookingCode } from "../../domain/value-objects/BookingCode.js"
 
 /**
- * Centralised id generation, abstracted as an `Effect.Tag`. Production
- * wires {@link IdGenerator} to a TypeID + Crockford-Base32 implementation
- * (`UlidIdGeneratorLive`); tests wire a seeded counter
- * (`DeterministicIdGeneratorLive`) so property tests are reproducible.
- *
- * All methods are `Effect`s so the layer can return failure (e.g. when a
- * deterministic generator exhausts its keyspace) without callers crafting
- * try / catch.
+ * Centralised id generation. Production wires {@link IdGenerator} to
+ * TypeID + Crockford-Base32 (`UlidIdGeneratorLive`); tests wire a
+ * seeded counter (`DeterministicIdGeneratorLive`) so property tests
+ * are reproducible. The kind set covers the five identifiers the
+ * queue domain mints: Ticket, TicketEvent, Staff, AuditLog,
+ * IdempotencyKey.
  */
 export class IdGenerator extends Context.Service<
   IdGenerator,
   {
-    readonly newBookingId: Effect.Effect<BookingId>
-    readonly newServiceId: Effect.Effect<ServiceId>
-    readonly newProviderId: Effect.Effect<ProviderId>
-    readonly newResourceId: Effect.Effect<ResourceId>
-    readonly newClosureId: Effect.Effect<ClosureId>
-    readonly newProviderAbsenceId: Effect.Effect<ProviderAbsenceId>
-    readonly newBusinessHoursId: Effect.Effect<BusinessHoursId>
-    readonly newBookingEventId: Effect.Effect<BookingEventId>
+    readonly newTicketId: Effect.Effect<TicketId>
+    readonly newTicketEventId: Effect.Effect<TicketEventId>
+    readonly newStaffId: Effect.Effect<StaffId>
     readonly newAuditLogId: Effect.Effect<AuditLogId>
     readonly newIdempotencyKeyId: Effect.Effect<IdempotencyKeyId>
-    readonly newBookingCode: Effect.Effect<BookingCode>
   }
 >()("@booking/core/IdGenerator") {}

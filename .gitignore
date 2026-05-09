@@ -13,8 +13,23 @@ Thumbs.db
 *.log
 .scratch/
 
+# Diagnose snapshot (just diagnose / scripts/diagnose.sh)
+.diagnose/
+
+# Long-running dev container ID cache (scripts/dev-exec.sh)
+.cache/
+
 # Direnv
 .envrc.local
+
+# Claude Code runtime state (scheduled-task lock etc.)
+.claude/
+
+# Serena MCP per-project cache. The MCP server is configured at
+# user scope (`claude mcp add -s user serena ...`), so the project
+# repo itself stays Serena-free; only the runtime cache shows up
+# inside the worktree on first activation.
+.serena/
 
 # Node / pnpm
 node_modules/
@@ -44,3 +59,8 @@ coverage/
 *.sqlite3
 apps/default/schema.graphql
 apps/web/src/graphql-env.d.ts
+
+# Phase 0 of the queue pivot scrapped the slot-graph drizzle-kit
+# metadata; the queue migrations are hand-rolled, so the meta dir
+# only ever appears when drizzle-kit fires accidentally.
+apps/default/migrations/meta/

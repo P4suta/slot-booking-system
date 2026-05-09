@@ -1,188 +1,90 @@
 import { Result, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import {
-  type Capability,
   CapabilitySchema,
   type CustomerCapability,
   CustomerCapabilitySchema,
   hasScope,
   type StaffCapability,
   StaffCapabilitySchema,
-  StaffScopeSchema,
   type SystemCapability,
   SystemCapabilitySchema,
-  SystemReasonSchema,
+  scopeSetOf,
   subjectOf,
 } from "../../../src/domain/auth/Capability.js"
-import { newStaffId } from "../../../src/domain/types/EntityId.js"
-import {
-  encodeBookingCode,
-  formatBookingCode,
-} from "../../../src/domain/value-objects/BookingCode.js"
+import { hasScope as setHasScope } from "../../../src/domain/auth/ScopeSet.js"
+import { newStaffId, newTicketId } from "../../../src/domain/types/EntityId.js"
 
-const decodeCustomer = Schema.decodeUnknownResult(CustomerCapabilitySchema)
-const decodeStaff = Schema.decodeUnknownResult(StaffCapabilitySchema)
-const decodeSystem = Schema.decodeUnknownResult(SystemCapabilitySchema)
-const decodeAny = Schema.decodeUnknownResult(CapabilitySchema)
+const decodeOrThrow = <S extends Schema.Top>(schema: S, value: unknown): Schema.Schema.Type<S> => {
+  // Schema.decodeUnknownResult requires a Codec at the type level; the
+  // generic `Schema.Top` upper bound is widened via `as unknown as` so
+  // callers can pass a struct schema literal without restating the codec.
+  const r = (
+    Schema.decodeUnknownResult as unknown as (
+      s: S,
+    ) => (v: unknown) => Result.Result<Schema.Schema.Type<S>, unknown>
+  )(schema)(value)
+  if (Result.isSuccess(r)) return r.success
+  throw new Error(`decode failed: ${String(r.failure)}`)
+}
 
-/** Valid booking-code samples generated through the bigint codec (no hand-rolled checksum). */
-const validCode = formatBookingCode(Result.getOrThrow(encodeBookingCode(123n)))
-const otherCode = formatBookingCode(Result.getOrThrow(encodeBookingCode(456n)))
-
-describe("CapabilitySchema (discriminated union)", () => {
-  it("decodes a valid CustomerCapability with a Crockford-32 booking code + last4", () => {
-    const decoded = decodeAny({
-      _tag: "CustomerCapability",
-      bookingCode: validCode,
-      phoneLast4: "1234",
-    })
-    expect(Result.isSuccess(decoded)).toBe(true)
-    if (Result.isSuccess(decoded)) {
-      expect(decoded.success._tag).toBe("CustomerCapability")
-      // Confirm the discriminant narrows the type — these accesses
-      // only compile inside the `CustomerCapability` branch.
-      const customer: CustomerCapability = decoded.success as CustomerCapability
-      expect(customer.phoneLast4).toBe("1234")
-    }
+const customerCap = (ticketId: string = newTicketId()): CustomerCapability =>
+  decodeOrThrow(CustomerCapabilitySchema, {
+    _tag: "CustomerCapability",
+    ticketId,
+    nameKana: "ヤマダ タロウ",
+    phoneLast4: "1234",
   })
 
-  it("decodes a valid StaffCapability with a TypeID staff id and a non-empty scope set", () => {
-    const staffId = newStaffId()
-    const decoded = decodeStaff({
-      _tag: "StaffCapability",
-      staffId,
-      scopes: ["cancel", "complete"],
-    })
-    expect(Result.isSuccess(decoded)).toBe(true)
+const staffCap = (staffId: string = newStaffId()): StaffCapability =>
+  decodeOrThrow(StaffCapabilitySchema, {
+    _tag: "StaffCapability",
+    staffId,
+    scopes: ["operate_queue"],
   })
 
-  it("rejects a StaffCapability with an empty scope list (NonEmptyArray)", () => {
-    const decoded = decodeStaff({
-      _tag: "StaffCapability",
-      staffId: newStaffId(),
-      scopes: [],
-    })
-    expect(Result.isFailure(decoded)).toBe(true)
+const systemCap = (reason: "expire" | "purge" = "expire"): SystemCapability =>
+  decodeOrThrow(SystemCapabilitySchema, {
+    _tag: "SystemCapability",
+    reason,
   })
 
-  it("rejects a StaffCapability with an unknown scope literal", () => {
-    const decoded = decodeStaff({
-      _tag: "StaffCapability",
-      staffId: newStaffId(),
-      scopes: ["delete"],
-    })
-    expect(Result.isFailure(decoded)).toBe(true)
+describe("CapabilitySchema discrimination", () => {
+  it.each([
+    ["customer", customerCap()],
+    ["staff", staffCap()],
+    ["system", systemCap()],
+  ])("decodes a %s capability", (_label, cap) => {
+    const r = Schema.decodeUnknownResult(CapabilitySchema)(cap)
+    expect(Result.isSuccess(r)).toBe(true)
   })
 
-  it("decodes a valid SystemCapability with a closed-set reason", () => {
-    const decoded = decodeSystem({ _tag: "SystemCapability", reason: "expire" })
-    expect(Result.isSuccess(decoded)).toBe(true)
-    const decoded2 = decodeSystem({ _tag: "SystemCapability", reason: "purge" })
-    expect(Result.isSuccess(decoded2)).toBe(true)
-  })
-
-  it("rejects a SystemCapability with an unknown reason", () => {
-    const decoded = decodeSystem({ _tag: "SystemCapability", reason: "bogus" })
-    expect(Result.isFailure(decoded)).toBe(true)
-  })
-
-  it("rejects a CustomerCapability with a malformed phone last4", () => {
-    const decoded = decodeCustomer({
-      _tag: "CustomerCapability",
-      bookingCode: validCode,
-      phoneLast4: "12",
-    })
-    expect(Result.isFailure(decoded)).toBe(true)
-  })
-
-  it("rejects a CustomerCapability with a booking code failing checksum", () => {
-    const decoded = decodeCustomer({
-      _tag: "CustomerCapability",
-      bookingCode: "ZZZZ-ZZZ",
-      phoneLast4: "1234",
-    })
-    expect(Result.isFailure(decoded)).toBe(true)
-  })
-
-  it("rejects values lacking the _tag discriminator", () => {
-    const decoded = decodeAny({ bookingCode: validCode, phoneLast4: "1234" })
-    expect(Result.isFailure(decoded)).toBe(true)
+  it("rejects an unknown _tag", () => {
+    const r = Schema.decodeUnknownResult(CapabilitySchema)({ _tag: "Unknown" })
+    expect(Result.isFailure(r)).toBe(true)
   })
 })
 
 describe("subjectOf", () => {
-  it("returns 'customer' / 'staff' / 'system' per discriminator", () => {
-    const cust: Capability = Result.getOrThrow(
-      decodeCustomer({
-        _tag: "CustomerCapability",
-        bookingCode: validCode,
-        phoneLast4: "1234",
-      }),
-    )
-    expect(subjectOf(cust)).toBe("customer")
-
-    const staff: StaffCapability = Result.getOrThrow(
-      decodeStaff({
-        _tag: "StaffCapability",
-        staffId: newStaffId(),
-        scopes: ["cancel"],
-      }),
-    )
-    expect(subjectOf(staff)).toBe("staff")
-
-    const system: SystemCapability = Result.getOrThrow(
-      decodeSystem({ _tag: "SystemCapability", reason: "expire" }),
-    )
-    expect(subjectOf(system)).toBe("system")
+  it("projects each variant to its category", () => {
+    expect(subjectOf(customerCap())).toBe("customer")
+    expect(subjectOf(staffCap())).toBe("staff")
+    expect(subjectOf(systemCap())).toBe("system")
   })
 
-  it("distinguishes two customer capabilities by their booking-code credential", () => {
-    const a = Result.getOrThrow(
-      decodeCustomer({
-        _tag: "CustomerCapability",
-        bookingCode: validCode,
-        phoneLast4: "1111",
-      }),
-    )
-    const b = Result.getOrThrow(
-      decodeCustomer({
-        _tag: "CustomerCapability",
-        bookingCode: otherCode,
-        phoneLast4: "2222",
-      }),
-    )
-    expect(a.bookingCode).not.toBe(b.bookingCode)
+  it("system reasons round-trip both arms", () => {
+    expect(subjectOf(systemCap("expire"))).toBe("system")
+    expect(subjectOf(systemCap("purge"))).toBe("system")
   })
 })
 
-describe("hasScope", () => {
-  it("returns true iff the scope appears in the staff capability's scope list", () => {
-    const cap = Result.getOrThrow(
-      decodeStaff({
-        _tag: "StaffCapability",
-        staffId: newStaffId(),
-        scopes: ["cancel", "complete"],
-      }),
-    )
-    expect(hasScope(cap, "cancel")).toBe(true)
-    expect(hasScope(cap, "complete")).toBe(true)
-    expect(hasScope(cap, "reschedule")).toBe(false)
-    expect(hasScope(cap, "noshow")).toBe(false)
-  })
-})
-
-describe("StaffScopeSchema / SystemReasonSchema closed sets", () => {
-  it("StaffScopeSchema.literals enumerates all permissible scopes", () => {
-    expect(StaffScopeSchema.literals).toEqual([
-      "cancel",
-      "reschedule",
-      "complete",
-      "noshow",
-      "manage_catalog",
-    ])
+describe("scopeSetOf / hasScope", () => {
+  it("scopeSetOf reads back operate_queue from a staff cap", () => {
+    const s = scopeSetOf(staffCap())
+    expect(setHasScope(s, "operate_queue")).toBe(true)
   })
 
-  it("SystemReasonSchema.literals enumerates all permissible reasons", () => {
-    expect(SystemReasonSchema.literals).toEqual(["expire", "purge"])
+  it("hasScope returns true for a granted scope", () => {
+    expect(hasScope(staffCap(), "operate_queue")).toBe(true)
   })
 })

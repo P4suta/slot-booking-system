@@ -28,6 +28,47 @@ export const summarizeParse = (issue: SchemaIssue.Issue): string => {
   return stripTreePrefix(head)
 }
 
+/**
+ * Walk a {@link SchemaIssue.Issue} tree and return the first
+ * top-level property key whose decode failed, or `undefined` for a
+ * root-level failure (e.g. wrong type for the entire body).
+ *
+ * The HTTP boundary uses this to dispatch a `Schema.Struct` decode
+ * failure to a field-specific tag (`InvalidPhoneLast4`,
+ * `InvalidNameKana`, …). The lookup is path[0]: nested failures
+ * (e.g. inside a record field) carry the *struct* key, which is
+ * the granularity the response envelope cares about.
+ *
+ * `Pointer` carries the property path explicitly. `Composite` /
+ * `AnyOf` aggregate sibling failures — we recurse into each child
+ * and stop at the first hit. `Filter` / `Encoding` wrap a single
+ * inner issue (refinement / transformation failure); we descend
+ * into `.issue`. Leaf variants (`InvalidType`, `InvalidValue`,
+ * `MissingKey`, `UnexpectedKey`, `Forbidden`, `OneOf`) carry no
+ * sub-path and yield `undefined`.
+ */
+export const firstFailedFieldKey = (issue: SchemaIssue.Issue): string | undefined => {
+  switch (issue._tag) {
+    case "Pointer": {
+      const head = issue.path[0]
+      if (typeof head === "string") return head
+      return firstFailedFieldKey(issue.issue)
+    }
+    case "Composite":
+    case "AnyOf":
+      for (const child of issue.issues) {
+        const found = firstFailedFieldKey(child)
+        if (found !== undefined) return found
+      }
+      return undefined
+    case "Filter":
+    case "Encoding":
+      return firstFailedFieldKey(issue.issue)
+    default:
+      return undefined
+  }
+}
+
 const TREE_PREFIX = /^[\s│├└─]+/
 
 const stripTreePrefix = (line: string): string => line.replace(TREE_PREFIX, "").trim()

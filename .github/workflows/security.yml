@@ -1,0 +1,164 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Schedule trigger intentionally omitted: ~/.claude/CLAUDE.md §5
+  # forbids `on.schedule` (Dependabot weekly is the only exception).
+  # Push + PR cover the regression-detection envelope.
+
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  osv:
+    name: OSV-Scanner + pnpm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - name: pnpm install (frozen)
+        run: pnpm install --recursive --frozen-lockfile
+      # OSV-Scanner walks the lockfile + the project source for known
+      # vulnerable versions across npm + transitive deps. The repo
+      # root carries a placeholder `action.yml` without a `runs:`
+      # section; the actually-runnable composite action lives under
+      # the `osv-scanner-action/` sub-path. The default ruleset
+      # covers the npm ecosystem.
+      - name: Run OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v2.3.5
+        with:
+          scan-args: |-
+            --recursive
+            --skip-git
+            ./
+        # Effect 4 beta + drizzle-orm rc transitively pull pre-release
+        # versions OSV cannot match against an advisory range; warn-
+        # only stops the false negatives blocking PRs.
+        continue-on-error: true
+      # pnpm audit is the second opinion: it queries the npm
+      # advisory DB rather than OSV's federated graph, so a CVE
+      # caught by either lights up.
+      - name: pnpm audit (high+)
+        run: pnpm audit --prod --audit-level=high
+        continue-on-error: true
+
+  sbom:
+    name: SBOM (CycloneDX) + provenance attestation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --recursive --frozen-lockfile
+      # `cdxgen` is the CycloneDX-OWASP multi-ecosystem SBOM
+      # generator; unlike `@cyclonedx/cyclonedx-npm` (which calls
+      # `npm ls` internally and chokes on pnpm's symlinked
+      # workspace store), cdxgen reads `pnpm-lock.yaml` natively.
+      # Output is a CycloneDX 1.5 JSON document, the same shape the
+      # SLSA attestor below consumes (NIST SSDF v1.1 PS.3).
+      - name: Generate CycloneDX SBOM
+        run: |-
+          npx --yes @cyclonedx/cdxgen@latest \
+            --type pnpm \
+            --output bom.cdx.json \
+            --no-recurse \
+            --spec-version 1.5
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-cyclonedx
+          path: bom.cdx.json
+          if-no-files-found: error
+      # SLSA Level 2 build-provenance via the GitHub-native attestor
+      # (SSDF PW.7). Subject = the SBOM artifact so consumers can
+      # verify the supply-chain trace through `gh attestation
+      # verify`.
+      - name: Attest build provenance for SBOM
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: bom.cdx.json
+
+  semgrep:
+    name: Semgrep (typescript + OWASP Top Ten)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: returntocorp/semgrep:latest
+    steps:
+      - uses: actions/checkout@v6
+      # `p/typescript` is the language pack; `p/owasp-top-ten`
+      # covers the OWASP API Top 10 (2023) families that map cleanly
+      # to a Workers + edge-DO surface (BOLA, Broken Auth,
+      # Unrestricted Resource Consumption, Misconfig).
+      - name: Run Semgrep
+        run: |-
+          semgrep ci \
+            --config p/typescript \
+            --config p/owasp-top-ten \
+            --config p/r2c-security-audit \
+            --sarif --output semgrep.sarif
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        continue-on-error: true
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  trivy:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      # Trivy walks the filesystem (no Docker daemon required) for
+      # Dockerfile misconfig, secret patterns Trivy bundles, and
+      # transitive dependency CVEs that surface through OS-level
+      # package metadata. SARIF upload feeds the Code Scanning tab
+      # alongside Semgrep + CodeQL.
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          exit-code: 0
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy

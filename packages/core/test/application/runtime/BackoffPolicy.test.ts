@@ -2,19 +2,20 @@ import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 import {
   type BackoffPolicy,
+  decorrelatedJitter,
   fixedBackoff,
   nextAttemptMs,
 } from "../../../src/application/runtime/BackoffPolicy.js"
 
 /**
- * Phase 3 PR#8 / commit 15 — coverage closure for the outbox-relay
- * backoff schedule. The policy is a pure value carrier with two
- * constructors and one composer; property-based tests cover every
- * branch (empty / negative / saturating / in-range) plus the
- * deterministic algebraic identities the relay relies on.
+ * Coverage closure for the outbox-relay backoff schedule. The policy
+ * is a pure value carrier with two constructors and one composer;
+ * property-based tests cover every branch (empty / negative /
+ * saturating / in-range) plus the deterministic algebraic identities
+ * the relay relies on.
  */
 
-describe("fixedBackoff (commit 15)", () => {
+describe("fixedBackoff", () => {
   it("an empty schedule saturates to a single attempt with zero delay", () => {
     const p = fixedBackoff([])
     expect(p.maxAttempts).toBe(1)
@@ -93,5 +94,63 @@ describe("fixedBackoff (commit 15)", () => {
     }
     expect(custom.nextDelayMs(0)).toBe(100)
     expect(custom.nextDelayMs(3)).toBe(800)
+  })
+})
+
+describe("decorrelatedJitter", () => {
+  it("every sample lies in [base, cap] regardless of rng output", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 1_000 }),
+        fc.integer({ min: 0, max: 60_000 }),
+        fc.array(fc.double({ min: 0, max: 0.999_999, noNaN: true }), {
+          minLength: 1,
+          maxLength: 30,
+        }),
+        (base, capDelta, samples) => {
+          const cap = base + capDelta
+          let i = 0
+          const policy = decorrelatedJitter(
+            { base, cap, maxAttempts: samples.length + 1 },
+            () => samples[i++ % samples.length] ?? 0,
+          )
+          for (let n = 0; n < samples.length; n += 1) {
+            const d = policy.nextDelayMs(n)
+            expect(d).toBeGreaterThanOrEqual(base)
+            expect(d).toBeLessThanOrEqual(cap)
+          }
+        },
+      ),
+    )
+  })
+
+  it("a sub-base cap floors back to base (the policy stays total)", () => {
+    const policy = decorrelatedJitter({ base: 100, cap: 10, maxAttempts: 3 }, () => 0.5)
+    // cap < base — the inner min would return 10, the outer max lifts
+    // it back to 100. The recurrence keeps prev = base because cap was
+    // saturating, so subsequent calls stay at base too.
+    expect(policy.nextDelayMs(0)).toBe(100)
+    expect(policy.nextDelayMs(1)).toBe(100)
+    expect(policy.nextDelayMs(2)).toBe(100)
+  })
+
+  it("rng = () => 0 floors at base; rng = () => 1-ε grows toward cap", () => {
+    const lo = decorrelatedJitter({ base: 100, cap: 100_000, maxAttempts: 10 }, () => 0)
+    expect(lo.nextDelayMs(0)).toBe(100)
+    expect(lo.nextDelayMs(1)).toBe(100)
+    expect(lo.nextDelayMs(2)).toBe(100)
+
+    const hi = decorrelatedJitter({ base: 100, cap: 100_000, maxAttempts: 10 }, () => 0.999_999)
+    const a0 = hi.nextDelayMs(0)
+    const a1 = hi.nextDelayMs(1)
+    const a2 = hi.nextDelayMs(2)
+    expect(a0).toBeGreaterThan(100)
+    expect(a1).toBeGreaterThanOrEqual(a0)
+    expect(a2).toBeGreaterThanOrEqual(a1)
+  })
+
+  it("maxAttempts is reported verbatim from the config", () => {
+    const policy = decorrelatedJitter({ base: 1, cap: 100, maxAttempts: 7 }, () => 0.5)
+    expect(policy.maxAttempts).toBe(7)
   })
 })

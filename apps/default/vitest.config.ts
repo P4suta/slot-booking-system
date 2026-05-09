@@ -1,17 +1,54 @@
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers"
 import { defineConfig } from "vitest/config"
 
 /**
- * Phase 2.6 / BI-9 carry-over (ADR-0037 + ADR-0038): node-environment
- * test setup for the Yoga / OTel boundary contracts. The full
- * Miniflare integration suite (vitest-pool-workers, `runInDurableObject`,
- * D1 binding) is gated behind `pnpm test:integration` and lives under
- * `test/integration/`; this default suite stays in node so the inner
- * loop is fast.
+ * Vitest is split into two projects so the pure-Node tests (worker
+ * entry config, JWT round-trip, session crypto) do not have to
+ * pay the Miniflare boot cost, while the integration tests under
+ * `test/integration/**` run inside the Cloudflare Workers runtime
+ * via the `cloudflareTest` Vite plugin (vitest-pool-workers ≥
+ * 0.16, the v4 plugin-based API).
+ *
+ *   - `node` project: pre-existing tests under `test/**` minus the
+ *     integration directory. environment: "node", standard vitest.
+ *   - `workers` project: integration tests, runtime provided by
+ *     the `cloudflareTest` plugin which spins up a Miniflare
+ *     instance per worker and bridges it with vitest. Reads
+ *     `wrangler.toml` for binding shape (DO + D1 + unsafe rate
+ *     limit).
  */
 export default defineConfig({
   test: {
-    include: ["test/**/*.test.ts"],
-    exclude: ["test/integration/**", "node_modules/**"],
-    environment: "node",
+    // See `packages/core/vitest.config.ts` for the rationale —
+    // `streamReporter` emits CASE_START events for the wrapper's
+    // heartbeat consumer. Defined at the workspace root so both
+    // projects (node + workers) share the same emit channel.
+    reporters: ["verbose", "../../scripts/test/streamReporter.ts"],
+    projects: [
+      {
+        test: {
+          name: "node",
+          include: ["test/**/*.test.ts"],
+          exclude: ["test/integration/**", "node_modules/**"],
+          environment: "node",
+        },
+      },
+      {
+        plugins: [
+          cloudflareTest({
+            main: "./src/worker.ts",
+            wrangler: { configPath: "./wrangler.toml" },
+            miniflare: {
+              compatibilityFlags: ["nodejs_compat"],
+            },
+          }),
+        ],
+        test: {
+          name: "workers",
+          include: ["test/integration/**/*.integration.test.ts"],
+          setupFiles: ["./test/integration/_harness/teardown.ts"],
+        },
+      },
+    ],
   },
 })

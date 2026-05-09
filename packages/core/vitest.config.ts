@@ -22,6 +22,11 @@ export default defineConfig({
   },
   test: {
     include: ["test/**/*.test.ts"],
+    // `streamReporter` emits a `CASE_START` line the moment a test
+    // begins, closing the visibility gap left by the default /
+    // verbose reporters which only print *after* a case finishes.
+    // `scripts/test-runner.sh` consumes those events for heartbeat.
+    reporters: ["verbose", "../../scripts/test/streamReporter.ts"],
     benchmark: {
       include: ["test/**/*.bench.ts"],
       reporters: ["default"],
@@ -34,8 +39,6 @@ export default defineConfig({
       exclude: [
         "src/**/index.ts",
         "src/**/*.d.ts",
-        // Type-only files — declarations / discriminated-union types only.
-        "src/domain/booking/Command.ts",
         // Effect 4 `Context.Service<T, S>()(name)` factory pattern.
         // V8 source-map coverage cannot instrument the dynamic class
         // extension; every `application/ports/*.ts` reads as 0 % despite
@@ -47,20 +50,12 @@ export default defineConfig({
         // notes the carry-over.
         "src/application/ports/**/*.ts",
       ],
-      // C1 100 % is the standing target (Day-1 user discipline). The
-      // current baseline (Phase 3 PR#8) sits at 98.6 lines / 98.8 funcs
-      // / 87 branches because of pre-PR#8 gaps in `domain/slot/bipartite.ts`,
-      // `domain/slot/computeAvailableSlots.ts:275-283`, `derive/openapi.ts`
-      // generator branches, and a few smaller numeric edge cases. The
-      // threshold tracks the achieved baseline so a regression below it
-      // fires; the path back to 100 is Phase 3.x scope (each file gets
-      // a dedicated property-based test suite covering the saturating /
-      // unreachable branches the current units skip).
+      // C1 100 % is the queue's standing coverage target (CLAUDE.md §4).
       thresholds: {
-        branches: 86,
-        functions: 98,
-        lines: 98,
-        statements: 97,
+        branches: 100,
+        functions: 100,
+        lines: 100,
+        statements: 100,
       },
     },
   },

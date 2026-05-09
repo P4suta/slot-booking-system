@@ -9,9 +9,18 @@
 #   - typos          : optional host-side typo check
 #   - actionlint     : optional host-side workflow lint
 #   - markdownlint   : optional host-side markdown lint
+#   - websocat       : drives `just smoke-queue-ws` (WS projection feed)
+#   - tsx            : runs the host-side TS orchestrators
+#                      (`scripts/check.ts`, future `scripts/fuzz`,
+#                      `scripts/diagnose`). Each orchestrator spawns
+#                      `just <gate>` per child, so the gate *body*
+#                      still executes inside the container — only the
+#                      orchestration layer is host-resident.
 #
-# Node / pnpm / wrangler / biome / vitest / tsc are deliberately NOT
-# listed here — they live inside the container.
+# App-level Node / pnpm / wrangler / biome / vitest / tsc are
+# deliberately NOT listed here — they live exclusively inside the
+# container. (Node itself is provided host-side by the user-global
+# mise install for tsx to dispatch on.)
 
 [tools]
 just                          = "latest"
@@ -20,3 +29,5 @@ lefthook                      = "latest"
 actionlint                    = "latest"
 "npm:markdownlint-cli2"      = "latest"
 "github:crate-ci/committed"  = "latest"
+"github:vi/websocat"         = { version = "latest", bin = "websocat" }
+"npm:tsx"                    = "latest"

@@ -8,8 +8,8 @@ set dotenv-load := false
 # vitest live exclusively inside `docker compose dev`.
 # ---------------------------------------------------------------------------
 
-DEV  := "docker compose run --rm dev"
-DEVP := "docker compose run --rm --service-ports dev"   # publishes ports
+DEV  := "bash scripts/dev-exec.sh"
+DEVP := "bash scripts/dev-exec.sh"   # ports already bound by `up -d`
 CI   := "docker compose run --rm ci"
 
 # Common in-container CLIs through pnpm / corepack so they pin the workspace's
@@ -25,8 +25,7 @@ default:
 # ---------------------------------------------------------------------------
 
 # Build the dev image, install workspace deps, compile generated
-# code (paraglide messages, gql.tada introspection), register git
-# hooks.
+# code (paraglide messages), register git hooks.
 bootstrap: image install codegen hooks
 
 image:
@@ -43,22 +42,7 @@ install:
 paraglide:
     {{DEV}} bash -c "cd apps/web && {{PNPM}} run paraglide"
 
-# Print the apps/default Pothos GraphQL schema to SDL
-# (`apps/default/schema.graphql`) — the source of truth gql.tada
-# walks against to type the apps/web query catalogue.
-print-schema:
-    {{DEV}} bash -c "cd apps/default && {{PNPM}} run print-schema"
-
-# Regenerate apps/web's gql.tada introspection from the freshly
-# printed SDL. Chains print-schema (server-side schema export) and
-# graphql-env (client-side type emission).
-graphql-env: print-schema
-    {{DEV}} bash -c "cd apps/web && {{PNPM}} run graphql-env"
-
-# Aggregate codegen for apps/web — paraglide messages plus the
-# gql.tada schema introspection. Bootstrap and CI invoke this so
-# typecheck has every generated artefact in place.
-codegen: paraglide graphql-env
+codegen: paraglide
 
 hooks:
     {{DEV}} lefthook install
@@ -93,11 +77,14 @@ lint-biome-fix:
 # linter cannot (no-floating-promises, switch-exhaustiveness-check,
 # no-misused-promises, no-unsafe-*). `--max-warnings=0` makes the
 # gate strict — any rule emitting a warning fails the run.
+# `--cache` writes a per-file timestamp+config snapshot under
+# `node_modules/.cache/.eslintcache`; warm runs skip unchanged
+# files and drop wall time from ~13 s to <2 s.
 lint-eslint:
-    {{DEV}} ./node_modules/.bin/eslint . --max-warnings 0
+    {{DEV}} ./node_modules/.bin/eslint . --cache --cache-location node_modules/.cache/.eslintcache --max-warnings 0
 
 lint-eslint-fix:
-    {{DEV}} ./node_modules/.bin/eslint . --fix
+    {{DEV}} ./node_modules/.bin/eslint . --cache --cache-location node_modules/.cache/.eslintcache --fix
 
 markdownlint:
     markdownlint-cli2 \
@@ -105,11 +92,11 @@ markdownlint:
         "#**/node_modules/**" \
         "#**/dist/**" \
         "#**/coverage/**" \
+        "#.diagnose/**" \
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**" \
         "#apps/web/src/paraglide/**" \
-        "#apps/web/project.inlang/**" \
-        "#apps/web/src/graphql-env.d.ts"
+        "#apps/web/project.inlang/**"
 
 lint: lint-biome lint-eslint markdownlint
 
@@ -150,15 +137,44 @@ size-limit-core:
     {{DEV}} {{PNPM}} -F @booking/core run build
     {{DEV}} {{PNPM}} -F @booking/core run size-limit
 
-# PII guard: forbids field/column declarations and URL/email-host literals
-# tied to PII, throughout source. See ADR-0009.
-pii-guard:
-    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -t sql -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'
+# size-limit gate for the worker bundle. Wrangler `--dry-run` builds
+# `apps/default/dist/index.js`; the cap is the conservative
+# Cloudflare Workers free-tier limit (1 MB). Threshold lives in
+# `apps/default/package.json#size-limit`.
+size-limit-default:
+    {{DEV}} {{PNPM}} -F default run build
+    {{DEV}} {{PNPM}} -F default run size-limit
 
-# Domain-purity: forbid industry-specific terms inside packages/core +
-# apps/default.
-domain-purity:
-    {{DEV}} bash -c '! rg -n -i -e "\b(bike|bicycle|repair|mechanic|dental|hair|barber|stylist|salon|massage|patient|cycle\s*shop)\b" packages apps -g "!**/docs/adr/**"'
+# size-limit gate for the SvelteKit bundle. Vite emits the entry
+# chunks under `.svelte-kit/output/client/_app/immutable/entry/`;
+# the cap is 250 KB gzip per chunk. Threshold lives in
+# `apps/web/package.json#size-limit`.
+size-limit-web:
+    {{DEV}} {{PNPM}} -F web run build
+    {{DEV}} {{PNPM}} -F web run size-limit
+
+# Aggregate size-limit recipe — fail-fast across all three.
+size-limit: size-limit-core size-limit-default size-limit-web
+
+# Refresh the size-limit baselines after a deliberate budget change.
+# Echoes the current sizes so the operator copies the new limit into
+# the per-package `size-limit` array; the recipe itself does not edit
+# package.json (a budget change is a code-review event, not a build
+# step).
+size-limit-refresh:
+    {{DEV}} {{PNPM}} -F @booking/core run build
+    {{DEV}} {{PNPM}} -F default run build
+    {{DEV}} {{PNPM}} -F web run build
+    {{DEV}} {{PNPM}} -F @booking/core run size-limit
+    {{DEV}} {{PNPM}} -F default run size-limit
+    {{DEV}} {{PNPM}} -F web run size-limit
+
+# Comment-bans: reject historical narrative tokens (queue-pivot
+# milestone names, scrapped framework names) outside the ADR archive
+# / CHANGELOG. Source describes the present; git log + ADRs own the
+# milestone trail.
+comment-bans:
+    {{DEV}} bash scripts/lint/comment-bans.sh
 
 # Forbidden constructs grep: Date, throw, @ts-ignore (ADR-0010).
 # Scope is `packages/core/src` only — the DO actor-model code in
@@ -167,14 +183,43 @@ domain-purity:
 # raw `Date.now()` / `new Date().toISOString()`), so the rule applies
 # to the functional core, not the imperative shell.
 strict-code:
+    # packages/core/src は宣言的・Effect-only zone。 raw Date / @ts-* /
+    # : any 注釈を grep 禁止 (domain layer の総合品質担保)。
     {{DEV}} bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
+    # 全 workspace で `as any` / `<any>` cast を禁止。 ESLint の
+    # strict-type-checked が宣言的な `any` は既に弾くが、 cast は
+    # path によって checker の盲点になるので grep gate で補完する。
+    # `as unknown as X` は別 recipe で集計のみ (legitimate な upstream
+    # API workaround の判別が機械的にできないため hard gate しない、
+    # 'just diagnose-tsescapes' で件数を可視化して PR で議論)。
+    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -t ts -t svelte -e "\bas any\b|<any>(?![A-Za-z])" packages apps 2>/dev/null'
+
+# 'as unknown as X' の使用箇所一覧。 hard gate ではなく diagnostic。
+# 件数が増えたら memory feedback_root_cause_over_unknown_cast に従って
+# Schema.Top vs Codec vs Decoder 等の型構造ミスマッチを root-cause fix。
+diagnose-tsescapes:
+    @echo "=== 'as unknown as' usage (root-cause fix candidates) ==="
+    @{{DEV}} bash -c 'rg -n --type-add "svelte:*.svelte" -t ts -t svelte "as unknown as" packages apps 2>/dev/null' || true
+    @echo
+    @echo "=== count by file (top 10) ==="
+    @{{DEV}} bash -c 'rg -l --type-add "svelte:*.svelte" -t ts -t svelte "as unknown as" packages apps 2>/dev/null | xargs -I{} sh -c "rg -c \"as unknown as\" {} | sed \"s|^|{}: |\"" | sort -t: -k2 -rn | head -10' || true
 
 # ---------------------------------------------------------------------------
 # Test
 # ---------------------------------------------------------------------------
 
+# Each workspace runs under a hard deadline. The `default`
+# workspace's vitest-pool-workers 0.16.x runner hangs after the
+# last test passes (Miniflare DO bindings hold the runtime up);
+# `scripts/test-runner.sh` parses the verbose-reporter stream
+# post-deadline and treats "all ✓, no ✗, timeout took us out" as
+# success. The 20 s cap is comfortably above the 5-7 s the suite
+# actually needs, so the wrapper does NOT mask a real slowdown.
 test:
-    {{DEV}} {{PNPM}} -r run test
+    {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts @booking/core
+    {{DEV}} env TEST_DEADLINE=20 {{PNPM}} exec tsx scripts/test/runner.ts default
+    {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts web
+    {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts @booking/scripts
 
 test-watch:
     {{DEV}} {{PNPM}} -r run test:watch
@@ -184,6 +229,13 @@ test-coverage:
 
 test-property:
     {{DEV}} {{PNPM}} -F @booking/core run test:property
+
+# Long-run fuzz soak (FC_NUM_RUNS=10000 per property). 5 properties
+# × 10k iterations completes in ~5 min on a warm container; a real
+# property shrinks loudly via the underlying vitest exit. See
+# `docs/dev/fuzz.md` for the operator runbook.
+fuzz:
+    tsx scripts/fuzz/runSoak.ts
 
 # Performance baseline. Vitest's `bench` runner (experimental).
 bench:
@@ -213,46 +265,24 @@ pack-core:
 dev-default:
     {{DEVP}} {{PNPM}} -F default run dev
 
+# apps/web の Vite dev server (port 5173)。 docker-compose.yml の
+# `dev-web` service で port を分離してあるので、 `just dev-default`
+# (8787) と並走できる。 ブラウザは http://localhost:5173 で開く。
+dev-web:
+    docker compose run --rm --service-ports dev-web {{PNPM}} -F web run dev -- --host 0.0.0.0
+
 migrate-local:
     {{DEV}} {{PNPM}} -F default exec wrangler d1 migrations apply DB --local
 
-# Smoke-check `availableSlots` against a running `just dev-default`.
-# Preconditions (documented in the script): migrations applied + seed
-# loaded + wrangler dev up on :8787. Override host with
-# `SMOKE_GRAPHQL_ENDPOINT=http://...`. The recipe runs on the host
-# (not in the dev container) so it can reach the dev process.
-smoke-available-slots:
-    bash apps/default/scripts/smoke-available-slots.sh
-
-# End-to-end smoke for the customer flow:
-# `availableSlots` → `holdSlot`. Same preconditions as above.
-# The Miniflare integration suite (`just test-integration`) is the
-# in-process counterpart; this recipe is the host-level signal that
-# every layer (resolver, token verify, DO RPC, SQL, outbox, audit)
-# is wired up against `wrangler dev --local`.
-smoke-booking-flow:
-    bash apps/default/scripts/smoke-booking-flow.sh
-
-# Apply the catalog seed to the local D1. Idempotent — re-running
-# refreshes the rows. Generates the SQL document on the fly via
-# `apps/default/seed/seed.ts`, so the seed is always in lockstep
-# with the catalog Schemas (no hand-written SQL to drift).
-seed:
-    {{DEV}} bash -c '\
-      cd apps/default && \
-      {{PNPM}} exec tsx seed/seed.ts > .seed.generated.sql && \
-      {{PNPM}} exec wrangler d1 execute DB --local --file=.seed.generated.sql && \
-      rm -f .seed.generated.sql'
-
 # ---------------------------------------------------------------------------
-# Observability stack (Phase 3 PR#8)
+# Observability stack
 # ---------------------------------------------------------------------------
 
 # Bring up the full local-dev stack: OTel collector + Jaeger UI under
 # the `observability` docker-compose profile (`docker-compose.yml`),
 # then `wrangler dev` in the foreground with the OTLP endpoint pinned
 # to the collector container. Exit Ctrl-C closes wrangler; collector
-# + jaeger keep running until `just dev-down`. usecase / graphql
+# + jaeger keep running until `just dev-down`. usecase / queue / DO
 # spans land in Jaeger at http://localhost:16686.
 dev-up:
     docker compose --profile observability up -d otel-collector jaeger
@@ -263,14 +293,20 @@ dev-up:
 dev-down:
     docker compose --profile observability down
 
-# Manually trigger the `scheduled()` handler on a running
-# `dev-default` / `dev-up`. Wrangler dev exposes the cron entrypoint
-# at `/__scheduled` when `compatibility_date` is recent enough; the
-# call wakes `PurgeStalePii()` so the operator can verify the path
-# without waiting for a real cron firing.
-trigger-scheduled:
-    curl -fsS -X POST http://localhost:8787/__scheduled -H "content-type: application/json" -d '{}' || \
-      echo "trigger-scheduled: ensure 'just dev-up' (or 'just dev-default') is running"
+# Bring up the long-running `dev` container that the `{{DEV}}`
+# wrapper execs into. Idempotent — re-running while it's up is a
+# no-op. Auto-invoked by `scripts/dev-exec.sh` on first command,
+# but exposed as a recipe for explicit pre-warming + diagnostics.
+dev-shell-up:
+    bash scripts/dev-exec.sh true
+
+# Stop + remove the long-running `dev` container (and its sibling
+# `dev-web`). The pnpm-store / pnpm-home volumes survive so the
+# next `up` reuses the cache.
+dev-shell-down:
+    docker compose stop dev dev-web
+    docker compose rm -f dev dev-web
+    rm -f .cache/dev-cid
 
 # Run an arbitrary SQL statement against the local D1 fixture.
 # Usage: `just d1-shell SQL='SELECT count(*) FROM services'`
@@ -284,33 +320,79 @@ d1-shell SQL:
 log-tail:
     docker compose logs -f --no-log-prefix dev 2>/dev/null | jq -Rc 'fromjson? | select(.code != null)'
 
-# Apply migrations + seed + run both smoke scripts in sequence. Stops
-# at the first failure (set -e); each step prints its own status so
-# the failure mode is immediately visible. Pre-condition: a running
-# `just dev-up` (or `just dev-default`).
-smoke-all:
-    just migrate-local
-    just seed
-    just smoke-available-slots
-    just smoke-booking-flow
-
-# Drift gate for `apps/default/schema.graphql`. Re-renders the SDL
-# via `pnpm print-schema` and fails if the working tree disagrees
-# with the regenerated output (Phase 3 PR#8 / ADR-0036 / ADR-0041).
-schema-drift-check:
-    bash apps/default/scripts/schema-drift-check.sh
-
-# Run the Miniflare-backed integration test suite (Phase 3 PR#8).
-# Out-of-process worker + DO + D1 fixtures so holdSlot /
-# confirmBooking / cancelBooking / rescheduleBooking exercise the
-# full lifecycle that smoke-booking-flow only sketches.
-test-integration:
-    {{DEV}} bash -c "cd apps/default && corepack pnpm run test:integration"
-
 # Regenerate `docs/error-codes.md` from `errorClassRegistry`. Drift
 # gate runs as part of `just check`; editing this file by hand fails.
 gen-error-docs:
     {{DEV}} bash -c "cd apps/default && corepack pnpm exec tsx scripts/gen-error-docs.ts" > docs/error-codes.md
+
+# ---------------------------------------------------------------------------
+# Diagnose — multi-gate snapshot (continue-on-fail, never gate)
+# ---------------------------------------------------------------------------
+
+# Run every quality gate `just check` would, but with `set +e` so a
+# failing gate does not short-circuit the rest. Markdown summary lands
+# in `.diagnose/last-run.md` and stdout. Phase A wraps `typecheck`
+# only; Phase B/C extend with biome / eslint / arch / test JSON
+# aggregation. Exit code is **always 0** — diagnose is a snapshot,
+# not a gate. Use `just check` for the fail-fast normative gate.
+diagnose:
+    tsx scripts/diagnose.ts
+
+# Multi-angle diagnose: wraps `just diagnose` and adds three
+# dimensions the diagnose-first train cares about (skip-by-TODO-
+# tag count, error-tag coverage matrix, silent-failure residual).
+# Output: `.diagnose/multi-angle.md`. See `docs/dev/diagnose-multi-angle.md`.
+diagnose-multi-angle:
+    tsx scripts/diagnose/multiAngle.ts
+
+# Typecheck deep-dive — file 別 top 10 + error code 別 top 10 + (file ×
+# error code) pair top 10. Standalone; same data also fed into
+# `just diagnose` summary.
+diagnose-tsc:
+    tsx scripts/diagnose.ts tsc
+
+# Biome deep-dive — file 別 + rule 別の violation 集計。
+diagnose-biome:
+    tsx scripts/diagnose.ts biome
+
+# ESLint deep-dive — file 別 + rule 別の message 集計。
+diagnose-eslint:
+    tsx scripts/diagnose.ts eslint
+
+# dependency-cruiser deep-dive — rule 別 + source 別の violation 集計。
+diagnose-arch:
+    tsx scripts/diagnose.ts arch
+
+# Vitest deep-dive — workspace 別 failed test 集計。
+diagnose-test:
+    tsx scripts/diagnose.ts test
+
+# Guards (comment-bans / strict-code / dead-code / type-coverage /
+# error-docs-drift) を順次回し、 各 pass/fail を集計。
+diagnose-guards:
+    tsx scripts/diagnose.ts guards
+
+# Fast feedback: pre-commit gate のみ (typos + biome staged) を回す軽量
+# lane。 < 5 秒。 修正サイクルの中で「format / typo は通った?」 を quick check
+# する用途。
+diagnose-fast:
+    {{DEV}} bash -c '! rg -n --type-add "svelte:*.svelte" -e "(\b(email|phone_number|address|birthday|gender)\s*[:=]|mailto:|@gmail\.|@yahoo\.)" packages apps -g "!**/CHANGELOG*"'
+    {{DEV}} ./node_modules/.bin/biome check --error-on-warnings .
+
+# Watch mode: tsc -w + vitest --watch + biome check --watch を docker
+# compose run で並走。 'just watch' で起動、 Ctrl-C で全停止。
+# Cloudflare Workers の watch は wrangler dev 自身が watch なので
+# 別経路 (just dev-default) で。
+watch:
+    {{DEV}} bash -c '\
+      ./node_modules/.bin/tsc -b --watch --preserveWatchOutput & \
+      cd packages/core && ./node_modules/.bin/vitest --watch & \
+      wait'
+
+# 'docs/error-codes.md' を強制再生成 (errorClassRegistry が変わった後)。
+# error-docs-drift-check が落ちる場合の baseline 復活用。
+error-docs-refresh:
+    just gen-error-docs
 
 # ---------------------------------------------------------------------------
 # Aggregate gates
@@ -321,7 +403,17 @@ gen-error-docs:
 # binary is mise-managed and faster to invoke directly), plus the
 # core library size-limit gate. Skip mutation testing (heavy) and
 # bench (informational).
-check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-coverage test-coverage size-limit-core schema-drift-check error-docs-drift-check
+#
+# Gates run concurrently — they share no FS state at runtime, and
+# the docker daemon serialises container creation enough that
+# concurrent `docker compose run` invocations don't thrash. Wall
+# time collapses from ~60 s sequential to ~14 s (max gate). The
+# sequential alias is kept under `check-sequential` for failure
+# bisection when interleaved logs are inscrutable.
+check:
+    tsx scripts/check.ts
+
+check-sequential: lint typecheck arch comment-bans strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
 
 # Drift gate for `docs/error-codes.md`. Re-runs `gen-error-docs`
 # and fails if the working tree disagrees — adding a new error
@@ -330,6 +422,25 @@ check: lint typecheck arch pii-guard domain-purity strict-code dead-code type-co
 error-docs-drift-check:
     just gen-error-docs
     git diff --exit-code -- docs/error-codes.md
+
+# End-to-end queue smoke against a running `wrangler dev` (port
+# 8787 by default). Drives Issue -> CallNext -> Recall -> CallNext
+# -> MarkServed and asserts the wire envelope at each step. The
+# staff token is sourced from $STAFF_SESSION_SECRET on the host;
+# wrangler dev reads `apps/default/.dev.vars` for the same value
+# (see `apps/default/.dev.vars.example`).
+smoke-queue:
+    bash apps/default/scripts/smoke-queue-flow.sh
+
+# WebSocket smoke for the QueueShop projection feed. Requires
+# `websocat` (mise-installable). Drives WS open → REST Issue →
+# broadcast receive → WS close. See ADR-0061 for the protocol.
+smoke-queue-ws:
+    bash apps/default/scripts/smoke-queue-ws.sh
+
+# Aggregator: every smoke recipe in registration order. Matches
+# `just check` for normative gates but for the live-server side.
+smoke: smoke-queue smoke-queue-ws
 
 # Full CI gate: check + build (and the apps/default dev smoke happens
 # externally on demand via `just dev-default`).

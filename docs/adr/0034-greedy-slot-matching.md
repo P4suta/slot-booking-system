@@ -1,6 +1,7 @@
 # 0034. Greedy provider/resource matching for AvailableSlots
 
-- Status: superseded by [ADR-0040](./0040-bipartite-slot-matching.md)
+- Status: superseded by [ADR-0050](./0050-queue-pivot.md) — the slot-graph matcher is unused; the queue domain has no provider/resource bipartite assignment. (The interim superseder was [ADR-0040](./0040-bipartite-slot-matching.md), itself now obsoleted by 0050.)
+- Superseded-By: ADR-0050
 - Superseded-By: ADR-0040
 - Date: 2026-05-06
 - Deciders: Yasunobu

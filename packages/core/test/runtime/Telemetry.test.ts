@@ -9,11 +9,10 @@ import {
 import { InvalidPhoneLast4Error } from "../../src/domain/errors/Errors.js"
 
 /**
- * Phase 2.6 / BI-9 — Telemetry helpers exercised against an active
- * span. The previous suite only invoked `recordTaggedError` outside
- * any `Effect.withSpan` wrap (in which case the helper short-circuits
- * via `Effect.ignore`). This file pins the **inside-the-span** paths
- * so the OTel-attribute projection path is covered.
+ * Telemetry helpers exercised against an active span. Pins the
+ * inside-the-span paths so the OTel-attribute projection is covered
+ * (the no-span branch short-circuits via `Effect.ignore` and is
+ * exercised by the use-case integration tests).
  */
 describe("Telemetry — inside an active span", () => {
   it("withSpan preserves the inner Effect's success channel", async () => {

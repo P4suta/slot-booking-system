@@ -6,29 +6,35 @@
   "description": "SvelteKit frontend (customer + staff) for the booking system.",
   "scripts": {
     "paraglide": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy globalVariable baseLocale --is-server 'import.meta.env.SSR' --emit-ts-declarations --no-emit-readme --silent",
-    "graphql-env": "gql.tada generate-output --tsconfig ./tsconfig.json --output ./src/graphql-env.d.ts",
-    "codegen": "pnpm run paraglide && pnpm run graphql-env",
-    "dev": "pnpm run codegen && vite dev",
+    "codegen": "pnpm run paraglide",
+    "dev": "pnpm run codegen && vite dev --host 0.0.0.0",
     "build": "pnpm run codegen && vite build",
     "preview": "vite preview",
     "check": "pnpm run codegen && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "pnpm run codegen && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "vitest run",
-    "test:coverage": "vitest run"
+    "test:coverage": "vitest run",
+    "size-limit": "size-limit"
   },
+  "size-limit": [
+    {
+      "name": "web client (entry chunk, gzip)",
+      "path": ".svelte-kit/output/client/_app/immutable/entry/*.js",
+      "limit": "250 KB"
+    }
+  ],
   "dependencies": {
     "@booking/core": "workspace:*"
   },
   "devDependencies": {
-    "@0no-co/graphqlsp": "latest",
     "@cloudflare/workers-types": "latest",
     "@inlang/paraglide-js": "latest",
+    "@size-limit/file": "latest",
     "@sveltejs/adapter-cloudflare": "latest",
     "@sveltejs/kit": "latest",
     "@sveltejs/vite-plugin-svelte": "latest",
     "@types/node": "latest",
-    "gql.tada": "latest",
-    "graphql": "latest",
+    "size-limit": "latest",
     "svelte": "latest",
     "svelte-check": "latest",
     "typescript": "latest",
