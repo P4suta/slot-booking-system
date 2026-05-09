@@ -40,10 +40,6 @@ export default tseslint.config(
       "apps/web/src/paraglide/**",
       // Codegen scripts run via tsx outside the workspace tsconfig.
       "apps/default/scripts/**",
-      // Tooling scripts (vitest stream reporter, etc.) — vitest
-      // transforms them on the fly; outside the workspace tsconfig
-      // by design (no app code depends on them at compile time).
-      "scripts/**",
     ],
   },
   ...tseslint.configs.strictTypeChecked,

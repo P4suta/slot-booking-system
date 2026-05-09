@@ -59,7 +59,7 @@ const fullName = (testCase: TestCase): string => {
 
 class StreamReporter implements Reporter {
   onTestRunStart(specs: readonly TestSpecification[]): void {
-    emit(`RUN_START specs=${specs.length}`)
+    emit(`RUN_START specs=${String(specs.length)}`)
   }
 
   onTestModuleStart(module: TestModule): void {
@@ -76,12 +76,10 @@ class StreamReporter implements Reporter {
 
   onTestCaseResult(testCase: TestCase): void {
     const result = testCase.result()
-    const dur =
-      typeof (result as { duration?: unknown }).duration === "number"
-        ? (result as { duration: number }).duration
-        : 0
+    const maybeDuration = (result as unknown as { duration?: unknown }).duration
+    const dur = typeof maybeDuration === "number" ? maybeDuration : 0
     emit(
-      `CASE_END   ${rel(testCase.module.moduleId)} :: ${fullName(testCase)} ${result.state} ${dur}ms`,
+      `CASE_END   ${rel(testCase.module.moduleId)} :: ${fullName(testCase)} ${result.state} ${String(dur)}ms`,
     )
   }
 
@@ -97,7 +95,7 @@ class StreamReporter implements Reporter {
         else if (state === "skipped") skipped += 1
       }
     }
-    emit(`RUN_END passed=${passed} failed=${failed} skipped=${skipped}`)
+    emit(`RUN_END passed=${String(passed)} failed=${String(failed)} skipped=${String(skipped)}`)
   }
 }
 

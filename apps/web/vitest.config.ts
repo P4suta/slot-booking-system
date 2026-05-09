@@ -6,7 +6,7 @@ export default defineConfig({
     // See `packages/core/vitest.config.ts` for the rationale —
     // `streamReporter` emits CASE_START events for the wrapper's
     // heartbeat consumer.
-    reporters: ["default", "../../scripts/test/streamReporter.ts"],
+    reporters: ["verbose", "../../scripts/test/streamReporter.ts"],
     environment: "node",
   },
 })

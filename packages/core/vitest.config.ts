@@ -26,7 +26,7 @@ export default defineConfig({
     // begins, closing the visibility gap left by the default /
     // verbose reporters which only print *after* a case finishes.
     // `scripts/test-runner.sh` consumes those events for heartbeat.
-    reporters: ["default", "../../scripts/test/streamReporter.ts"],
+    reporters: ["verbose", "../../scripts/test/streamReporter.ts"],
     benchmark: {
       include: ["test/**/*.bench.ts"],
       reporters: ["default"],

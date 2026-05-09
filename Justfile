@@ -216,9 +216,10 @@ diagnose-tsescapes:
 # success. The 20 s cap is comfortably above the 5-7 s the suite
 # actually needs, so the wrapper does NOT mask a real slowdown.
 test:
-    {{DEV}} bash scripts/test-runner.sh @booking/core
-    {{DEV}} env TEST_DEADLINE=20 bash scripts/test-runner.sh default
-    {{DEV}} bash scripts/test-runner.sh web
+    {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts @booking/core
+    {{DEV}} env TEST_DEADLINE=20 {{PNPM}} exec tsx scripts/test/runner.ts default
+    {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts web
+    {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts @booking/scripts
 
 test-watch:
     {{DEV}} {{PNPM}} -r run test:watch

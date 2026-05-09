@@ -23,7 +23,7 @@ export default defineConfig({
     // `streamReporter` emits CASE_START events for the wrapper's
     // heartbeat consumer. Defined at the workspace root so both
     // projects (node + workers) share the same emit channel.
-    reporters: ["default", "../../scripts/test/streamReporter.ts"],
+    reporters: ["verbose", "../../scripts/test/streamReporter.ts"],
     projects: [
       {
         test: {

@@ -27,6 +27,7 @@
     "dependency-cruiser": "latest",
     "eslint": "latest",
     "knip": "latest",
+    "tsx": "^4.21.0",
     "typescript": "latest",
     "typescript-eslint": "latest"
   },

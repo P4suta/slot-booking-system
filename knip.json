@@ -1,10 +1,11 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreDependencies": ["tsx"],
   "workspaces": {
-    ".": {
-      "entry": ["scripts/test/**/*.ts"],
-      "project": ["scripts/test/**/*.ts"],
-      "ignoreDependencies": ["vitest"]
+    "scripts": {
+      "entry": ["test/runner.ts", "test/**/*.test.ts"],
+      "project": ["**/*.ts"],
+      "ignoreDependencies": ["tsx"]
     },
     "packages/core": {
       "entry": ["test/**/*.test.ts", "test/**/*.bench.ts"],
