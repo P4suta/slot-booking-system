@@ -1,5 +1,6 @@
 import type { Duration } from "effect"
 import { Context, type Effect } from "effect"
+import type { StorageError } from "../../domain/errors/Errors.js"
 
 /**
  * Scheduled-job port: NULL out PII columns on bookings whose terminal
@@ -15,11 +16,15 @@ import { Context, type Effect } from "effect"
  *
  * The port returns the **count** of rows touched so the scheduled
  * handler can emit a structured log entry (and an alert if the count
- * is unexpectedly high — possible misconfiguration).
+ * is unexpectedly high — possible misconfiguration). DB-side
+ * failures surface as `StorageError` so the scheduled handler can
+ * distinguish "purge ran, 0 rows matched" from "purge errored,
+ * unknown" — the previous shape silently coerced both to 0 and
+ * masked outage windows.
  */
 export class PiiPurger extends Context.Service<
   PiiPurger,
   {
-    readonly purgeOlderThan: (olderThan: Duration.Duration) => Effect.Effect<number>
+    readonly purgeOlderThan: (olderThan: Duration.Duration) => Effect.Effect<number, StorageError>
   }
 >()("@booking/core/PiiPurger") {}

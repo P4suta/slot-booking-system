@@ -1,4 +1,4 @@
-import { PiiPurger } from "@booking/core"
+import { PiiPurger, StorageError } from "@booking/core"
 import { Duration, Effect, Layer } from "effect"
 
 /**
@@ -9,7 +9,11 @@ import { Duration, Effect, Layer } from "effect"
  *
  * Returns the count of rows touched so the scheduled handler can
  * emit a structured log entry / alert if the count is unexpectedly
- * high.
+ * high. A DB-side failure (D1 unreachable, statement rejected,
+ * etc.) surfaces as `StorageError` rather than the previous
+ * silent `0`-row coercion — the scheduled handler's caller logs
+ * the row count on success and re-throws so the Cloudflare
+ * runtime's error metric still fires.
  */
 export const makeD1PiiPurger = (db: D1Database) =>
   Layer.succeed(
@@ -33,7 +37,7 @@ export const makeD1PiiPurger = (db: D1Database) =>
               .run()
             return result.meta.changes
           },
-          catch: (_e) => undefined,
-        }).pipe(Effect.orElseSucceed(() => 0)),
+          catch: (e) => new StorageError({ reason: "purge", cause: e }),
+        }),
     }),
   )
