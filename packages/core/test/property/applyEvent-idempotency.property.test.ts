@@ -17,6 +17,7 @@ import { newTicketEventId, newTicketId } from "../../src/domain/types/EntityId.j
 import { FreeTextSchema } from "../../src/domain/value-objects/FreeText.js"
 import { NameKanaSchema } from "../../src/domain/value-objects/NameKana.js"
 import { PhoneLast4Schema } from "../../src/domain/value-objects/PhoneLast4.js"
+import { numRuns } from "../_arb/numRuns.js"
 
 /**
  * Idempotency under `applyEvent` is the load-bearing invariant
@@ -123,7 +124,7 @@ const drive = (steps: readonly Step[]): readonly TicketEvent[] => {
   return events
 }
 
-const NUM_RUNS = process.env.CI === "true" ? 200 : 80
+const NUM_RUNS = numRuns(80, 200)
 
 describe("applyEvent idempotency (property)", () => {
   it("applyEvent(s, e) deepEquals applyEvent(applyEvent(s, e), e) at every fold step", () => {

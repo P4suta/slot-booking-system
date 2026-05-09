@@ -14,6 +14,7 @@ import { InMemoryTicketRepositoryLive } from "../../src/infrastructure/eventsour
 import { DeterministicIdGeneratorLive } from "../../src/infrastructure/id/DeterministicIdGeneratorLive.js"
 import { makeSilentLogger } from "../../src/infrastructure/logger/SilentLoggerLive.js"
 import { arbCustomerHandle } from "../_arb/index.js"
+import { numRuns } from "../_arb/numRuns.js"
 
 /**
  * Runtime PII discipline (ADR-0009 / ADR-0026) — every log entry the
@@ -80,7 +81,7 @@ describe("log PII discipline (property)", () => {
           `log entry leaked phoneLast4 ${handle.phoneLast4 as string}: ${json}`,
         ).not.toContain(quotedPhone)
       }),
-      { numRuns: process.env.CI ? 100 : 30 },
+      { numRuns: numRuns(30, 100) },
     )
   })
 })

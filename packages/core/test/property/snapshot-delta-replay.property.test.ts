@@ -17,6 +17,7 @@ import { newTicketEventId, newTicketId } from "../../src/domain/types/EntityId.j
 import { FreeTextSchema } from "../../src/domain/value-objects/FreeText.js"
 import { NameKanaSchema } from "../../src/domain/value-objects/NameKana.js"
 import { PhoneLast4Schema } from "../../src/domain/value-objects/PhoneLast4.js"
+import { numRuns } from "../_arb/numRuns.js"
 
 /**
  * The K=200 snapshot+delta dispatch path (ADR-0059) is correct
@@ -134,7 +135,7 @@ const equalSnap = (
   }
 }
 
-const NUM_RUNS = process.env.CI === "true" ? 200 : 80
+const NUM_RUNS = numRuns(80, 200)
 
 describe("snapshot-delta replay homomorphism (property)", () => {
   it("replay(xs ++ ys) deepEquals applyMany(replay(xs), ys) for every split", () => {

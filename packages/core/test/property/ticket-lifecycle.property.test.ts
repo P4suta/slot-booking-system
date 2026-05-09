@@ -17,6 +17,7 @@ import { InMemoryTicketRepositoryLive } from "../../src/infrastructure/eventsour
 import { DeterministicIdGeneratorLive } from "../../src/infrastructure/id/DeterministicIdGeneratorLive.js"
 import { SilentLoggerLive } from "../../src/infrastructure/logger/SilentLoggerLive.js"
 import { arbCustomerHandle, arbLifecycleCommand } from "../_arb/index.js"
+import { numRuns } from "../_arb/numRuns.js"
 
 /**
  * State-machine property test for the queue lifecycle. Drives a
@@ -134,7 +135,7 @@ describe("queue lifecycle state-machine invariants (property)", () => {
           states.every((s) => ["Waiting", "Called", "Served", "NoShow", "Cancelled"].includes(s)),
         ).toBe(true)
       }),
-      { numRuns: process.env.CI ? 200 : 80, verbose: false },
+      { numRuns: numRuns(80, 200), verbose: false },
     )
   })
 })

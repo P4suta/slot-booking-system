@@ -16,6 +16,7 @@ import { newTicketEventId, newTicketId } from "../../../src/domain/types/EntityI
 import { FreeTextSchema } from "../../../src/domain/value-objects/FreeText.js"
 import { NameKanaSchema } from "../../../src/domain/value-objects/NameKana.js"
 import { PhoneLast4Schema } from "../../../src/domain/value-objects/PhoneLast4.js"
+import { numRuns } from "../../_arb/numRuns.js"
 
 const kana = Schema.decodeUnknownSync(NameKanaSchema)("ヤマダ タロウ")
 const phone = Schema.decodeUnknownSync(PhoneLast4Schema)("1234")
@@ -150,7 +151,7 @@ describe("transitions ↔ applyEvent homomorphism", () => {
           expect(p?.seq).toBe(ticket.seq)
         }
       }),
-      { numRuns: 100 },
+      { numRuns: numRuns(100, 100) },
     )
   })
 
@@ -171,7 +172,7 @@ describe("transitions ↔ applyEvent homomorphism", () => {
           )
         }
       }),
-      { numRuns: 100 },
+      { numRuns: numRuns(100, 100) },
     )
   })
 
@@ -187,7 +188,7 @@ describe("transitions ↔ applyEvent homomorphism", () => {
         const replayed = replay(events)
         expect(folded.tickets.size).toBe(replayed.tickets.size)
       }),
-      { numRuns: 50 },
+      { numRuns: numRuns(50, 50) },
     )
   })
 })

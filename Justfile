@@ -229,6 +229,13 @@ test-coverage:
 test-property:
     {{DEV}} {{PNPM}} -F @booking/core run test:property
 
+# Long-run fuzz soak (FC_NUM_RUNS=10000 per property). 5 properties
+# × 10k iterations completes in ~5 min on a warm container; a real
+# property shrinks loudly via the underlying vitest exit. See
+# `docs/dev/fuzz.md` for the operator runbook.
+fuzz:
+    bash scripts/fuzz/run-soak.sh
+
 # Performance baseline. Vitest's `bench` runner (experimental).
 bench:
     {{DEV}} {{PNPM}} -F @booking/core run test:bench
