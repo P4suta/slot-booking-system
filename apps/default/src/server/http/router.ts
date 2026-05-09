@@ -1,4 +1,3 @@
-import { codeOf, parseCustomerHandleStrict, parseTicketId } from "@booking/core"
 import { Result, Schema } from "effect"
 import { Hono } from "hono"
 import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
@@ -6,6 +5,14 @@ import { verifyStaffJwt } from "../security/jwt.js"
 import { readSessionCookie, verifySession } from "../security/session.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
 import { handleStaffLogin } from "./auth/login.js"
+import {
+  CancelBodySchema,
+  decodeTicketIdParam,
+  dispatchDecodeFailure,
+  IssueTicketBodySchema,
+  MyTicketQuerySchema,
+  StaffCancelBodySchema,
+} from "./boundarySchemas.js"
 import { envelopeLog } from "./envelopeLog.js"
 import { DEFECT_STATUS, statusForTag } from "./errorEnvelope.js"
 import { onError } from "./onError.js"
@@ -34,30 +41,6 @@ import type { Env } from "./types.js"
  *   POST  /queue/call-next         staff: call next
  *   GET   /queue/feed              DO Hibernating WebSocket projection feed
  */
-
-const FreeTextOrNull = Schema.NullOr(Schema.String)
-
-const IssueTicketBodySchema = Schema.Struct({
-  nameKana: Schema.String,
-  phoneLast4: Schema.String,
-  freeText: FreeTextOrNull,
-})
-
-const MyTicketQuerySchema = Schema.Struct({
-  ticketId: Schema.String,
-  nameKana: Schema.String,
-  phoneLast4: Schema.String,
-})
-
-const CancelBodySchema = Schema.Struct({
-  nameKana: Schema.String,
-  phoneLast4: Schema.String,
-  reason: Schema.String,
-})
-
-const StaffCancelBodySchema = Schema.Struct({
-  reason: Schema.String,
-})
 
 const stub = (env: Env): DurableObjectStub<QueueShop> =>
   env.QUEUE_SHOP.get(env.QUEUE_SHOP.idFromName("shop"))
@@ -183,13 +166,16 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
     }
     const decoded = Schema.decodeUnknownResult(IssueTicketBodySchema)(parsed.raw)
-    if (Result.isFailure(decoded)) return failResponse(422, "InvalidBody", "E_VAL_BODY")
-    const handleR = parseCustomerHandleStrict(decoded.success.nameKana, decoded.success.phoneLast4)
-    if (Result.isFailure(handleR))
-      return failResponse(422, handleR.failure._tag, codeOf(handleR.failure))
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
     const action: QueueAction = {
       type: "IssueTicket",
-      handle: handleR.success,
+      handle: {
+        nameKana: decoded.success.nameKana,
+        phoneLast4: decoded.success.phoneLast4,
+      },
       freeText: decoded.success.freeText,
     }
     return dispatchEnvelope(await stub(c.env).dispatch(action), 201)
@@ -202,11 +188,12 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       nameKana: c.req.query("nameKana"),
       phoneLast4: c.req.query("phoneLast4"),
     })
-    if (Result.isFailure(decoded)) return failResponse(422, "InvalidQuery", "E_VAL_QUERY")
-    const idR = parseTicketId(decoded.success.ticketId)
-    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
     const all = await stub(c.env).listTickets()
-    const ticket = all.find((t) => t.id === idR.success)
+    const ticket = all.find((t) => t.id === decoded.success.ticketId)
     if (ticket === undefined) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     if (
       ticket.nameKana !== decoded.success.nameKana ||
@@ -222,7 +209,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
 
   // POST /api/v1/tickets/:id/cancel — staff or customer
   app.post("/api/v1/tickets/:id/cancel", async (c) => {
-    const idR = parseTicketId(c.req.param("id"))
+    const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
@@ -234,7 +221,10 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       const guard = await requireStaff(c)
       if (!guard.ok) return guard.res
       const decoded = Schema.decodeUnknownResult(StaffCancelBodySchema)(raw)
-      if (Result.isFailure(decoded)) return failResponse(422, "InvalidBody", "E_VAL_BODY")
+      if (Result.isFailure(decoded)) {
+        const fail = dispatchDecodeFailure(decoded.failure)
+        return failResponse(fail.status, fail.tag, fail.code)
+      }
       return dispatchEnvelope(
         await stub(c.env).dispatch({
           type: "CancelTicket",
@@ -245,17 +235,20 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       )
     }
     const decoded = Schema.decodeUnknownResult(CancelBodySchema)(raw)
-    if (Result.isFailure(decoded)) return failResponse(422, "InvalidBody", "E_VAL_BODY")
-    const handleR = parseCustomerHandleStrict(decoded.success.nameKana, decoded.success.phoneLast4)
-    if (Result.isFailure(handleR))
-      return failResponse(422, handleR.failure._tag, codeOf(handleR.failure))
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
     return dispatchEnvelope(
       await stub(c.env).dispatch({
         type: "CancelTicket",
         ticketId: idR.success,
         actor: "customer",
         reason: decoded.success.reason,
-        handle: handleR.success,
+        handle: {
+          nameKana: decoded.success.nameKana,
+          phoneLast4: decoded.success.phoneLast4,
+        },
       }),
     )
   })
@@ -301,7 +294,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   app.post("/api/v1/tickets/:id/served", async (c) => {
     const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
-    const idR = parseTicketId(c.req.param("id"))
+    const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     return dispatchEnvelope(
       await stub(c.env).dispatch({ type: "MarkServed", ticketId: idR.success }),
@@ -312,7 +305,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   app.post("/api/v1/tickets/:id/no-show", async (c) => {
     const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
-    const idR = parseTicketId(c.req.param("id"))
+    const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     return dispatchEnvelope(
       await stub(c.env).dispatch({
@@ -327,7 +320,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   app.post("/api/v1/tickets/:id/recall", async (c) => {
     const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
-    const idR = parseTicketId(c.req.param("id"))
+    const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     return dispatchEnvelope(
       await stub(c.env).dispatch({
