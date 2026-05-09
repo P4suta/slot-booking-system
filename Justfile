@@ -336,41 +336,41 @@ gen-error-docs:
 # aggregation. Exit code is **always 0** — diagnose is a snapshot,
 # not a gate. Use `just check` for the fail-fast normative gate.
 diagnose:
-    bash scripts/diagnose.sh
+    tsx scripts/diagnose.ts
 
 # Multi-angle diagnose: wraps `just diagnose` and adds three
 # dimensions the diagnose-first train cares about (skip-by-TODO-
 # tag count, error-tag coverage matrix, silent-failure residual).
 # Output: `.diagnose/multi-angle.md`. See `docs/dev/diagnose-multi-angle.md`.
 diagnose-multi-angle:
-    bash scripts/diagnose-multi-angle.sh
+    tsx scripts/diagnose/multiAngle.ts
 
 # Typecheck deep-dive — file 別 top 10 + error code 別 top 10 + (file ×
 # error code) pair top 10. Standalone; same data also fed into
 # `just diagnose` summary.
 diagnose-tsc:
-    bash scripts/diagnose-tsc.sh
+    tsx scripts/diagnose.ts tsc
 
 # Biome deep-dive — file 別 + rule 別の violation 集計。
 diagnose-biome:
-    bash scripts/diagnose-biome.sh
+    tsx scripts/diagnose.ts biome
 
 # ESLint deep-dive — file 別 + rule 別の message 集計。
 diagnose-eslint:
-    bash scripts/diagnose-eslint.sh
+    tsx scripts/diagnose.ts eslint
 
 # dependency-cruiser deep-dive — rule 別 + source 別の violation 集計。
 diagnose-arch:
-    bash scripts/diagnose-arch.sh
+    tsx scripts/diagnose.ts arch
 
 # Vitest deep-dive — workspace 別 failed test 集計。
 diagnose-test:
-    bash scripts/diagnose-test.sh
+    tsx scripts/diagnose.ts test
 
 # Guards (comment-bans / strict-code / dead-code / type-coverage /
 # error-docs-drift) を順次回し、 各 pass/fail を集計。
 diagnose-guards:
-    bash scripts/diagnose-guards.sh
+    tsx scripts/diagnose.ts guards
 
 # Fast feedback: pre-commit gate のみ (typos + biome staged) を回す軽量
 # lane。 < 5 秒。 修正サイクルの中で「format / typo は通った?」 を quick check

@@ -3,7 +3,14 @@
   "ignoreDependencies": ["tsx"],
   "workspaces": {
     "scripts": {
-      "entry": ["check.ts", "fuzz/runSoak.ts", "test/runner.ts", "test/**/*.test.ts"],
+      "entry": [
+        "check.ts",
+        "diagnose.ts",
+        "diagnose/multiAngle.ts",
+        "fuzz/runSoak.ts",
+        "test/runner.ts",
+        "test/**/*.test.ts"
+      ],
       "project": ["**/*.ts"],
       "ignoreDependencies": ["tsx"]
     },
