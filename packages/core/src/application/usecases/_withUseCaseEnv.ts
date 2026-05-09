@@ -69,7 +69,21 @@ export const applyAndPersist = ({
     const eventId = yield* idgen.newTicketEventId
     const at = yield* clock.nowInstant
     const { ticket, event } = apply(at, eventId)
-    yield* repo.save(loaded.state.id, loaded.revision, [event], ticket)
+    yield* repo.save(loaded.state.id, loaded.revision, [event], ticket).pipe(
+      Effect.tapError((err) =>
+        logger.error({
+          _tag: "SaveFailed",
+          code: "I_USECASE_SAVE_FAILED",
+          severity: "infrastructure",
+          data: {
+            ticketId: loaded.state.id,
+            action: log.tag,
+            actor: log.data.actor,
+            errorTag: err._tag,
+          },
+        }),
+      ),
+    )
     yield* logger.info(infoPayload(log.tag, log.code, log.data))
     return ticket
   })

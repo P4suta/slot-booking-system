@@ -228,7 +228,7 @@ describe("applyAndPersist", () => {
         log: {
           tag: "CallNext",
           code: "I_USECASE_CALL_NEXT",
-          data: { ticketId: issued.id, seq: issued.seq },
+          data: { ticketId: issued.id, seq: issued.seq, actor: "staff" },
         },
       })
       // Re-using the *original* `loaded` (revision 1) now that the
@@ -239,12 +239,19 @@ describe("applyAndPersist", () => {
         log: {
           tag: "CallNext",
           code: "I_USECASE_CALL_NEXT",
-          data: { ticketId: issued.id, seq: issued.seq },
+          data: { ticketId: issued.id, seq: issued.seq, actor: "staff" },
         },
       })
     })
 
     const exit = await Effect.runPromiseExit(program.pipe(Effect.provide(layer)))
     expect(Exit.isFailure(exit)).toBe(true)
+    const entries = await Effect.runPromise(handle.emitted)
+    const saveFailed = entries.find((e) => e.payload._tag === "SaveFailed")
+    expect(saveFailed?.level).toBe("error")
+    expect(saveFailed?.payload.code).toBe("I_USECASE_SAVE_FAILED")
+    expect(saveFailed?.payload.data.action).toBe("CallNext")
+    expect(saveFailed?.payload.data.actor).toBe("staff")
+    expect(saveFailed?.payload.data.errorTag).toBe("Concurrency")
   })
 })
