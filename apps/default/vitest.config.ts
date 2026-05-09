@@ -19,6 +19,11 @@ import { defineConfig } from "vitest/config"
  */
 export default defineConfig({
   test: {
+    // See `packages/core/vitest.config.ts` for the rationale —
+    // `streamReporter` emits CASE_START events for the wrapper's
+    // heartbeat consumer. Defined at the workspace root so both
+    // projects (node + workers) share the same emit channel.
+    reporters: ["default", "../../scripts/test/streamReporter.ts"],
     projects: [
       {
         test: {

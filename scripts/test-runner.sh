@@ -35,8 +35,52 @@ filter=$1
 shift
 
 deadline=${TEST_DEADLINE:-60}
+heartbeat_interval=${VITEST_HEARTBEAT_SEC:-5}
 log=$(mktemp)
-trap 'rm -f "$log"' EXIT
+
+# Heartbeat — driven by `streamReporter.ts` event lines.
+#
+# Every $heartbeat_interval seconds the wrapper looks at the
+# `[stream] ... CASE_START`/`CASE_END` markers the reporter emits.
+# A test is *in-flight* iff its CASE_START has no matching
+# CASE_END. If no in-flight case is open, we report on the most
+# recently completed one. The interval is small (default 5 s) so
+# a real hang surfaces in chat within seconds, with the exact
+# test name pinpointed — operators no longer need to wait the
+# full deadline (typically tens of seconds to minutes) to learn
+# *where* the runner stalled.
+heartbeat() {
+  local prev_marker=""
+  local cur_marker=""
+  while sleep "$heartbeat_interval"; do
+    if [ ! -s "$log" ]; then
+      printf '[heartbeat %s] %s: waiting for first vitest output...\n' \
+        "$(date +%H:%M:%S)" "$filter" >&2
+      continue
+    fi
+    local started ended
+    started=$(grep -F '[stream]' "$log" 2>/dev/null \
+      | grep -F ' CASE_START ' | tail -1)
+    ended=$(grep -F '[stream]' "$log" 2>/dev/null \
+      | grep -F ' CASE_END ' | tail -1)
+    if [ -n "$started" ] && [ "${started#*CASE_START }" != "${ended#*CASE_END }" ]; then
+      cur_marker="in-flight: ${started#*CASE_START }"
+    elif [ -n "$ended" ]; then
+      cur_marker="last completed: ${ended#*CASE_END }"
+    else
+      cur_marker=""
+    fi
+    if [ -n "$cur_marker" ] && [ "$cur_marker" = "$prev_marker" ]; then
+      printf '[heartbeat %s] %s: %s\n' \
+        "$(date +%H:%M:%S)" "$filter" "$cur_marker" >&2
+    fi
+    prev_marker="$cur_marker"
+  done
+}
+
+heartbeat &
+heartbeat_pid=$!
+trap '[ -n "${heartbeat_pid:-}" ] && kill "$heartbeat_pid" 2>/dev/null; rm -f "$log"' EXIT
 
 set -o pipefail
 stdbuf -oL -eL timeout --foreground --kill-after=10 "${deadline}s" \
