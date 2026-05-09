@@ -1,10 +1,17 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte"
-  import { queueWebSocket, type ShopState, shopState } from "$lib/api.js"
+  import {
+    connectQueueFeed,
+    type QueueFeedHandle,
+    type QueueFeedState,
+    type ShopState,
+    shopState,
+  } from "$lib/api.js"
 
   let waitingCount = $state(0)
   let serving: { id: string; seq: number } | null = $state(null)
-  let socket: WebSocket | undefined
+  let feedState: QueueFeedState = $state("connecting")
+  let feed: QueueFeedHandle | undefined
 
   const refresh = (data: ShopState) => {
     waitingCount = data.waitingCount
@@ -18,23 +25,27 @@
     } catch {
       // initial fetch failure is non-fatal — the WS feed catches up
     }
-    socket = queueWebSocket()
-    socket.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data as string) as ShopState & { ok?: boolean }
-        refresh(parsed)
-      } catch {
-        // ignore malformed event
-      }
-    }
+    feed = connectQueueFeed({
+      onProjection: (parsed) => {
+        refresh(parsed as ShopState)
+      },
+      onState: (next) => {
+        feedState = next
+      },
+      // onError is intentionally a no-op here; the reconnect logic
+      // owns recovery, and the banner reflects the current `state`.
+    })
   })
 
-  onDestroy(() => socket?.close())
+  onDestroy(() => feed?.close())
 </script>
 
 <section class="hero">
   <h1>並ぶ</h1>
   <p class="lede">店の行列に番号を取って加わる。 列の進みはそのまま見える。</p>
+  {#if feedState === "reconnecting"}
+    <p class="banner">再接続中…</p>
+  {/if}
   <div class="status">
     <p>現在 <strong>{waitingCount}</strong> 人待ち</p>
     {#if serving !== null}
@@ -89,6 +100,14 @@
   }
   .cta:hover {
     background: #333;
+  }
+  .banner {
+    background: #fff4d6;
+    border: 1px solid #f0c040;
+    color: #8a5a00;
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    margin: 0 0 1rem;
   }
   .hint {
     margin-top: 2rem;

@@ -39,29 +39,100 @@ export type StaffShopState = {
   readonly waitingPreview: readonly Ticket[]
 }
 
-export type ApiResult<A> = { ok: true; value: A } | { ok: false; error: ErrorEnvelope }
+/**
+ * Tagged-union return for every REST call (C12). The frontend can
+ * pattern-match on `kind` instead of folding network / parse /
+ * domain failures into one indistinct `error.code = E_NET_<status>`
+ * placeholder. `traceId` is the `X-Trace-Id` response header (if
+ * the server attached one) so the customer-reported failure can be
+ * pivoted to the structured-log row by trace id.
+ */
+export type ApiResult<A> =
+  | { readonly ok: true; readonly value: A; readonly traceId: string | null }
+  | {
+      readonly ok: false
+      readonly kind: "NetworkError" | "InvalidEnvelope" | "DomainError"
+      readonly status: number
+      readonly error: ErrorEnvelope
+      readonly traceId: string | null
+    }
+
+const synthError = (kind: string, status: number): ErrorEnvelope => ({
+  _tag: kind,
+  code: `E_${kind === "NetworkError" ? "NET" : "ENVELOPE"}_${String(status)}`,
+})
 
 const json = async <A>(res: Response): Promise<ApiResult<A>> => {
-  const body = (await res.json().catch(() => null)) as { ok: boolean; error?: ErrorEnvelope } | null
-  if (res.ok && body?.ok) return { ok: true, value: body as unknown as A }
+  const traceId = res.headers.get("x-trace-id")
+  let body: unknown
+  try {
+    body = await res.json()
+  } catch {
+    return {
+      ok: false,
+      kind: "NetworkError",
+      status: res.status,
+      error: synthError("NetworkError", res.status),
+      traceId,
+    }
+  }
+  if (typeof body !== "object" || body === null) {
+    return {
+      ok: false,
+      kind: "InvalidEnvelope",
+      status: res.status,
+      error: synthError("InvalidEnvelope", res.status),
+      traceId,
+    }
+  }
+  const b = body as { ok?: unknown; error?: unknown }
+  if (res.ok && b.ok === true) {
+    return { ok: true, value: body as A, traceId }
+  }
+  if (typeof b.error === "object" && b.error !== null) {
+    return {
+      ok: false,
+      kind: "DomainError",
+      status: res.status,
+      error: b.error as ErrorEnvelope,
+      traceId,
+    }
+  }
   return {
     ok: false,
-    error: body?.error ?? { _tag: "Network", code: `E_NET_${String(res.status)}` },
+    kind: "InvalidEnvelope",
+    status: res.status,
+    error: synthError("InvalidEnvelope", res.status),
+    traceId,
   }
+}
+
+const fetchJson = async <A>(input: string, init?: RequestInit): Promise<ApiResult<A>> => {
+  let res: Response
+  try {
+    res = await fetch(input, init)
+  } catch {
+    return {
+      ok: false,
+      kind: "NetworkError",
+      status: 0,
+      error: synthError("NetworkError", 0),
+      traceId: null,
+    }
+  }
+  return json<A>(res)
 }
 
 export const issueTicket = async (input: {
   nameKana: string
   phoneLast4: string
   freeText: string | null
-}): Promise<ApiResult<{ ticket: Ticket }>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/tickets`, {
+}): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   })
-  return json(res)
-}
 
 export const myTicket = async (input: {
   ticketId: string
@@ -69,63 +140,127 @@ export const myTicket = async (input: {
   phoneLast4: string
 }): Promise<ApiResult<{ ticket: Ticket }>> => {
   const params = new URLSearchParams(input)
-  const res = await fetch(`${baseUrl()}/api/v1/tickets/me?${params}`)
-  return json(res)
+  return fetchJson(`${baseUrl()}/api/v1/tickets/me?${params.toString()}`)
 }
 
 export const cancelTicket = async (
   ticketId: string,
   body: { nameKana: string; phoneLast4: string; reason: string },
-): Promise<ApiResult<{ ticket: Ticket }>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/cancel`, {
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/cancel`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   })
-  return json(res)
-}
 
-export const shopState = async (): Promise<ApiResult<ShopState>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/queue`)
-  return json(res)
-}
+export const shopState = async (): Promise<ApiResult<ShopState>> =>
+  fetchJson(`${baseUrl()}/api/v1/queue`)
 
 /**
  * Staff 権限版 shopState — preview に PII (kana / 末尾4 / freeText) が
  * 同梱される。 token を付けたまま public endpoint を叩くだけで sub-path
  * は変わらない (worker 側で `x-staff-token` をチェックして branch)。
  */
-export const staffShopState = async (token: string): Promise<ApiResult<StaffShopState>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/queue`, {
+export const staffShopState = async (token: string): Promise<ApiResult<StaffShopState>> =>
+  fetchJson(`${baseUrl()}/api/v1/queue`, {
     headers: { "x-staff-token": token },
   })
-  return json(res)
+
+const wsUrl = (): string => {
+  const http = baseUrl()
+  return http === ""
+    ? `${typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws"}://${typeof window !== "undefined" ? window.location.host : ""}`
+    : http.replace(/^http/, "ws")
 }
 
 /**
- * Connect to the DO Hibernating WebSocket projection feed.
- *
- * The DO emits the anonymous projection (`{ ok, waitingCount,
- * serving, waitingPreview }`) on every successful mutation;
- * `onmessage.data` is JSON, no `data:` prefix and no manual
- * 2-second polling loop. The caller closes the socket via
- * `socket.close()`.
- *
- * Reconnection is the caller's responsibility — Workers may
- * hibernate the DO between events but the WebSocket itself stays
- * up; close codes other than 1000 (normal) usually indicate a
- * network drop and the caller schedules a fresh connection.
+ * Connect to the DO Hibernating WebSocket projection feed (legacy
+ * surface kept for callers that own their own reconnect strategy).
+ * The DO emits the anonymous projection on every successful
+ * mutation; `onmessage.data` is JSON. The caller closes the socket
+ * via `socket.close()`.
  */
-export const queueWebSocket = (): WebSocket => {
-  const http = baseUrl()
-  // `apiBaseUrl()` returns either an empty string (same-origin
-  // production) or an `http(s)://...` URL (cross-origin dev).
-  // Translate to `ws(s)://` for the upgrade target.
-  const ws =
-    http === ""
-      ? `${typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws"}://${typeof window !== "undefined" ? window.location.host : ""}`
-      : http.replace(/^http/, "ws")
-  return new WebSocket(`${ws}/api/v1/queue/feed`)
+export const queueWebSocket = (): WebSocket => new WebSocket(`${wsUrl()}/api/v1/queue/feed`)
+
+export type QueueFeedState = "connecting" | "open" | "reconnecting" | "closed"
+
+export type QueueFeedHandle = {
+  readonly close: () => void
+  readonly state: () => QueueFeedState
+}
+
+export type QueueFeedCallbacks = {
+  readonly onProjection: (parsed: unknown) => void
+  readonly onState?: (state: QueueFeedState) => void
+  readonly onError?: (kind: "ParseError" | "NetworkError", err?: unknown) => void
+}
+
+const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 4000, 4000, 4000, 4000, 4000, 4000] as const
+
+/**
+ * Reconnecting WebSocket projection feed (C12). The handler owns:
+ *
+ *   - exponential-backoff reconnect (0.5 / 1 / 2 / 4 s, capped at
+ *     4 s for attempts past the fourth, max 10 attempts) so a
+ *     transient outage doesn't strand the customer landing.
+ *   - JSON-parse failure isolation: a malformed message surfaces
+ *     through `onError("ParseError", err)` rather than tripping
+ *     the message handler's own try/catch silently.
+ *   - lifecycle visibility: `onState(...)` fires on every state
+ *     transition so the caller can render a "再接続中..." banner.
+ *
+ * Returns a handle with `close()` for the caller's `onDestroy` and
+ * `state()` for ad-hoc inspection.
+ */
+export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle => {
+  let attempt = 0
+  let manualClose = false
+  let socket: WebSocket | null = null
+  let currentState: QueueFeedState = "connecting"
+
+  const setState = (next: QueueFeedState): void => {
+    currentState = next
+    callbacks.onState?.(next)
+  }
+
+  const connect = (): void => {
+    socket = new WebSocket(`${wsUrl()}/api/v1/queue/feed`)
+    socket.onopen = () => {
+      attempt = 0
+      setState("open")
+    }
+    socket.onmessage = (event: MessageEvent<string>) => {
+      try {
+        const parsed: unknown = JSON.parse(event.data)
+        callbacks.onProjection(parsed)
+      } catch (err) {
+        callbacks.onError?.("ParseError", err)
+      }
+    }
+    socket.onerror = (err) => {
+      callbacks.onError?.("NetworkError", err)
+    }
+    socket.onclose = () => {
+      if (manualClose || attempt >= RECONNECT_DELAYS_MS.length) {
+        setState("closed")
+        return
+      }
+      const delay = RECONNECT_DELAYS_MS[attempt]
+      attempt += 1
+      setState("reconnecting")
+      setTimeout(connect, delay)
+    }
+  }
+
+  connect()
+
+  return {
+    close: (): void => {
+      manualClose = true
+      socket?.close(1000, "client-done")
+    },
+    state: (): QueueFeedState => currentState,
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -137,35 +272,29 @@ const staffHeaders = (token: string) => ({
   "x-staff-token": token,
 })
 
-export const callNext = async (token: string): Promise<ApiResult<{ ticket: Ticket }>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/queue/call-next`, {
+export const callNext = async (token: string): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/queue/call-next`, {
     method: "POST",
     headers: staffHeaders(token),
   })
-  return json(res)
-}
 
 export const markServed = async (
   token: string,
   ticketId: string,
-): Promise<ApiResult<{ ticket: Ticket }>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/served`, {
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/served`, {
     method: "POST",
     headers: staffHeaders(token),
   })
-  return json(res)
-}
 
 export const markNoShow = async (
   token: string,
   ticketId: string,
-): Promise<ApiResult<{ ticket: Ticket }>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/no-show`, {
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/no-show`, {
     method: "POST",
     headers: staffHeaders(token),
   })
-  return json(res)
-}
 
 /**
  * Recall a mistakenly-called ticket: Called → Waiting. The ticket
@@ -177,23 +306,19 @@ export const markNoShow = async (
 export const recall = async (
   token: string,
   ticketId: string,
-): Promise<ApiResult<{ ticket: Ticket }>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/recall`, {
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/recall`, {
     method: "POST",
     headers: staffHeaders(token),
   })
-  return json(res)
-}
 
 export const staffCancel = async (
   token: string,
   ticketId: string,
   reason: string,
-): Promise<ApiResult<{ ticket: Ticket }>> => {
-  const res = await fetch(`${baseUrl()}/api/v1/tickets/${ticketId}/cancel`, {
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/cancel`, {
     method: "POST",
     headers: staffHeaders(token),
     body: JSON.stringify({ reason }),
   })
-  return json(res)
-}
