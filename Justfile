@@ -235,7 +235,7 @@ test-property:
 # property shrinks loudly via the underlying vitest exit. See
 # `docs/dev/fuzz.md` for the operator runbook.
 fuzz:
-    bash scripts/fuzz/run-soak.sh
+    tsx scripts/fuzz/runSoak.ts
 
 # Performance baseline. Vitest's `bench` runner (experimental).
 bench:
@@ -411,7 +411,7 @@ error-docs-refresh:
 # sequential alias is kept under `check-sequential` for failure
 # bisection when interleaved logs are inscrutable.
 check:
-    bash scripts/check-parallel.sh
+    tsx scripts/check.ts
 
 check-sequential: lint typecheck arch comment-bans strict-code dead-code type-coverage test-coverage size-limit-core error-docs-drift-check
 
