@@ -59,8 +59,8 @@ const StaffCancelBodySchema = Schema.Struct({
   reason: Schema.String,
 })
 
-const stub = (env: Env): QueueShop =>
-  env.QUEUE_SHOP.get(env.QUEUE_SHOP.idFromName("shop")) as unknown as QueueShop
+const stub = (env: Env): DurableObjectStub<QueueShop> =>
+  env.QUEUE_SHOP.get(env.QUEUE_SHOP.idFromName("shop"))
 
 const dispatchEnvelope = (result: QueueResult, status = 200): Response =>
   result.ok
