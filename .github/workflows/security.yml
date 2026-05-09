@@ -48,12 +48,13 @@ jobs:
       - name: pnpm install (frozen)
         run: pnpm install --recursive --frozen-lockfile
       # OSV-Scanner walks the lockfile + the project source for known
-      # vulnerable versions across npm + transitive deps. The
-      # action lives at the repository root (`google/osv-scanner-action@…`,
-      # not the deprecated `/osv-scanner-action` sub-path); the
-      # default ruleset covers the npm ecosystem.
+      # vulnerable versions across npm + transitive deps. The repo
+      # root carries a placeholder `action.yml` without a `runs:`
+      # section; the actually-runnable composite action lives under
+      # the `osv-scanner-action/` sub-path. The default ruleset
+      # covers the npm ecosystem.
       - name: Run OSV-Scanner
-        uses: google/osv-scanner-action@v2.3.5
+        uses: google/osv-scanner-action/osv-scanner-action@v2.3.5
         with:
           scan-args: |-
             --recursive
