@@ -21,6 +21,7 @@
   import Button from "$lib/components/Button.svelte"
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
+  import Help from "$lib/components/Help.svelte"
   import Toast from "$lib/components/Toast.svelte"
   import { emptyState, m } from "$lib/messages.js"
   import { wsStatus } from "$lib/wsStatus.js"
@@ -432,6 +433,7 @@
           <h2>待機 ({filteredWaiting.length} / {waitingCount})</h2>
           <div class="lane-filter" role="radiogroup" aria-label="待機列の種別絞り込み">
             <span class="filter-label">{m.filter_label()}</span>
+            <Help text={m.lane_help_summary()} label="種別の説明を表示" />
             {#each ["all", "walkIn", "priority", "reservation"] as filter}
               <button
                 type="button"

@@ -428,8 +428,9 @@
   {#if ticket !== null}
     <div class="hero-row">
       <div class="numeral-hero" data-state={ticket.state}>
-        <span class="state-tag">{stateLabel}</span>
+        <span class="numeral-label">{m.numeral_label()}</span>
         <span class="numeral">{ticket.displaySeq}</span>
+        <span class="state-tag">{stateLabel}</span>
         <span class="lane">
           {ticket.lane === "priority"
             ? "優先"
@@ -437,6 +438,9 @@
               ? "予約"
               : "通常"}
         </span>
+        {#if ticket.lane === "reservation"}
+          <span class="lane-note">{m.lane_note_reservation()}</span>
+        {/if}
       </div>
       {#if qrDataUrl !== null}
         <Card>
@@ -656,6 +660,11 @@
     background: var(--color-bg-subtle);
     color: var(--color-fg-muted);
   }
+  .numeral-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+    letter-spacing: 0.05em;
+  }
   .numeral {
     font: var(--text-numeral-hero);
     font-variant-numeric: tabular-nums;
@@ -670,6 +679,14 @@
   .lane {
     font: var(--text-label-sm);
     color: var(--color-fg-muted);
+  }
+  .lane-note {
+    margin-top: var(--space-2);
+    font: var(--text-body-sm);
+    color: var(--color-fg-secondary);
+    padding: var(--space-1) var(--space-3);
+    background: var(--color-bg-subtle);
+    border-radius: var(--radius-pill);
   }
   .position {
     text-align: center;
