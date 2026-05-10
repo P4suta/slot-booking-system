@@ -37,16 +37,22 @@ const ERROR_RESPONSE = {
 
 const TICKET_SCHEMA = {
   type: "object",
-  required: ["id", "seq", "state", "nameKana", "phoneLast4", "issuedAt"],
+  required: ["id", "seq", "lane", "displaySeq", "state", "nameKana", "phoneLast4", "issuedAt"],
   properties: {
     id: { type: "string", pattern: "^tkt_[A-Za-z0-9]{8,}$" },
     seq: { type: "integer", minimum: 1 },
-    state: { type: "string", enum: ["Waiting", "Called", "Served", "NoShow", "Cancelled"] },
+    lane: { type: "string", enum: ["walkIn", "priority", "reservation"] },
+    displaySeq: { type: "integer", minimum: 1 },
+    state: {
+      type: "string",
+      enum: ["Waiting", "Called", "Serving", "Served", "NoShow", "Cancelled"],
+    },
     nameKana: { type: "string" },
     phoneLast4: { type: "string", pattern: "^[0-9]{4}$" },
     freeText: { type: ["string", "null"] },
     issuedAt: { type: "string", format: "date-time" },
     calledAt: { type: "string", format: "date-time" },
+    servingStartedAt: { type: "string", format: "date-time" },
     servedAt: { type: "string", format: "date-time" },
     cancelledAt: { type: "string", format: "date-time" },
     markedAt: { type: "string", format: "date-time" },

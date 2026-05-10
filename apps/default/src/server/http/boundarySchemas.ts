@@ -1,5 +1,6 @@
 import {
   firstFailedFieldKey,
+  LaneSchema,
   NameKanaSchema,
   PhoneLast4Schema,
   TicketIdSchema,
@@ -45,6 +46,45 @@ export const IssueTicketBodySchema = Schema.Struct({
   nameKana: NameKanaSchema,
   phoneLast4: PhoneLast4Schema,
   freeText: FreeTextOrNull,
+  lane: Schema.optional(LaneSchema),
+})
+
+/**
+ * `POST /api/v1/queue/call-next` accepts an optional `lane` body
+ * (ADR-0062). An empty body means "preferred-lane chain default".
+ */
+export const CallNextBodySchema = Schema.Struct({
+  lane: Schema.optional(LaneSchema),
+})
+
+/**
+ * `POST /api/v1/queue/call-specific` (ADR-0065).
+ */
+export const CallSpecificBodySchema = Schema.Struct({
+  ticketId: TicketIdSchema,
+})
+
+/**
+ * `POST /api/v1/queue/call-batch` (ADR-0065). The schema enforces a
+ * non-empty array at the boundary so the use case can return an
+ * `InvalidBody` envelope rather than letting the empty input slip
+ * through to the DO.
+ */
+const NonEmptyTicketIdArraySchema = Schema.Array(TicketIdSchema).check(
+  Schema.makeFilter((arr: readonly unknown[]) => arr.length > 0),
+)
+
+export const CallBatchBodySchema = Schema.Struct({
+  ticketIds: NonEmptyTicketIdArraySchema,
+})
+
+/**
+ * `POST /api/v1/queue/reorder` (ADR-0065). `afterTicketId === null`
+ * means "lane head".
+ */
+export const ReorderBodySchema = Schema.Struct({
+  ticketId: TicketIdSchema,
+  afterTicketId: Schema.NullOr(TicketIdSchema),
 })
 
 export const MyTicketQuerySchema = Schema.Struct({
@@ -85,10 +125,12 @@ export type DecodeFailureEnvelope = {
 
 const FIELD_FAILURE_MAP = {
   ticketId: { status: 404, tag: "TicketNotFound", code: "E_DOM_TICKET_NOT_FOUND" },
+  ticketIds: { status: 422, tag: "InvalidBody", code: "E_VAL_BODY" },
+  afterTicketId: { status: 404, tag: "TicketNotFound", code: "E_DOM_TICKET_NOT_FOUND" },
   nameKana: { status: 422, tag: "InvalidNameKana", code: "E_VAL_NAME_KANA" },
   phoneLast4: { status: 422, tag: "InvalidPhoneLast4", code: "E_VAL_PHONE_LAST4" },
-  reason: { status: 422, tag: "InvalidReason", code: "E_VAL_REASON" },
   freeText: { status: 422, tag: "InvalidFreeText", code: "E_VAL_FREE_TEXT" },
+  lane: { status: 422, tag: "InvalidLane", code: "E_VAL_LANE" },
 } as const satisfies Record<string, DecodeFailureEnvelope>
 
 const ROOT_FAILURE: DecodeFailureEnvelope = {
