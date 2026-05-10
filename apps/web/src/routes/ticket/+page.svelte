@@ -9,6 +9,7 @@
     type ProjectionEntry,
     type QueueFeedHandle,
     type QueueFeedState,
+    rescheduleTicket,
     type ShopState,
     shopState,
     type Ticket,
@@ -25,6 +26,7 @@
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
+  import SlotPicker from "$lib/components/SlotPicker.svelte"
   import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
   import {
     hasStaffToken,
@@ -45,6 +47,14 @@
   let cancelDialogOpen = $state(false)
   let cancelReason = $state("")
   let cancelBusy = $state(false)
+  // ADR-0070 — atomic appointmentAt swap. The Dialog is only
+  // openable while the ticket is reservation-laned and active; the
+  // handle is read from the localStorage cache (already populated by
+  // /ticket boot) so the customer just picks the new slot.
+  let rescheduleDialogOpen = $state(false)
+  let rescheduleNewISO: string | null = $state(null)
+  let rescheduleBusy = $state(false)
+  let rescheduleError: { tag: string; code: string; message: string } | null = $state(null)
   let feedState: QueueFeedState = $state("connecting")
   let notificationState: NotificationPermissionState = $state("unsupported")
   let feed: QueueFeedHandle | undefined
@@ -58,6 +68,15 @@
   const isReservation = $derived(
     ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined,
   )
+  const isActive = $derived(
+    ticket?.state === "Waiting" ||
+      ticket?.state === "Called" ||
+      ticket?.state === "Serving",
+  )
+  // Visibility guard for the reschedule button. Disable-on-WS-drop
+  // is delegated to the button itself, mirroring how cancel handles
+  // a feedState !== "open" tab.
+  const canReschedule = $derived(isReservation && isActive)
   const appointmentMs = $derived(
     ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined
       ? Date.parse(ticket.appointmentAt)
@@ -269,6 +288,58 @@
     notificationState = await requestNotificationPermission()
   }
 
+  const openRescheduleDialog = (): void => {
+    rescheduleNewISO = ticket?.appointmentAt ?? null
+    rescheduleError = null
+    rescheduleDialogOpen = true
+  }
+
+  const onRescheduleConfirm = async (): Promise<void> => {
+    if (stored === null || ticket === null || rescheduleNewISO === null) return
+    rescheduleBusy = true
+    try {
+      const r = await rescheduleTicket(stored.ticketId, {
+        nameKana: stored.nameKana,
+        phoneLast4: stored.phoneLast4,
+        newAppointmentAt: rescheduleNewISO,
+      })
+      if (!r.ok) {
+        rescheduleError = {
+          tag: r.error._tag,
+          code: r.error.code,
+          message: rescheduleMessageOf(r.error._tag),
+        }
+        return
+      }
+      ticket = r.value.ticket
+      rescheduleDialogOpen = false
+      rescheduleNewISO = null
+      // Pull the latest projection so the appointment Card / feed
+      // reflect the new slot's occupancy without waiting for the
+      // next WS broadcast.
+      if (stored !== null) await refresh(stored)
+    } finally {
+      rescheduleBusy = false
+    }
+  }
+
+  const rescheduleMessageOf = (tag: string): string => {
+    switch (tag) {
+      case "SlotFull":
+        return "選択した時間枠は満席です。 別の時間をお選びください"
+      case "SlotInPast":
+        return "過去の時間は選択できません"
+      case "LaneMismatch":
+        return "このチケットは予約ではないため変更できません"
+      case "PhoneMismatch":
+        return "名前または電話番号末尾が一致しません"
+      case "TicketNotFound":
+        return "番号が見つかりませんでした"
+      default:
+        return "予約時刻を変更できませんでした"
+    }
+  }
+
   onMount(async () => {
     // Stage 10: staff session sandbox — operator at the keyboard
     // shouldn't impersonate a customer view, even by accident.
@@ -371,6 +442,17 @@
               {checkInBusy ? "送信中…" : "到着しました"}
             </Button>
           {/if}
+          {#if canReschedule}
+            <Button
+              variant="secondary"
+              size="md"
+              fullWidth
+              disabled={feedState !== "open"}
+              onclick={openRescheduleDialog}
+            >
+              予約時刻を変更
+            </Button>
+          {/if}
         </div>
       </Card>
     {:else if ticket.state === "Waiting" && positionInfo !== null}
@@ -436,6 +518,48 @@
       <Button variant="ghost" onclick={() => (cancelDialogOpen = false)}>戻る</Button>
       <Button variant="destructive" disabled={cancelBusy} onclick={onCancelConfirm}>
         {cancelBusy ? "送信中…" : "キャンセル"}
+      </Button>
+    {/snippet}
+  </Dialog>
+
+  <Dialog
+    bind:open={rescheduleDialogOpen}
+    title="予約時刻を変更しますか?"
+    onClose={() => (rescheduleDialogOpen = false)}
+  >
+    {#if ticket !== null && ticket.appointmentAt !== null && ticket.appointmentAt !== undefined}
+      <p class="reschedule-current">
+        現在の予約時刻:
+        <strong>{ticket.appointmentAt.slice(11, 16)}</strong>
+      </p>
+    {/if}
+    <p class="reschedule-help">
+      新しい時間を選んでください。 名前 / 電話番号は変えられません — 変更したい場合は一度キャンセルして再度発券してください。
+    </p>
+    <SlotPicker
+      selectedISO={rescheduleNewISO}
+      onSelect={(iso) => {
+        rescheduleNewISO = iso
+        rescheduleError = null
+      }}
+    />
+    {#if rescheduleError !== null}
+      <ErrorCard
+        tag={rescheduleError.tag}
+        code={rescheduleError.code}
+        message={rescheduleError.message}
+      />
+    {/if}
+    {#snippet actions()}
+      <Button variant="ghost" onclick={() => (rescheduleDialogOpen = false)}>戻る</Button>
+      <Button
+        variant="primary"
+        disabled={rescheduleBusy ||
+          rescheduleNewISO === null ||
+          rescheduleNewISO === ticket?.appointmentAt}
+        onclick={onRescheduleConfirm}
+      >
+        {rescheduleBusy ? "送信中…" : "この時間に変更する"}
       </Button>
     {/snippet}
   </Dialog>
@@ -591,5 +715,20 @@
     padding: var(--space-3);
     margin-top: var(--space-2);
     resize: vertical;
+  }
+  .reschedule-current {
+    margin: 0 0 var(--space-2);
+    color: var(--color-fg-secondary);
+    font: var(--text-body-md);
+  }
+  .reschedule-current strong {
+    font: var(--text-numeral-sm);
+    color: var(--color-fg-primary);
+    margin-left: var(--space-2);
+  }
+  .reschedule-help {
+    margin: 0 0 var(--space-4);
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
   }
 </style>
