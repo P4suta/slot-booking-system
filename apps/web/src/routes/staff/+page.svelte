@@ -45,7 +45,7 @@
   let search = $state("")
   let batchN = $state(1)
   let selected: Set<string> = $state(new Set())
-  let detail: Ticket | null = $state(null)
+  let expanded: Set<string> = $state(new Set())
   let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
   let audioCue = $state(
     typeof window === "undefined" ? false : localStorage.getItem("queue.audioCue") === "1",
@@ -284,16 +284,29 @@
     runAction("reorder", () => reorder(token, { ticketId, afterTicketId: null }), () => showToast("先頭に移動", "info"))
 
   /* ---------- selection ---------- */
-  const toggleSelect = (id: string, event?: MouseEvent) => {
+  // Checkbox is now the selection affordance (the card body is the
+  // accordion trigger). A plain checkbox change toggles; the
+  // additive shift-modifier from the dblclick era is gone, but
+  // multi-select still works because each checkbox is independent.
+  const toggleSelect = (id: string) => {
     const next = new Set(selected)
-    if (event?.shiftKey === true) {
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-    } else {
-      next.clear()
-      next.add(id)
-    }
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
     selected = next
+  }
+
+  /* ---------- accordion ---------- */
+  // ADR-0070 follow-up: the previous double-click → Dialog flow was
+  // not discoverable for non-technical staff. Single-click on the
+  // card body now expands an inline detail panel, and multiple
+  // panels can be open at once (Set instead of single Ticket
+  // reference). Selection moved to a dedicated checkbox in B-2 so
+  // the card body click stays unambiguous.
+  const toggleExpanded = (id: string) => {
+    const next = new Set(expanded)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    expanded = next
   }
 
   const onAudioToggle = () => {
@@ -385,33 +398,63 @@
           {#each filteredWaiting as t (t.id)}
             <Card interactive>
               <div
-                class="ticket"
-                role="button"
-                tabindex="0"
-                aria-pressed={selected.has(t.id)}
+                class="ticket waiting-card"
                 data-selected={selected.has(t.id) ? "true" : undefined}
-                onclick={(e) => toggleSelect(t.id, e)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault()
-                    detail = t
-                  }
-                }}
-                ondblclick={() => (detail = t)}
+                data-expanded={expanded.has(t.id) ? "true" : undefined}
               >
-                <div class="ticket-head">
-                  <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
-                  {#if t.appointmentAt !== null}
-                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                      {t.appointmentAt.slice(11, 16)}
+                <label class="select-handle" aria-label="呼び出し対象として選択">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(t.id)}
+                    onchange={() => toggleSelect(t.id)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  class="ticket-body-button"
+                  aria-expanded={expanded.has(t.id)}
+                  aria-controls={`ticket-detail-${t.id}`}
+                  onclick={() => toggleExpanded(t.id)}
+                >
+                  <div class="ticket-head">
+                    <span class="numeral">{t.displaySeq}</span>
+                    <span class="lane lane-{t.lane}">
+                      {t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}
                     </span>
-                  {/if}
-                </div>
-                <div class="ticket-body">
-                  <span class="kana">{t.nameKana ?? ""}</span>
-                  <span class="last4">{t.phoneLast4 ?? ""}</span>
-                </div>
+                    {#if t.appointmentAt !== null}
+                      <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                        {t.appointmentAt.slice(11, 16)}
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="ticket-body">
+                    <span class="kana">{t.nameKana ?? ""}</span>
+                    <span class="last4">{t.phoneLast4 ?? ""}</span>
+                  </div>
+                </button>
+                {#if expanded.has(t.id)}
+                  <div id={`ticket-detail-${t.id}`} class="ticket-detail">
+                    <dl>
+                      <dt>state</dt><dd>{t.state}</dd>
+                      <dt>lane</dt><dd>{t.lane}</dd>
+                      <dt>seq</dt><dd>{t.seq}</dd>
+                      <dt>displaySeq</dt><dd>{t.displaySeq}</dd>
+                      <dt>name</dt><dd>{t.nameKana ?? ""}</dd>
+                      <dt>last4</dt><dd>{t.phoneLast4 ?? ""}</dd>
+                      {#if t.freeText !== null && t.freeText !== undefined}
+                        <dt>用件</dt><dd class="freetext">{t.freeText}</dd>
+                      {/if}
+                    </dl>
+                    <div class="detail-actions">
+                      <Button variant="primary" size="md" onclick={() => onCallSpecific(t.id)} disabled={busy}>
+                        個別呼び出し
+                      </Button>
+                      <Button variant="secondary" size="md" onclick={() => onReorderToHead(t.id)} disabled={busy}>
+                        先頭に移動
+                      </Button>
+                    </div>
+                  </div>
+                {/if}
               </div>
             </Card>
           {/each}
@@ -516,37 +559,6 @@
       </footer>
     {/if}
 
-    <!-- detail drawer (Dialog) -->
-    <Dialog
-      bind:open={() => detail !== null, (v) => { if (!v) detail = null }}
-      title={detail !== null ? `#${detail.displaySeq} 詳細` : ""}
-      onClose={() => (detail = null)}
-    >
-      {#if detail !== null}
-        <dl class="detail">
-          <dt>state</dt><dd>{detail.state}</dd>
-          <dt>lane</dt><dd>{detail.lane}</dd>
-          <dt>seq</dt><dd>{detail.seq}</dd>
-          <dt>displaySeq</dt><dd>{detail.displaySeq}</dd>
-          <dt>name</dt><dd>{detail.nameKana ?? ""}</dd>
-          <dt>last4</dt><dd>{detail.phoneLast4 ?? ""}</dd>
-          {#if detail.freeText !== null && detail.freeText !== undefined}
-            <dt>用件</dt><dd>{detail.freeText}</dd>
-          {/if}
-        </dl>
-      {/if}
-      {#snippet actions()}
-        {#if detail !== null}
-          {#if detail.state === "Waiting"}
-            <Button variant="primary" onclick={() => detail !== null && onCallSpecific(detail.id)}>個別呼び出し</Button>
-            <Button variant="secondary" onclick={() => detail !== null && onReorderToHead(detail.id)}>先頭に移動</Button>
-          {/if}
-          <Button variant="ghost" onclick={() => (detail = null)}>閉じる</Button>
-        {/if}
-      {/snippet}
-    </Dialog>
-
-    <!-- help dialog -->
     <!-- toast -->
     {#if toast !== null}
       <div class="toast-host">
@@ -697,6 +709,75 @@
     outline: 2px solid var(--color-accent-primary);
     outline-offset: 2px;
     border-radius: var(--radius-md);
+  }
+  .waiting-card {
+    position: relative;
+  }
+  .select-handle {
+    position: absolute;
+    top: var(--space-2);
+    right: var(--space-2);
+    display: inline-flex;
+    align-items: center;
+    z-index: 1;
+  }
+  .select-handle input[type="checkbox"] {
+    width: 1.25rem;
+    height: 1.25rem;
+    cursor: pointer;
+    accent-color: var(--color-accent-primary);
+  }
+  .ticket-body-button {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    width: 100%;
+  }
+  .ticket-body-button:focus-visible {
+    outline: 2px solid var(--color-accent-primary);
+    outline-offset: 4px;
+    border-radius: var(--radius-md);
+  }
+  .ticket-detail {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .ticket-detail dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-1) var(--space-3);
+    font: var(--text-body-sm);
+  }
+  .ticket-detail dt {
+    color: var(--color-fg-muted);
+    font: var(--text-label-sm);
+  }
+  .ticket-detail dd {
+    margin: 0;
+    color: var(--color-fg-primary);
+  }
+  .ticket-detail dd.freetext {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .detail-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
   }
   .ticket-head {
     display: flex;
