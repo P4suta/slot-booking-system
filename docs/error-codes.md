@@ -9,7 +9,7 @@ downstream surfaces (ADR-0017): the `code`, the `severity`, the `i18nKey`
 (`error.<tag>` per `errorToI18nKey`), and the `__typename` of the
 `BookingError` GraphQL union arm.
 
-**Total**: 18 tags (validation 6 / domain 9 / infrastructure 3).
+**Total**: 22 tags (validation 6 / domain 13 / infrastructure 3).
 
 ## Validation
 
@@ -43,6 +43,10 @@ the same way it does validation errors.
 | `InvalidStateTransition` | `E_DOM_INVALID_TRANSITION` | `error.InvalidStateTransition` |
 | `InsufficientCapability` | `E_DOM_INSUFFICIENT_CAPABILITY` | `error.InsufficientCapability` |
 | `LaneMismatch` | `E_DOM_LANE_MISMATCH` | `error.LaneMismatch` |
+| `SlotFull` | `E_DOM_SLOT_FULL` | `error.SlotFull` |
+| `SlotInPast` | `E_DOM_SLOT_IN_PAST` | `error.SlotInPast` |
+| `AppointmentRequiredForReservationLane` | `E_DOM_APPOINTMENT_REQUIRED` | `error.AppointmentRequiredForReservationLane` |
+| `CheckInTooEarly` | `E_DOM_CHECK_IN_TOO_EARLY` | `error.CheckInTooEarly` |
 
 ## Infrastructure
 
