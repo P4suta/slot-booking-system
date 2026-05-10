@@ -14,6 +14,13 @@
     type Ticket,
     ticketByHandle,
   } from "$lib/api.js"
+  import {
+    clearAlertMemory,
+    maybeTriggerCalledAlert,
+    type NotificationPermissionState,
+    notificationPermissionState,
+    requestNotificationPermission,
+  } from "$lib/calledAlert.js"
   import Button from "$lib/components/Button.svelte"
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
@@ -38,6 +45,7 @@
   let cancelReason = $state("")
   let cancelBusy = $state(false)
   let feedState: QueueFeedState = $state("connecting")
+  let notificationState: NotificationPermissionState = $state("unsupported")
   let feed: QueueFeedHandle | undefined
   let now = $state(Date.now())
   let checkInBusy = $state(false)
@@ -128,6 +136,7 @@
         // cache survived a stale device). Purge + bounce to /recover.
         if (r.error._tag === "TicketNotFound") {
           purgeTicketCache()
+          clearAlertMemory()
           await goto("/recover")
           return
         }
@@ -147,10 +156,23 @@
         phoneLast4: t.phoneLast4 ?? id.phoneLast4,
         lastKnownState: t.state,
       })
+      // Called observation — fires chime / vibrate / notification on
+      // the **first** transition into Called (per-calledAt instant).
+      // A Recall → re-Call mints a fresh calledAt and the alert fires
+      // again; a tab reload while the ticket is already Called does
+      // not re-fire (the calledAt is unchanged).
+      maybeTriggerCalledAlert({
+        state: t.state,
+        calledAt: "calledAt" in t ? t.calledAt : null,
+        displaySeq: t.displaySeq,
+      })
       // Terminal observation — keep the view rendered so the
       // customer sees "対応完了" / "キャンセル済", but release the
       // cache so the next mount falls through to /recover.
-      if (isTerminalState(t.state)) purgeTicketCache()
+      if (isTerminalState(t.state)) {
+        purgeTicketCache()
+        clearAlertMemory()
+      }
       const s = await shopState()
       if (s.ok) snapshot = s.value
       const origin = window.location.origin
@@ -242,7 +264,12 @@
     }
   }
 
+  const onRequestNotification = async (): Promise<void> => {
+    notificationState = await requestNotificationPermission()
+  }
+
   onMount(async () => {
+    notificationState = notificationPermissionState()
     stored = readStored()
     if (stored === null) {
       // No URL params, no cache → the customer landed on /ticket
@@ -347,6 +374,18 @@
       </Card>
     {/if}
 
+    {#if ticket.state === "Waiting" && notificationState === "default"}
+      <Card>
+        <div class="notif-opt-in">
+          <p class="notif-msg">呼ばれたときに通知を受け取りますか?</p>
+          <p class="notif-help">音とバイブと画面通知でお知らせします。</p>
+          <Button variant="secondary" size="md" onclick={onRequestNotification}>
+            通知を許可する
+          </Button>
+        </div>
+      </Card>
+    {/if}
+
     {#if feedState === "reconnecting"}
       <p class="banner" role="status" aria-live="polite">再接続中…</p>
     {/if}
@@ -448,6 +487,22 @@
     color: var(--color-fg-primary);
     font-variant-numeric: tabular-nums;
     margin: 0 var(--space-2);
+  }
+  .notif-opt-in {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    text-align: center;
+  }
+  .notif-msg {
+    font: var(--text-body-md);
+    color: var(--color-fg-primary);
+    margin: 0;
+  }
+  .notif-help {
+    font: var(--text-body-sm);
+    color: var(--color-fg-muted);
+    margin: 0 0 var(--space-2);
   }
   .qr {
     display: flex;
