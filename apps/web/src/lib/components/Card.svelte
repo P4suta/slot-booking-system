@@ -5,12 +5,23 @@
     elevated?: boolean
     interactive?: boolean
     children: Snippet
+    /** Extra class names appended after `card`, for layout hooks. */
+    class?: string
   }
 
-  const { elevated = false, interactive = false, children }: Props = $props()
+  const {
+    elevated = false,
+    interactive = false,
+    children,
+    class: extraClass = "",
+  }: Props = $props()
 </script>
 
-<div class="card" data-elevated={elevated ? "true" : undefined} data-interactive={interactive ? "true" : undefined}>
+<div
+  class="card {extraClass}"
+  data-elevated={elevated ? "true" : undefined}
+  data-interactive={interactive ? "true" : undefined}
+>
   {@render children()}
 </div>
 

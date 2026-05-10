@@ -76,5 +76,8 @@
   "ws_alert_offline_body": "Wi-Fi の接続、 機内モード、 モバイルデータ通信の状態をご確認ください。 端末側の接続が回復すれば自動的に復帰します。",
   "ws_alert_server_title": "サーバとの接続が切れました",
   "ws_alert_server_body": "端末のネットワークは正常です。 サーバ側で障害の可能性があります。 数分待っても解消しない場合は店舗にお声がけください。",
-  "ws_alert_server_body_staff": "端末のネットワークは正常です。 Cloudflare 側障害の可能性があります。 status.cloudflare.com で稼働状況を確認し、 復旧をお待ちください。"
+  "ws_alert_server_body_staff": "端末のネットワークは正常です。 Cloudflare 側障害の可能性があります。 status.cloudflare.com で稼働状況を確認し、 復旧をお待ちください。",
+  "ws_alert_server_body_staff_prefix": "端末のネットワークは正常です。 Cloudflare 側障害の可能性があります。 ",
+  "ws_alert_server_body_staff_suffix": " で稼働状況を確認し、 復旧をお待ちください。",
+  "lane_help_short": "通常 / 優先 / 予約の 3 種類があります。 詳しくはマニュアルをご確認ください。"
 }

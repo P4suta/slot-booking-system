@@ -434,7 +434,12 @@
           />
           <div class="lane-filter" role="radiogroup" aria-label="待機列の種別絞り込み">
             <span class="filter-label">{m.filter_label()}</span>
-            <Help text={m.lane_help_summary()} label="種別の説明を表示" />
+            <Help
+              text={m.lane_help_summary()}
+              label="種別の説明を表示"
+              placement="below"
+              align="start"
+            />
             {#each ["all", "walkIn", "priority", "reservation"] as filter}
               <button
                 type="button"
@@ -852,9 +857,17 @@
     margin: 0 0 var(--space-4);
     font: var(--text-body-sm);
   }
+  /* `subgrid` on each `.col` opts every column into the kanban's
+     own row grid, so the header row (row 1) auto-sizes to the
+     tallest column header (= 待機列, which carries search +
+     primary action + filter) and the other columns inherit that
+     same height. Without subgrid the 待機列 header alone would
+     stretch downward and the other columns' cards lists would
+     start above it — visibly uneven. */
   .kanban {
     display: grid;
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
     gap: var(--space-4);
     flex: 1;
     min-height: 0;
@@ -866,14 +879,14 @@
     }
   }
   .col {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: subgrid;
+    grid-row: span 2;
     min-height: 0;
     min-width: 0;
   }
-  .col header {
+  .col > header {
     margin-bottom: var(--space-3);
-    flex-shrink: 0;
   }
   .col h2 {
     font: var(--text-label-md);

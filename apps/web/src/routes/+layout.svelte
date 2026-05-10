@@ -142,9 +142,17 @@
         <span>{m.ws_alert_offline_body()}</span>
       {:else}
         <strong>{m.ws_alert_server_title()}</strong>
-        <span>
-          {$staffSessionActive ? m.ws_alert_server_body_staff() : m.ws_alert_server_body()}
-        </span>
+        {#if $staffSessionActive}
+          <span>
+            {m.ws_alert_server_body_staff_prefix()}<a
+              href="https://www.cloudflarestatus.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="ws-alert-link">status.cloudflare.com</a>{m.ws_alert_server_body_staff_suffix()}
+          </span>
+        {:else}
+          <span>{m.ws_alert_server_body()}</span>
+        {/if}
       {/if}
     </div>
   </div>
@@ -253,6 +261,14 @@
   }
   .ws-alert-body strong {
     font: var(--text-label-md);
+  }
+  .ws-alert-link {
+    color: inherit;
+    text-decoration: underline;
+    font-weight: 600;
+  }
+  .ws-alert-link:hover {
+    text-decoration: none;
   }
   .header-logout {
     background: transparent;

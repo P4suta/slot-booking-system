@@ -426,37 +426,24 @@
   {/if}
 
   {#if ticket !== null}
-    <div class="hero-row">
-      <div class="numeral-hero" data-state={ticket.state}>
-        <span class="numeral-label">{m.numeral_label()}</span>
-        <span class="numeral">{ticket.displaySeq}</span>
-        <span class="state-tag">{stateLabel}</span>
-        <span class="lane">
-          {ticket.lane === "priority"
-            ? "優先"
-            : ticket.lane === "reservation"
-              ? "予約"
-              : "通常"}
-        </span>
-        {#if ticket.lane === "reservation"}
-          <span class="lane-note">{m.lane_note_reservation()}</span>
-        {/if}
-      </div>
-      {#if qrDataUrl !== null}
-        <Card>
-          <div class="qr">
-            <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" />
-            <div class="qr-help">
-              <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
-              <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
-            </div>
-          </div>
-        </Card>
+    <div class="numeral-hero" data-state={ticket.state}>
+      <span class="numeral-label">{m.numeral_label()}</span>
+      <span class="numeral">{ticket.displaySeq}</span>
+      <span class="state-tag">{stateLabel}</span>
+      <span class="lane">
+        {ticket.lane === "priority"
+          ? "優先"
+          : ticket.lane === "reservation"
+            ? "予約"
+            : "通常"}
+      </span>
+      {#if ticket.lane === "reservation"}
+        <span class="lane-note">{m.lane_note_reservation()}</span>
       {/if}
     </div>
 
     {#if isReservation && minutesUntilAppointment !== null}
-      <Card>
+      <Card class="appointment-card">
         <div class="appointment">
           <span class="appointment-label">予約時刻</span>
           <span class="appointment-time">{ticket.appointmentAt?.slice(11, 16) ?? ""}</span>
@@ -499,7 +486,7 @@
         </div>
       </Card>
     {:else if ticket.state === "Waiting" && positionInfo !== null}
-      <Card>
+      <Card class="position-card">
         <p class="position">
           あなたの前に <strong>{positionInfo}</strong> 人
         </p>
@@ -507,7 +494,7 @@
     {/if}
 
     {#if ticket.state === "Waiting" && notificationState === "default"}
-      <Card>
+      <Card class="notify-card">
         <div class="notif-opt-in">
           <p class="notif-msg">
             {m.notify_permission_question()}
@@ -523,6 +510,18 @@
 
     {#if feedState === "reconnecting"}
       <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
+    {/if}
+
+    {#if qrDataUrl !== null}
+      <Card class="qr-card">
+        <div class="qr">
+          <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" />
+          <div class="qr-help">
+            <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
+            <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
+          </div>
+        </div>
+      </Card>
     {/if}
 
     {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Serving"}
@@ -607,23 +606,40 @@
     flex-direction: column;
     gap: var(--space-6);
   }
+  /* Desktop only: pivot the page into a 2-column grid so the
+     numeral and the QR share row 1 (huge number + scannable code
+     side-by-side, as per user request). Every other card spans the
+     full width below. On mobile the page stays a flex column
+     (declared above) — see ticket-page's natural ordering for the
+     mobile read order: numeral → appointment / position →
+     reconnect banner → QR → cancel actions. The QR is intentionally
+     after the position card so a customer scrolling on a phone
+     sees「あなたの前に N 人」 before reaching the share-only QR. */
   @media (min-width: 48rem) {
     .ticket-page {
       max-width: 56rem;
       padding: 0 var(--space-6);
-    }
-  }
-  .hero-row {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-6);
-  }
-  @media (min-width: 48rem) {
-    .hero-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      align-items: stretch;
-      gap: var(--space-6);
+      column-gap: var(--space-6);
+      row-gap: var(--space-6);
+      align-items: start;
+    }
+    .ticket-page > .numeral-hero {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .ticket-page > .qr-card {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .ticket-page > .appointment-card,
+    .ticket-page > .position-card,
+    .ticket-page > .notify-card,
+    .ticket-page > .actions,
+    .ticket-page > .banner,
+    .ticket-page > .loading {
+      grid-column: 1 / -1;
     }
   }
   .numeral-hero {
@@ -731,8 +747,14 @@
     height: auto;
     aspect-ratio: 1 / 1;
   }
+  .qr-help {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+  }
   .qr-help p {
-    margin: 0 0 var(--space-2);
+    margin: 0;
     color: var(--color-fg-secondary);
     font: var(--text-body-sm);
     text-align: center;

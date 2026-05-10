@@ -76,5 +76,8 @@
   "ws_alert_offline_body": "Check Wi-Fi, airplane mode, or your mobile data. The page will reconnect automatically once the device is back online.",
   "ws_alert_server_title": "Server connection lost",
   "ws_alert_server_body": "Your device's network looks fine — the server may be experiencing an outage. If this does not resolve within a few minutes, please speak to staff.",
-  "ws_alert_server_body_staff": "Your device's network looks fine — Cloudflare is likely the one in trouble. Check status.cloudflare.com and wait for recovery."
+  "ws_alert_server_body_staff": "Your device's network looks fine — Cloudflare is likely the one in trouble. Check status.cloudflare.com and wait for recovery.",
+  "ws_alert_server_body_staff_prefix": "Your device's network looks fine — Cloudflare is likely the one in trouble. Check ",
+  "ws_alert_server_body_staff_suffix": " and wait for recovery.",
+  "lane_help_short": "Three lane types: walk-in, priority, reservation. See the operations manual for details."
 }
