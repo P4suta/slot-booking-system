@@ -204,13 +204,21 @@ export const checkIn = async (ticketId: string): Promise<ApiResult<Record<string
     method: "POST",
   })
 
-export const myTicket = async (input: {
-  ticketId: string
+/**
+ * Customer-side handle lookup (ADR-0069). The handle is the
+ * active-set primary key, so this returns the unique active
+ * ticket if any. 404 → null wrapper would lose the ApiResult
+ * discrimination; callers inspect `r.ok === false && r.error._tag
+ * === "TicketNotFound"` to detect the "no active ticket" branch.
+ * Supersedes the ADR-0064 `myTicket(ticketId, kana, last4)` lookup
+ * which required the customer to bring the ticketId.
+ */
+export const ticketByHandle = async (input: {
   nameKana: string
   phoneLast4: string
 }): Promise<ApiResult<{ ticket: Ticket }>> => {
   const params = new URLSearchParams(input)
-  return fetchJson(`${baseUrl()}/api/v1/tickets/me?${params.toString()}`)
+  return fetchJson(`${baseUrl()}/api/v1/tickets/by-handle?${params.toString()}`)
 }
 
 export const cancelTicket = async (

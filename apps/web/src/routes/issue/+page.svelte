@@ -5,6 +5,7 @@
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
+  import { writeTicketCache } from "$lib/ticketCache.js"
 
   let nameKana = $state("")
   let phoneLast4 = $state("")
@@ -126,20 +127,19 @@
       return
     }
     const ticket = result.value.ticket
-    sessionStorage.setItem(
-      "queue.ticket",
-      JSON.stringify({
-        ticketId: ticket.id,
-        nameKana: ticket.nameKana,
-        phoneLast4: ticket.phoneLast4,
-      }),
-    )
-    const params = new URLSearchParams({
-      id: ticket.id,
-      k: ticket.nameKana ?? nameKana,
-      p: ticket.phoneLast4 ?? phoneLast4,
+    // ADR-0069: persist the handle in localStorage so a same-device
+    // re-open survives tab close / browser restart. /ticket reads
+    // this cache + revalidates via GET /tickets/by-handle. The URL
+    // intentionally carries only the ticketId — no PII, no QR
+    // credential leak — and the ticket page falls back to /recover
+    // if the cache is empty on a recipient device.
+    writeTicketCache({
+      ticketId: ticket.id,
+      nameKana: ticket.nameKana ?? nameKana,
+      phoneLast4: ticket.phoneLast4 ?? phoneLast4,
+      lastKnownState: ticket.state,
     })
-    await goto(`/ticket?${params.toString()}`)
+    await goto(`/ticket?id=${encodeURIComponent(ticket.id)}`)
   }
 
   const reportNetworkError = (e: unknown): void => {

@@ -1,28 +1,16 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
-  import { page } from "$app/state"
-  import { onMount } from "svelte"
-  import { myTicket } from "$lib/api.js"
+  import { ticketByHandle } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
+  import { writeTicketCache } from "$lib/ticketCache.js"
 
-  let ticketId = $state("")
   let nameKana = $state("")
   let phoneLast4 = $state("")
   let busy = $state(false)
   let error: { tag: string; code: string; message: string } | null = $state(null)
-
-  // Pre-fill ticketId from `?id=` query param when the customer
-  // arrives via the share-safe `/recover?id=...` form. The handle
-  // (kana + last4) is always typed by the user — never by URL —
-  // so a recipient who only got the share link cannot bypass the
-  // verification (ADR-0064 share-safety).
-  onMount(() => {
-    const id = page.url.searchParams.get("id")
-    if (id !== null) ticketId = id
-  })
 
   const onNameInput = (event: Event): void => {
     const el = event.currentTarget as HTMLInputElement
@@ -34,7 +22,10 @@
     error = null
     busy = true
     try {
-      const r = await myTicket({ ticketId, nameKana, phoneLast4 })
+      // ADR-0069: handle is the active-set primary key — kana + last4
+      // alone resolve to the unique active ticket. No ticketId input,
+      // no URL credential required.
+      const r = await ticketByHandle({ nameKana, phoneLast4 })
       if (!r.ok) {
         error = {
           tag: r.error._tag,
@@ -44,20 +35,13 @@
         return
       }
       const t = r.value.ticket
-      sessionStorage.setItem(
-        "queue.ticket",
-        JSON.stringify({
-          ticketId: t.id,
-          nameKana: t.nameKana,
-          phoneLast4: t.phoneLast4,
-        }),
-      )
-      const params = new URLSearchParams({
-        id: t.id,
-        k: t.nameKana ?? nameKana,
-        p: t.phoneLast4 ?? phoneLast4,
+      writeTicketCache({
+        ticketId: t.id,
+        nameKana: t.nameKana ?? nameKana,
+        phoneLast4: t.phoneLast4 ?? phoneLast4,
+        lastKnownState: t.state,
       })
-      await goto(`/ticket?${params.toString()}`)
+      await goto(`/ticket?id=${encodeURIComponent(t.id)}`)
     } catch (e) {
       error = {
         tag: "NetworkError",
@@ -72,15 +56,11 @@
   const messageOf = (tag: string): string => {
     switch (tag) {
       case "TicketNotFound":
-        return "番号が見つかりません。 ticket id を確認してください"
-      case "PhoneMismatch":
-        return "名前または電話番号末尾が一致しません"
+        return "該当する整理券が見つかりません。 名前 (カタカナ) と電話番号末尾を確認してください"
       case "InvalidNameKana":
         return "お名前はカタカナ + 空白のみで入力してください"
       case "InvalidPhoneLast4":
         return "電話番号は末尾 4 桁の数字で入力してください"
-      case "InvalidEntityId":
-        return "ticket id の形式が正しくありません"
       default:
         return "情報を取得できませんでした"
     }
@@ -99,17 +79,6 @@
   </p>
 
   <form onsubmit={onSubmit}>
-    <label class="field">
-      <span class="label">ticket id</span>
-      <input
-        type="text"
-        bind:value={ticketId}
-        required
-        placeholder="tkt_..."
-        autocomplete="off"
-      />
-    </label>
-
     <label class="field">
       <span class="label">お名前 (カタカナ)</span>
       <input

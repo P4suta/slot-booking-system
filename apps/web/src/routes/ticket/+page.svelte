@@ -1,23 +1,30 @@
 <script lang="ts">
+  import { goto } from "$app/navigation"
   import { page } from "$app/state"
   import { onDestroy, onMount } from "svelte"
   import {
     cancelTicket,
     checkIn,
     connectQueueFeed,
-    myTicket,
     type ProjectionEntry,
     type QueueFeedHandle,
     type QueueFeedState,
     type ShopState,
     shopState,
     type Ticket,
+    ticketByHandle,
   } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
-  import { buildCanonicalRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
+  import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
+  import {
+    isTerminalState,
+    purgeTicketCache,
+    readTicketCache,
+    writeTicketCache,
+  } from "$lib/ticketCache.js"
 
   type Stored = { ticketId: string; nameKana: string; phoneLast4: string }
 
@@ -25,7 +32,7 @@
   let ticket: Ticket | null = $state(null)
   let snapshot: ShopState | null = $state(null)
   let qrDataUrl: string | null = $state(null)
-  let canonicalUrl: string | null = $state(null)
+  let shareUrl: string | null = $state(null)
   let error: { tag: string; code: string; message: string } | null = $state(null)
   let cancelDialogOpen = $state(false)
   let cancelReason = $state("")
@@ -78,9 +85,14 @@
     }
   }
 
-  // ADR-0064: canonical URL `/ticket?id&k&p` is the source of truth;
-  // sessionStorage is a cache. Read URL first, fall back only when
-  // params are absent (e.g. legacy `#id=` form).
+  // ADR-0069: localStorage cache is convenience only — the
+  // server-side `GET /tickets/by-handle` is the primary recovery
+  // capability. Cache read order:
+  //   1. Legacy `?id&k&p` URL (ADR-0064) → migrate into the cache
+  //      and rewrite the URL to drop PII.
+  //   2. localStorage cache (`queue.ticket.v2` or the migrated
+  //      `queue.ticket` sessionStorage from ADR-0064).
+  //   3. Fall through → /recover prompts for the handle.
   const readStored = (): Stored | null => {
     if (typeof window === "undefined") return null
     const params = page.url.searchParams
@@ -88,30 +100,37 @@
     const k = params.get("k")
     const p = params.get("p")
     if (id !== null && k !== null && p !== null) {
-      return { ticketId: id, nameKana: k, phoneLast4: p }
+      const migrated: Stored = { ticketId: id, nameKana: k, phoneLast4: p }
+      writeTicketCache(migrated)
+      // ADR-0069: strip PII from URL bar / browser history.
+      window.history.replaceState(null, "", `/ticket?id=${encodeURIComponent(id)}`)
+      return migrated
     }
-    try {
-      const fragment = window.location.hash
-      if (fragment.startsWith("#id=")) {
-        const fid = fragment.slice(4)
-        const cached = sessionStorage.getItem("queue.ticket")
-        if (cached !== null) {
-          const parsed = JSON.parse(cached) as Stored
-          if (parsed.ticketId === fid) return parsed
-        }
-      }
-      const cached = sessionStorage.getItem("queue.ticket")
-      if (cached !== null) return JSON.parse(cached) as Stored
-    } catch {
-      return null
+    const cached = readTicketCache()
+    if (cached === null) return null
+    // If the URL carries a different `?id=…` than the cache, the
+    // recipient hit the page via someone else's share link — let
+    // /recover ask for their own handle.
+    if (id !== null && id !== cached.ticketId) return null
+    return {
+      ticketId: cached.ticketId,
+      nameKana: cached.nameKana,
+      phoneLast4: cached.phoneLast4,
     }
-    return null
   }
 
   const refresh = async (id: Stored): Promise<void> => {
     try {
-      const r = await myTicket(id)
+      const r = await ticketByHandle({ nameKana: id.nameKana, phoneLast4: id.phoneLast4 })
       if (!r.ok) {
+        // 404 TicketNotFound = the handle no longer holds an active
+        // ticket (release after Served / Cancelled / NoShow, or the
+        // cache survived a stale device). Purge + bounce to /recover.
+        if (r.error._tag === "TicketNotFound") {
+          purgeTicketCache()
+          await goto("/recover")
+          return
+        }
         error = {
           tag: r.error._tag,
           code: r.error.code,
@@ -119,26 +138,24 @@
         }
         return
       }
-      ticket = r.value.ticket
+      const t = r.value.ticket
+      ticket = t
       error = null
-      sessionStorage.setItem(
-        "queue.ticket",
-        JSON.stringify({
-          ticketId: ticket.id,
-          nameKana: ticket.nameKana,
-          phoneLast4: ticket.phoneLast4,
-        }),
-      )
+      writeTicketCache({
+        ticketId: t.id,
+        nameKana: t.nameKana ?? id.nameKana,
+        phoneLast4: t.phoneLast4 ?? id.phoneLast4,
+        lastKnownState: t.state,
+      })
+      // Terminal observation — keep the view rendered so the
+      // customer sees "対応完了" / "キャンセル済", but release the
+      // cache so the next mount falls through to /recover.
+      if (isTerminalState(t.state)) purgeTicketCache()
       const s = await shopState()
       if (s.ok) snapshot = s.value
       const origin = window.location.origin
-      const url = buildCanonicalRecoveryUrl(
-        origin,
-        ticket.id,
-        ticket.nameKana ?? id.nameKana,
-        ticket.phoneLast4 ?? id.phoneLast4,
-      )
-      canonicalUrl = url
+      const url = buildShareRecoveryUrl(origin)
+      shareUrl = url
       qrDataUrl = await renderQrToDataUrl(url)
     } catch (e) {
       error = {
@@ -192,9 +209,9 @@
   }
 
   const onCopyUrl = async () => {
-    if (canonicalUrl === null) return
+    if (shareUrl === null) return
     try {
-      await navigator.clipboard.writeText(canonicalUrl)
+      await navigator.clipboard.writeText(shareUrl)
     } catch {
       // clipboard API 不可 (insecure context) — fallback はしない
     }
@@ -227,7 +244,15 @@
 
   onMount(async () => {
     stored = readStored()
-    if (stored !== null) await refresh(stored)
+    if (stored === null) {
+      // No URL params, no cache → the customer landed on /ticket
+      // without a handle. ADR-0069 routes them to /recover to type
+      // (kana, last4); the form's submit handler will land them
+      // back here with the cache populated.
+      await goto("/recover")
+      return
+    }
+    await refresh(stored)
     feed = connectQueueFeed({
       onProjection: (parsed) => {
         snapshot = parsed as ShopState
@@ -331,7 +356,7 @@
         <div class="qr">
           <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" width="240" height="240" />
           <div class="qr-help">
-            <p>別の端末で開けます。 リンクをコピーする場合:</p>
+            <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
             <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
           </div>
         </div>
