@@ -124,6 +124,12 @@
     margin: var(--space-12) auto;
     padding: 0 var(--space-4);
   }
+  @media (min-width: 48rem) {
+    .recover {
+      max-width: 32rem;
+      padding: 0 var(--space-6);
+    }
+  }
   h1 {
     font: var(--text-numeral-md);
     margin: 0 0 var(--space-2);

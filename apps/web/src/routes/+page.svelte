@@ -115,6 +115,12 @@
     max-width: 32rem;
     margin: 0 auto;
   }
+  @media (min-width: 48rem) {
+    .hero {
+      max-width: 40rem;
+      padding: var(--space-16) var(--space-6);
+    }
+  }
   h1 {
     font: var(--text-numeral-xl);
     margin: 0 0 var(--space-2);

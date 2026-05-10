@@ -600,6 +600,12 @@
     flex-direction: column;
     gap: var(--space-6);
   }
+  @media (min-width: 48rem) {
+    .ticket-page {
+      max-width: 40rem;
+      padding: 0 var(--space-6);
+    }
+  }
   .numeral-hero {
     text-align: center;
     padding: var(--space-8) var(--space-4);
