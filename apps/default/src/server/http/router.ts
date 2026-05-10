@@ -213,8 +213,10 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return dispatchEnvelope(await stub(c.env).dispatch(action), 201)
   })
 
-  // GET /api/v1/tickets/me — customer self-fetch (handle in querystring)
-  app.get("/api/v1/tickets/me", async (c) => {
+  // GET /api/v1/tickets/me — customer self-fetch (handle in querystring).
+  // Rate-limited per CF-Connecting-IP (RL_VERIFY, 30 / min) to slow
+  // (kana, last4) brute force on a known ticketId — see ADR-0058.
+  app.get("/api/v1/tickets/me", rateLimitMiddleware("RL_VERIFY"), async (c) => {
     const decoded = Schema.decodeUnknownResult(MyTicketQuerySchema)({
       ticketId: c.req.query("ticketId"),
       nameKana: c.req.query("nameKana"),
@@ -249,7 +251,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   // for reservation tickets (ADR-0068). The CheckIn use case gates
   // on Waiting+reservation+within-window; the void return surfaces
   // as `{ ok: true }` (no `ticket` field) on the wire.
-  app.post("/api/v1/tickets/:id/check-in", async (c) => {
+  app.post("/api/v1/tickets/:id/check-in", rateLimitMiddleware("RL_VERIFY"), async (c) => {
     const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     return dispatchEnvelope(await stub(c.env).dispatch({ type: "CheckIn", ticketId: idR.success }))
@@ -333,7 +335,10 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   // must run **before** the path-param TicketId decode so a
   // malformed body surfaces as a distinct 400 InvalidPayload (C7);
   // id-shape failures fall through to the standard 404 TicketNotFound.
-  app.post("/api/v1/tickets/:id/cancel", async (c) => {
+  // Rate-limited per IP for the customer path (the staff cookie / JWT
+  // route falls back to RL_OPERATE — applied below after the actor
+  // is identified).
+  app.post("/api/v1/tickets/:id/cancel", rateLimitMiddleware("RL_VERIFY"), async (c) => {
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
       return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })

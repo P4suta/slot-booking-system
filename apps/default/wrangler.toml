@@ -28,6 +28,9 @@ class_name = "QueueShop"
 # the (limit, period) tuple is the real contract.
 #   - RL_ISSUE  60 requests / minute, keyed on cf-connecting-ip
 #   - RL_OPERATE 300 requests / minute, keyed on x-staff-token
+#   - RL_VERIFY 30 requests / minute, keyed on cf-connecting-ip
+#     (covers /tickets/me, /tickets/:id/cancel, /tickets/:id/check-in;
+#     slows brute force on the 4-digit phone-last-4 + kana pair)
 [[unsafe.bindings]]
 name = "RL_ISSUE"
 type = "ratelimit"
@@ -39,6 +42,12 @@ name = "RL_OPERATE"
 type = "ratelimit"
 namespace_id = "1002"
 simple = { limit = 300, period = 60 }
+
+[[unsafe.bindings]]
+name = "RL_VERIFY"
+type = "ratelimit"
+namespace_id = "1003"
+simple = { limit = 30, period = 60 }
 
 [[migrations]]
 tag = "v1"
