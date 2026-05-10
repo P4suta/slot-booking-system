@@ -373,6 +373,10 @@ export type DomainRuleError =
   | InvalidStateTransitionError
   | InsufficientCapabilityError
   | LaneMismatchError
+  | SlotFullError
+  | SlotInPastError
+  | AppointmentRequiredForReservationLaneError
+  | CheckInTooEarlyError
 
 export type InfrastructureError = AggregateNotFoundError | ConcurrencyError | StorageError
 
