@@ -23,6 +23,7 @@ import type { Called, Serving, Waiting } from "../../../src/domain/queue/Ticket.
 import {
   applyCall,
   applyCancel,
+  applyCheckIn,
   applyIssue,
   applyMarkNoShow,
   applyMarkServed,
@@ -52,6 +53,7 @@ const issue = (seq: number, opts?: { lane?: Lane; displaySeq?: number; idHint?: 
     nameKana: kana,
     phoneLast4: phone,
     freeText: free,
+    appointmentAt: null,
     at: at(`2026-05-08T09:0${String(seq)}:00Z`),
     eventId: newTicketEventId(),
   })
@@ -900,5 +902,57 @@ describe("Cancelled fold (projection coverage)", () => {
     )
     const snap = replay([a.event, call.event, ns.event])
     expect(snap.tickets.get(a.ticket.id)?.state).toBe("NoShow")
+  })
+})
+
+describe("CheckedIn fold (ADR-0068)", () => {
+  it("Issue → CheckedIn projects checkedInAt onto the Waiting ticket", () => {
+    const a = issue(1)
+    const ci = applyCheckIn(a.ticket as Waiting, at("2026-05-08T09:55:00Z"), newTicketEventId())
+    const snap = replay([a.event, ci.event])
+    const t = snap.tickets.get(a.ticket.id)
+    expect(t?.state).toBe("Waiting")
+    expect(t?.checkedInAt?.toString()).toBe(at("2026-05-08T09:55:00Z").toString())
+  })
+
+  it("re-applying CheckedIn keeps the earliest arrival (idempotent)", () => {
+    const a = issue(1)
+    const ci1 = applyCheckIn(a.ticket as Waiting, at("2026-05-08T09:55:00Z"), newTicketEventId())
+    const snap1 = replay([a.event, ci1.event])
+    const ci2 = applyCheckIn(
+      snap1.tickets.get(a.ticket.id) as Waiting,
+      at("2026-05-08T09:58:00Z"),
+      newTicketEventId(),
+    )
+    const snap2 = applyEvent(snap1, ci2.event)
+    expect(snap2.tickets.get(a.ticket.id)?.checkedInAt?.toString()).toBe(
+      at("2026-05-08T09:55:00Z").toString(),
+    )
+  })
+
+  it("a CheckedIn event for an unknown ticket is a no-op", () => {
+    const ghostEv = {
+      id: newTicketEventId(),
+      ticketId: newTicketId(),
+      version: 1 as const,
+      occurredAt: at("2026-05-08T09:00:00Z"),
+      recordedAt: at("2026-05-08T09:00:00Z"),
+      type: "CheckedIn" as const,
+      checkedInBy: "customer" as const,
+    }
+    expect(applyEvent(empty, ghostEv).tickets.size).toBe(0)
+  })
+
+  it("a CheckedIn event for a non-Waiting ticket is a no-op", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const ci = applyCheckIn(a.ticket as Waiting, at("2026-05-08T09:55:00Z"), newTicketEventId())
+    const snap = replay([a.event, call.event, ci.event])
+    const t = snap.tickets.get(a.ticket.id)
+    expect(t?.state).toBe("Called")
+    if (t?.state === "Called") expect(t.checkedInAt).toBeNull()
   })
 })

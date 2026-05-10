@@ -27,6 +27,7 @@ describe("transitions — single-call throughput", () => {
       nameKana: kana,
       phoneLast4: phone,
       freeText: null,
+      appointmentAt: null,
       at,
       eventId: newTicketEventId(),
     })
@@ -46,6 +47,7 @@ describe("transitions — single-call throughput", () => {
     nameKana: kana,
     phoneLast4: phone,
     freeText: null,
+    appointmentAt: null,
     at,
     eventId: newTicketEventId(),
   })

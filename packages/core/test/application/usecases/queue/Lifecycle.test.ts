@@ -592,6 +592,7 @@ describe("queue lifecycle round-trip", () => {
       nameKana: handle("ヤマダ タロウ", "1234").nameKana,
       phoneLast4: handle("ヤマダ タロウ", "1234").phoneLast4,
       freeText: null,
+      appointmentAt: null,
       at: Temporal.Instant.from("2026-05-08T09:00:00Z"),
       eventId: newTicketEventId(),
     })

@@ -98,6 +98,8 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
         phoneLast4: event.phoneLast4,
         freeText: event.freeText,
         issuedAt: event.occurredAt,
+        appointmentAt: event.appointmentAt,
+        checkedInAt: null,
         state: "Waiting",
       }
       tickets.set(event.ticketId, t)
@@ -192,6 +194,8 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
         phoneLast4: prior.phoneLast4,
         freeText: prior.freeText,
         issuedAt: prior.issuedAt,
+        appointmentAt: prior.appointmentAt,
+        checkedInAt: prior.checkedInAt,
         state: "Waiting",
       }
       tickets.set(event.ticketId, next)
@@ -201,6 +205,17 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
       const prior = tickets.get(event.ticketId)
       if (prior?.state !== "Waiting") return snap
       rebalanceLane(tickets, prior, event.afterTicketId)
+      return { tickets }
+    }
+    case "CheckedIn": {
+      const prior = tickets.get(event.ticketId)
+      if (prior?.state !== "Waiting") return snap
+      // Idempotent: re-applying CheckedIn keeps the earliest arrival
+      // instant. The use case prevents double-fire at the boundary,
+      // but the projection is the source of truth for replay.
+      if (prior.checkedInAt !== null) return snap
+      const next: Waiting = { ...prior, checkedInAt: event.occurredAt }
+      tickets.set(event.ticketId, next)
       return { tickets }
     }
   }

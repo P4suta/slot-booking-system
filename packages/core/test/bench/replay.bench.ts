@@ -39,6 +39,7 @@ const buildFixture = (tickets: number): readonly TicketEvent[] => {
       nameKana: kana,
       phoneLast4: phone,
       freeText: null,
+      appointmentAt: null,
       at: at(i * 3),
       eventId: newTicketEventId(),
     })

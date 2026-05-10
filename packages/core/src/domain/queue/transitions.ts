@@ -26,6 +26,7 @@ import type {
 import type {
   CalledEvent,
   CancelledEvent,
+  CheckedInEvent,
   IssuedEvent,
   NoShowedEvent,
   RecalledEvent,
@@ -64,6 +65,8 @@ const common = (t: TicketCommon): TicketCommon => ({
   phoneLast4: t.phoneLast4,
   freeText: t.freeText,
   issuedAt: t.issuedAt,
+  appointmentAt: t.appointmentAt,
+  checkedInAt: t.checkedInAt,
 })
 
 const baseEvent = (id: TicketEventId, ticketId: TicketId, at: Temporal.Instant) =>
@@ -89,6 +92,7 @@ export type IssueArgs = {
   readonly nameKana: NameKana
   readonly phoneLast4: PhoneLast4
   readonly freeText: FreeText | null
+  readonly appointmentAt: Temporal.Instant | null
   readonly at: Temporal.Instant
   readonly eventId: TicketEventId
 }
@@ -103,6 +107,8 @@ export const applyIssue = (args: IssueArgs): ApplyResult => {
     phoneLast4: args.phoneLast4,
     freeText: args.freeText,
     issuedAt: args.at,
+    appointmentAt: args.appointmentAt,
+    checkedInAt: null,
     state: "Waiting",
   }
   const event: IssuedEvent = {
@@ -114,6 +120,7 @@ export const applyIssue = (args: IssueArgs): ApplyResult => {
     nameKana: args.nameKana,
     phoneLast4: args.phoneLast4,
     freeText: args.freeText,
+    appointmentAt: args.appointmentAt,
   }
   return { ticket, event }
 }
@@ -323,6 +330,33 @@ export const applyReorder = (t: Waiting, args: ReorderArgs): ApplyResult => {
 }
 
 /* -------------------------------------------------------------------------- */
+/* CheckIn — Waiting → Waiting (ADR-0068). Customer hit the 「到着しました」    */
+/* button on /ticket after `now ≥ appointmentAt - 10min`. The ticket stays   */
+/* in Waiting (it is not yet at the counter); the CheckedIn event lands in   */
+/* the audit log and `checkedInAt` is set on the ticket so the projection's */
+/* arrival-vs-called analytics has the data it needs.                        */
+/* -------------------------------------------------------------------------- */
+
+export const applyCheckIn = (
+  t: Waiting,
+  at: Temporal.Instant,
+  eventId: TicketEventId,
+  checkedInBy: Actor = "customer",
+): ApplyResult => {
+  const ticket: Waiting = {
+    ...common(t),
+    state: "Waiting",
+    checkedInAt: at,
+  }
+  const event: CheckedInEvent = {
+    ...baseEvent(eventId, t.id, at),
+    type: "CheckedIn",
+    checkedInBy,
+  }
+  return { ticket, event }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Terminal-state guards. The use case calls `guardActive` first; if the     */
 /* ticket is already terminal the matching `Already*Error` propagates without */
 /* the right-side helpers ever being invoked.                                  */
@@ -338,6 +372,7 @@ export type TicketCommand =
   | "Cancel"
   | "Recall"
   | "Reorder"
+  | "CheckIn"
 
 const terminalError = (state: TicketState): DomainError | null => {
   if (state === "Cancelled") return new AlreadyCancelledError({})

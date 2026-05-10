@@ -32,6 +32,8 @@ const buildSnapshot = (waitingCount: number): { tickets: Map<TicketId, Ticket> }
       phoneLast4: phone,
       freeText: null,
       issuedAt,
+      appointmentAt: null,
+      checkedInAt: null,
     } satisfies Ticket)
   }
   return { tickets }

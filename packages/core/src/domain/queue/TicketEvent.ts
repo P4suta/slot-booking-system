@@ -39,6 +39,7 @@ export const IssuedEventSchema = Schema.Struct({
   nameKana: NameKanaSchema,
   phoneLast4: PhoneLast4Schema,
   freeText: Schema.NullOr(FreeTextSchema),
+  appointmentAt: Schema.NullOr(InstantSchema),
 })
 export type IssuedEvent = Schema.Schema.Type<typeof IssuedEventSchema>
 
@@ -122,6 +123,21 @@ export const ReorderedEventSchema = Schema.Struct({
 })
 export type ReorderedEvent = Schema.Schema.Type<typeof ReorderedEventSchema>
 
+/**
+ * Customer-issued check-in for a reservation ticket (ADR-0068).
+ * Fired when the customer hits the 「到着しました」 button on
+ * `/ticket` after `now ≥ appointmentAt - 10min`. The transition is
+ * `Waiting → Waiting`; the ticket gains `checkedInAt` so the audit /
+ * no-show analytics layer can compare arrival vs. call-time without
+ * a separate aggregate.
+ */
+export const CheckedInEventSchema = Schema.Struct({
+  ...TicketEventBaseFields,
+  type: Schema.Literal("CheckedIn"),
+  checkedInBy: ActorSchema,
+})
+export type CheckedInEvent = Schema.Schema.Type<typeof CheckedInEventSchema>
+
 /* -------------------------------------------------------------------------- */
 /* Top-level union                                                             */
 /* -------------------------------------------------------------------------- */
@@ -135,6 +151,7 @@ export const TicketEventSchema = Schema.Union([
   CancelledEventSchema,
   RecalledEventSchema,
   ReorderedEventSchema,
+  CheckedInEventSchema,
 ])
 export type TicketEvent = Schema.Schema.Type<typeof TicketEventSchema>
 
@@ -149,4 +166,5 @@ export const ALL_TICKET_EVENT_TYPES: readonly TicketEventType[] = [
   "Cancelled",
   "Recalled",
   "Reordered",
+  "CheckedIn",
 ] as const
