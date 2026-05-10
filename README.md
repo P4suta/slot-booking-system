@@ -122,6 +122,16 @@ walkthrough: [`docs/dev-workflow.md`](./docs/dev-workflow.md).
 local-dev value lives in `apps/default/.dev.vars` (gitignored). The
 example template is `apps/default/.dev.vars.example`.
 
+## Door-QR walk-in entry (ADR-0068)
+
+The deployment has no in-store kiosk; walk-in customers reach the
+queue via their own phone after scanning a QR code at the shop
+entrance. The QR encodes the canonical `/issue` URL — for the
+default deployment that is `https://<your-host>/issue`. Print it
+as a 2-D barcode with any generator, post it at the door, and
+the rest of the flow (walk-in 「番号札を取る」 ✕ reservation
+expand) lives in the same page. No env var, no code change.
+
 ## License
 
 Dual-licensed under Apache-2.0 OR MIT, at your option. See

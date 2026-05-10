@@ -438,9 +438,15 @@ smoke-queue:
 smoke-queue-ws:
     bash apps/default/scripts/smoke-queue-ws.sh
 
+# Slot-booking smoke (ADR-0066 / ADR-0067 / ADR-0068). Drives
+# walk-in → list slots → reservation → check-in → CallNext (EDF
+# eligible) → MarkServed.
+smoke-reservation:
+    bash apps/default/scripts/smoke-reservation-flow.sh
+
 # Aggregator: every smoke recipe in registration order. Matches
 # `just check` for normative gates but for the live-server side.
-smoke: smoke-queue smoke-queue-ws
+smoke: smoke-queue smoke-queue-ws smoke-reservation
 
 # Full CI gate: check + build (and the apps/default dev smoke happens
 # externally on demand via `just dev-default`).
