@@ -1,8 +1,8 @@
 import { Effect } from "effect"
 import type { ConcurrencyError, DomainError, StorageError } from "../../../domain/errors/Errors.js"
-import type { Ticket } from "../../../domain/queue/Ticket.js"
+import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
 import {
-  applyMarkServed,
+  applyStartServing,
   guardActive,
   invalidTransition,
 } from "../../../domain/queue/transitions.js"
@@ -15,13 +15,14 @@ import { loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * MarkServed — `Called | Serving → Served` (ADR-0063 broadens the
- * source). Staff-only command; the GraphQL resolver upstream already
- * enforces the `operate_queue` scope, so the use case body trusts
- * the caller and focuses on the state machine.
+ * StartServing — `Called → Serving` (ADR-0063). Once the operator
+ * fires this, the NoShow alarm sweep no longer applies to the
+ * ticket; the ticket lives in `Serving` until `MarkServed` (or, in
+ * unusual cases, `Cancel`).
  */
-export const MarkServed = (
+export const StartServing = (
   ticketId: TicketId,
+  actor: Actor = "staff",
 ): Effect.Effect<
   Ticket,
   DomainError | ConcurrencyError | StorageError,
@@ -31,13 +32,13 @@ export const MarkServed = (
     const loaded = yield* loadOrTicketNotFound(ticketId)
     const terminal = guardActive(loaded.state)
     if (terminal !== null) return yield* Effect.fail(terminal)
-    if (loaded.state.state !== "Called" && loaded.state.state !== "Serving") {
-      return yield* Effect.fail(invalidTransition(loaded.state.state, "MarkServed"))
+    if (loaded.state.state !== "Called") {
+      return yield* Effect.fail(invalidTransition(loaded.state.state, "StartServing"))
     }
-    const source = loaded.state
+    const called = loaded.state
     return yield* applyAndPersist({
       loaded,
-      apply: (at, eventId) => applyMarkServed(source, at, eventId),
-      log: { tag: "MarkServed", code: "I_USECASE_MARK_SERVED", data: { ticketId } },
+      apply: (at, eventId) => applyStartServing(called, at, eventId, actor),
+      log: { tag: "StartServing", code: "I_USECASE_START_SERVING", data: { ticketId } },
     })
   })

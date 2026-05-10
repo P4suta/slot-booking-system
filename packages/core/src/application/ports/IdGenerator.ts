@@ -1,6 +1,7 @@
 import { Context, type Effect } from "effect"
 import type {
   AuditLogId,
+  BatchId,
   IdempotencyKeyId,
   StaffId,
   TicketEventId,
@@ -23,5 +24,6 @@ export class IdGenerator extends Context.Service<
     readonly newStaffId: Effect.Effect<StaffId>
     readonly newAuditLogId: Effect.Effect<AuditLogId>
     readonly newIdempotencyKeyId: Effect.Effect<IdempotencyKeyId>
+    readonly newBatchId: Effect.Effect<BatchId>
   }
 >()("@booking/core/IdGenerator") {}

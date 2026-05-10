@@ -4,6 +4,7 @@ import { InstantSchema } from "../types/Temporal.js"
 import { FreeTextSchema } from "../value-objects/FreeText.js"
 import { NameKanaSchema } from "../value-objects/NameKana.js"
 import { PhoneLast4Schema } from "../value-objects/PhoneLast4.js"
+import { LaneSchema } from "./Lane.js"
 
 /* -------------------------------------------------------------------------- */
 /* Discriminator enums                                                         */
@@ -22,13 +23,18 @@ export type Actor = Schema.Schema.Type<typeof ActorSchema>
  * carries. The field set never depends on the current state, so the
  * variant Schemas spread it unchanged.
  *
- * `seq` is a monotonic per-day counter handed out at `Issue` time
- * (ADR-0051). It powers the O(1) "your position is N" projection
- * without re-walking the event log.
+ * `seq` is a monotonic per-shop counter handed out at `Issue` time
+ * (ADR-0051). It is the global total-order anchor — audit-side, every
+ * event has a `seq`-derivable position. `displaySeq` is the per-lane
+ * FIFO position consumed by UI ordering and `head` (ADR-0065): Issue
+ * assigns the next per-lane displaySeq, Reorder rebalances it. `lane`
+ * partitions the queue per ADR-0062.
  */
 const CommonFields = {
   id: TicketIdSchema,
   seq: Schema.Number,
+  lane: LaneSchema,
+  displaySeq: Schema.Number,
   nameKana: NameKanaSchema,
   phoneLast4: PhoneLast4Schema,
   freeText: Schema.NullOr(FreeTextSchema),
@@ -56,11 +62,30 @@ export const CalledSchema = Schema.Struct({
 })
 export type Called = Schema.Schema.Type<typeof CalledSchema>
 
+/**
+ * `Serving` sits between `Called` and `Served` (ADR-0063). The
+ * NoShow alarm sweeps `Called` only — once a ticket reaches
+ * `Serving`, the customer is at the counter and the alarm no
+ * longer applies. From the customer's perspective Serving is
+ * indistinguishable from Called ("you have been called").
+ */
+export const ServingSchema = Schema.Struct({
+  ...CommonFields,
+  state: Schema.Literal("Serving"),
+  calledAt: InstantSchema,
+  calledBy: ActorSchema,
+  servingStartedAt: InstantSchema,
+  servingStartedBy: ActorSchema,
+})
+export type Serving = Schema.Schema.Type<typeof ServingSchema>
+
 export const ServedSchema = Schema.Struct({
   ...CommonFields,
   state: Schema.Literal("Served"),
   calledAt: InstantSchema,
   calledBy: ActorSchema,
+  servingStartedAt: Schema.optional(InstantSchema),
+  servingStartedBy: Schema.optional(ActorSchema),
   servedAt: InstantSchema,
   servedBy: ActorSchema,
 })
@@ -92,6 +117,7 @@ export type Cancelled = Schema.Schema.Type<typeof CancelledSchema>
 export const TicketSchema = Schema.Union([
   WaitingSchema,
   CalledSchema,
+  ServingSchema,
   ServedSchema,
   NoShowSchema,
   CancelledSchema,
@@ -108,7 +134,7 @@ export type TicketState = Ticket["state"]
  */
 export type TicketT<S extends TicketState> = Extract<Ticket, { state: S }>
 
-/** The two terminal states with no outgoing transitions. */
+/** The three terminal states with no outgoing transitions. */
 export type TerminalTicketState = "Served" | "NoShow" | "Cancelled"
 
 export const TERMINAL_TICKET_STATES: readonly TerminalTicketState[] = [

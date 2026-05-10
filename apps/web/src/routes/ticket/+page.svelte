@@ -1,108 +1,175 @@
 <script lang="ts">
+  import { page } from "$app/state"
   import { onDestroy, onMount } from "svelte"
   import {
     cancelTicket,
     connectQueueFeed,
     myTicket,
+    type ProjectionEntry,
     type QueueFeedHandle,
     type QueueFeedState,
+    type ShopState,
     shopState,
     type Ticket,
   } from "$lib/api.js"
-  import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
-  import { toKatakana } from "$lib/kana.js"
+  import Button from "$lib/components/Button.svelte"
+  import Card from "$lib/components/Card.svelte"
+  import Dialog from "$lib/components/Dialog.svelte"
+  import ErrorCard from "$lib/components/ErrorCard.svelte"
+  import { buildCanonicalRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
 
   type Stored = { ticketId: string; nameKana: string; phoneLast4: string }
 
-  const onNameInput = (event: Event): void => {
-    const el = event.currentTarget as HTMLInputElement
-    lookupForm.nameKana = toKatakana(el.value)
-  }
-
   let stored: Stored | null = $state(null)
-  let lookupForm = $state({ ticketId: "", nameKana: "", phoneLast4: "" })
   let ticket: Ticket | null = $state(null)
-  let waitingCount = $state(0)
-  let position: number | null = $state(null)
-  let error: string | null = $state(null)
+  let snapshot: ShopState | null = $state(null)
+  let qrDataUrl: string | null = $state(null)
+  let canonicalUrl: string | null = $state(null)
+  let error: { tag: string; code: string; message: string } | null = $state(null)
+  let cancelDialogOpen = $state(false)
+  let cancelReason = $state("")
   let cancelBusy = $state(false)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
 
+  // ADR-0064: canonical URL `/ticket?id&k&p` is the source of truth;
+  // sessionStorage is a cache. Read URL first, fall back only when
+  // params are absent (e.g. legacy `#id=` form).
   const readStored = (): Stored | null => {
     if (typeof window === "undefined") return null
+    const params = page.url.searchParams
+    const id = params.get("id")
+    const k = params.get("k")
+    const p = params.get("p")
+    if (id !== null && k !== null && p !== null) {
+      return { ticketId: id, nameKana: k, phoneLast4: p }
+    }
     try {
       const fragment = window.location.hash
       if (fragment.startsWith("#id=")) {
-        const id = fragment.slice(4)
-        const fromSession = sessionStorage.getItem("queue.ticket")
-        if (fromSession !== null) {
-          const parsed = JSON.parse(fromSession) as Stored
-          if (parsed.ticketId === id) return parsed
+        const fid = fragment.slice(4)
+        const cached = sessionStorage.getItem("queue.ticket")
+        if (cached !== null) {
+          const parsed = JSON.parse(cached) as Stored
+          if (parsed.ticketId === fid) return parsed
         }
       }
-      const fromSession = sessionStorage.getItem("queue.ticket")
-      if (fromSession !== null) return JSON.parse(fromSession) as Stored
+      const cached = sessionStorage.getItem("queue.ticket")
+      if (cached !== null) return JSON.parse(cached) as Stored
     } catch {
       return null
     }
     return null
   }
 
-  /**
-   * Re-fetch the customer's own ticket + the public shop state.
-   * Network errors never throw — they surface in `error` and the
-   * previous state stays on screen.
-   */
   const refresh = async (id: Stored): Promise<void> => {
     try {
       const r = await myTicket(id)
       if (!r.ok) {
-        error = `myTicket: ${r.error._tag} (${r.error.code})`
+        error = {
+          tag: r.error._tag,
+          code: r.error.code,
+          message: messageOf(r.error._tag),
+        }
         return
       }
       ticket = r.value.ticket
       error = null
+      sessionStorage.setItem(
+        "queue.ticket",
+        JSON.stringify({
+          ticketId: ticket.id,
+          nameKana: ticket.nameKana,
+          phoneLast4: ticket.phoneLast4,
+        }),
+      )
       const s = await shopState()
-      if (s.ok) {
-        waitingCount = s.value.waitingCount
-        if (ticket.state === "Waiting") {
-          const idx = s.value.waitingPreview.findIndex((t) => t.id === ticket?.id)
-          position = idx >= 0 ? idx : null
-        } else {
-          position = null
-        }
-      }
+      if (s.ok) snapshot = s.value
+      const origin = window.location.origin
+      const url = buildCanonicalRecoveryUrl(
+        origin,
+        ticket.id,
+        ticket.nameKana ?? id.nameKana,
+        ticket.phoneLast4 ?? id.phoneLast4,
+      )
+      canonicalUrl = url
+      qrDataUrl = await renderQrToDataUrl(url)
     } catch (e) {
-      error = `refresh: ${e instanceof Error ? e.message : String(e)}`
+      error = {
+        tag: "NetworkError",
+        code: "E_NET_FAIL",
+        message: e instanceof Error ? e.message : "ネットワーク接続を確認してください",
+      }
     }
   }
 
-  const onLookup = async (event: SubmitEvent): Promise<void> => {
-    event.preventDefault()
-    const next: Stored = { ...lookupForm }
-    sessionStorage.setItem("queue.ticket", JSON.stringify(next))
-    stored = next
-    await refresh(next)
+  const positionInfo = $derived.by(() => {
+    if (ticket === null || snapshot === null) return null
+    if (ticket.state !== "Waiting") return null
+    const sameLane = snapshot.waitingPreview.filter(
+      (t: ProjectionEntry) => t.lane === ticket?.lane,
+    )
+    const idx = sameLane.findIndex((t) => t.id === ticket?.id)
+    return idx >= 0 ? idx : null
+  })
+
+  const stateLabel = $derived.by(() => {
+    if (ticket === null) return ""
+    switch (ticket.state) {
+      case "Waiting":
+        return "お待ちください"
+      case "Called":
+      case "Serving":
+        return "呼ばれました"
+      case "Served":
+        return "対応完了"
+      case "NoShow":
+        return "キャンセル扱い (時間切れ)"
+      case "Cancelled":
+        return "キャンセル済"
+    }
+  })
+
+  const messageOf = (tag: string): string => {
+    switch (tag) {
+      case "TicketNotFound":
+        return "番号が見つかりません。 名前 / 末尾 4 桁を確認してください"
+      case "PhoneMismatch":
+        return "名前または電話番号末尾が一致しません"
+      default:
+        return "情報を取得できませんでした"
+    }
   }
 
-  const onCancel = async (): Promise<void> => {
+  const onCopyUrl = async () => {
+    if (canonicalUrl === null) return
+    try {
+      await navigator.clipboard.writeText(canonicalUrl)
+    } catch {
+      // clipboard API 不可 (insecure context) — fallback はしない
+    }
+  }
+
+  const onCancelConfirm = async () => {
     if (stored === null) return
     cancelBusy = true
-    error = null
     try {
       const r = await cancelTicket(stored.ticketId, {
         nameKana: stored.nameKana,
         phoneLast4: stored.phoneLast4,
-        reason: "customer cancellation",
+        reason: cancelReason.length > 0 ? cancelReason : "customer-cancel",
       })
       if (!r.ok) {
-        error = `cancel: ${r.error._tag} (${r.error.code})`
+        error = {
+          tag: r.error._tag,
+          code: r.error.code,
+          message: messageOf(r.error._tag),
+        }
         return
       }
       ticket = r.value.ticket
-    } catch (e) {
-      error = `cancel: ${e instanceof Error ? e.message : String(e)}`
+      cancelDialogOpen = false
+      cancelReason = ""
     } finally {
       cancelBusy = false
     }
@@ -112,8 +179,8 @@
     stored = readStored()
     if (stored !== null) await refresh(stored)
     feed = connectQueueFeed({
-      onProjection: () => {
-        if (stored !== null) void refresh(stored)
+      onProjection: (parsed) => {
+        snapshot = parsed as ShopState
       },
       onState: (next) => {
         feedState = next
@@ -124,152 +191,186 @@
   onDestroy(() => feed?.close())
 </script>
 
-<section>
-  {#if stored === null}
-    <h1>番号を確認</h1>
-    <p class="lede">発行された番号と入力情報で行列の状況を確認できます。</p>
-    <form onsubmit={onLookup}>
-      <label>
-        <span>番号</span>
-        <input type="text" bind:value={lookupForm.ticketId} required placeholder="tkt_..." />
-      </label>
-      <label>
-        <span>お名前 (カタカナ)</span>
-        <input type="text" value={lookupForm.nameKana} oninput={onNameInput} required />
-      </label>
-      <PhoneOtpInput bind:value={lookupForm.phoneLast4} />
-      <button type="submit">確認</button>
-    </form>
-  {:else if ticket !== null}
-    <h1>番号 #{ticket.seq}</h1>
-    <p class="state">状態: <strong>{ticket.state}</strong></p>
-    {#if ticket.state === "Waiting" && position !== null}
-      <p class="position">あなたの前に <strong>{position}</strong> 人</p>
-      <p class="total">列全体で {waitingCount} 人待ち</p>
-    {:else if ticket.state === "Called"}
-      <p class="position called">呼び出し中です — 受付までお越しください</p>
-    {:else if ticket.state === "Served"}
-      <p class="position served">対応完了しました。 ご利用ありがとうございました。</p>
-    {:else if ticket.state === "NoShow"}
-      <p class="position noshow">不在のため呼び出しは取り消されました。</p>
-    {:else if ticket.state === "Cancelled"}
-      <p class="position cancelled">キャンセル済み</p>
-    {/if}
-    {#if ticket.state === "Waiting" || ticket.state === "Called"}
-      <button class="cancel" onclick={onCancel} disabled={cancelBusy}>
-        {cancelBusy ? "処理中…" : "キャンセル"}
-      </button>
-    {/if}
-    {#if error !== null}
-      <p class="error">エラー: {error}</p>
-    {/if}
-    {#if feedState === "reconnecting"}
-      <p class="banner">再接続中…</p>
-    {/if}
-  {:else if error !== null}
-    <p class="error">エラー: {error}</p>
+<svelte:head>
+  <title>ご自分の番号 — 整理券</title>
+  <meta name="robots" content="noindex" />
+</svelte:head>
+
+<section class="ticket-page">
+  {#if error !== null}
+    <ErrorCard
+      tag={error.tag}
+      code={error.code}
+      message={error.message}
+      retryLabel="再読み込み"
+      onRetry={() => stored !== null && refresh(stored)}
+    />
   {/if}
+
+  {#if ticket !== null}
+    <div class="numeral-hero" data-state={ticket.state}>
+      <span class="state-tag">{stateLabel}</span>
+      <span class="numeral">{ticket.displaySeq}</span>
+      <span class="lane">
+        {ticket.lane === "priority"
+          ? "優先"
+          : ticket.lane === "reservation"
+            ? "予約"
+            : "通常"}
+      </span>
+    </div>
+
+    {#if ticket.state === "Waiting" && positionInfo !== null}
+      <Card>
+        <p class="position">
+          あなたの前に <strong>{positionInfo}</strong> 人
+        </p>
+      </Card>
+    {/if}
+
+    {#if feedState === "reconnecting"}
+      <p class="banner" role="status" aria-live="polite">再接続中…</p>
+    {/if}
+
+    {#if qrDataUrl !== null}
+      <Card>
+        <div class="qr">
+          <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" width="240" height="240" />
+          <div class="qr-help">
+            <p>別の端末で開けます。 リンクをコピーする場合:</p>
+            <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
+          </div>
+        </div>
+      </Card>
+    {/if}
+
+    {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Serving"}
+      <div class="actions">
+        <Button variant="ghost" size="md" onclick={() => (cancelDialogOpen = true)}>
+          キャンセル
+        </Button>
+      </div>
+    {/if}
+  {:else if error === null}
+    <p class="loading">読み込み中…</p>
+  {/if}
+
+  <Dialog
+    bind:open={cancelDialogOpen}
+    title="キャンセルしますか?"
+    onClose={() => (cancelDialogOpen = false)}
+  >
+    <p>キャンセル後は再発行が必要です。 理由 (任意):</p>
+    <textarea bind:value={cancelReason} rows="2" placeholder="例: 都合がつかなくなった"></textarea>
+    {#snippet actions()}
+      <Button variant="ghost" onclick={() => (cancelDialogOpen = false)}>戻る</Button>
+      <Button variant="destructive" disabled={cancelBusy} onclick={onCancelConfirm}>
+        {cancelBusy ? "送信中…" : "キャンセル"}
+      </Button>
+    {/snippet}
+  </Dialog>
 </section>
 
 <style>
-  section {
+  .ticket-page {
     max-width: 28rem;
-    margin: 2rem auto;
-    padding: 0 1rem;
-  }
-  h1 {
-    margin: 0 0 0.5rem;
-    font-size: 3rem;
-  }
-  .lede {
-    color: #6e6e73;
-    margin: 0 0 1.5rem;
-  }
-  form {
+    margin: var(--space-8) auto;
+    padding: 0 var(--space-4);
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: var(--space-6);
   }
-  label {
+  .numeral-hero {
+    text-align: center;
+    padding: var(--space-8) var(--space-4);
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: var(--space-2);
   }
-  span {
-    font-weight: 500;
-    font-size: 0.9rem;
+  .numeral-hero[data-state="Called"],
+  .numeral-hero[data-state="Serving"] {
+    background: oklch(95% 0.07 65);
+    border-color: var(--color-state-called);
   }
-  input {
-    padding: 0.7rem;
-    border: 1px solid #d2d2d7;
-    border-radius: 8px;
-    font-size: 1rem;
+  .numeral-hero[data-state="Served"] {
+    background: oklch(95% 0.07 145);
+    border-color: var(--color-state-serving);
   }
-  input:focus {
-    outline: 2px solid #0071e3;
-    border-color: transparent;
+  .numeral-hero[data-state="Cancelled"],
+  .numeral-hero[data-state="NoShow"] {
+    background: var(--color-bg-subtle);
+    color: var(--color-fg-muted);
   }
-  button {
-    padding: 0.9rem;
-    background: #1d1d1f;
-    color: white;
-    border: none;
-    border-radius: 999px;
-    font-size: 1rem;
-    cursor: pointer;
+  .numeral {
+    font: var(--text-numeral-hero);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-fg-primary);
   }
-  button:disabled {
-    opacity: 0.6;
+  .state-tag {
+    font: var(--text-label-md);
+    color: var(--color-fg-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
-  .state {
-    color: #6e6e73;
-  }
-  .state strong {
-    color: #1d1d1f;
+  .lane {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
   }
   .position {
-    background: #f5f5f7;
-    padding: 1rem;
-    border-radius: 12px;
-    margin: 1rem 0;
+    text-align: center;
+    margin: 0;
+    font: var(--text-body-md);
   }
   .position strong {
-    font-size: 2rem;
-    color: #1d1d1f;
+    font: var(--text-numeral-md);
+    color: var(--color-fg-primary);
+    font-variant-numeric: tabular-nums;
+    margin: 0 var(--space-2);
   }
-  .total {
-    color: #86868b;
-    font-size: 0.9rem;
-    margin: 0;
+  .qr {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    align-items: center;
   }
-  .called {
-    background: #fff8e1;
+  .qr img {
+    border-radius: var(--radius-md);
+    background: white;
+    padding: var(--space-2);
   }
-  .served {
-    background: #e8f5e9;
+  .qr-help p {
+    margin: 0 0 var(--space-2);
+    color: var(--color-fg-secondary);
+    font: var(--text-body-sm);
   }
-  .noshow,
-  .cancelled {
-    background: #f5f5f7;
-    color: #86868b;
+  .actions {
+    display: flex;
+    justify-content: center;
   }
-  .cancel {
-    background: #c11;
-    color: white;
-  }
-  .error {
-    color: #c11;
-    background: #fff1f0;
-    padding: 0.75rem;
-    border-radius: 8px;
-    margin: 1rem 0 0;
+  .loading {
+    text-align: center;
+    color: var(--color-fg-muted);
   }
   .banner {
-    background: #fff4d6;
-    border: 1px solid #f0c040;
-    color: #8a5a00;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    margin: 1rem 0 0;
+    background: oklch(95% 0.07 65);
+    color: oklch(40% 0.13 65);
+    border: 1px solid oklch(85% 0.15 65);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    margin: 0;
+    text-align: center;
+  }
+  textarea {
+    width: 100%;
+    background: var(--color-bg-subtle);
+    color: var(--color-fg-primary);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-top: var(--space-2);
+    resize: vertical;
   }
 </style>

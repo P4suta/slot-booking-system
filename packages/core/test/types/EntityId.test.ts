@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest"
 import {
   ALL_ENTITY_KINDS,
   newAuditLogId,
+  newBatchId,
   newIdempotencyKeyId,
   newStaffId,
   newTicketEventId,
   newTicketId,
   parseAuditLogId,
+  parseBatchId,
   parseIdempotencyKeyId,
   parseStaffId,
   parseTicketEventId,
@@ -19,7 +21,7 @@ const isRight = Result.isSuccess
 
 describe("ALL_ENTITY_KINDS", () => {
   it("enumerates the queue-pivot kinds", () => {
-    expect(ALL_ENTITY_KINDS).toEqual(["tkt", "tev", "staf", "audt", "idem"])
+    expect(ALL_ENTITY_KINDS).toEqual(["tkt", "tev", "staf", "audt", "idem", "bch"])
   })
 })
 
@@ -30,6 +32,7 @@ describe("newId factories", () => {
     expect(newStaffId()).toMatch(/^staf_[0-9a-z]{26}$/)
     expect(newAuditLogId()).toMatch(/^audt_[0-9a-z]{26}$/)
     expect(newIdempotencyKeyId()).toMatch(/^idem_[0-9a-z]{26}$/)
+    expect(newBatchId()).toMatch(/^bch_[0-9a-z]{26}$/)
   })
 
   it("two consecutive mints produce distinct ids", () => {
@@ -49,6 +52,7 @@ describe("parseId variants", () => {
     ["StaffId", parseStaffId, "staf_01h0000000000000000000000a"],
     ["AuditLogId", parseAuditLogId, "audt_01h0000000000000000000000a"],
     ["IdempotencyKeyId", parseIdempotencyKeyId, "idem_01h0000000000000000000000a"],
+    ["BatchId", parseBatchId, "bch_01h0000000000000000000000a"],
   ]
   it.each(parsers)("accepts a well-formed %s", (_label, parser, value) => {
     expect(isRight(parser(value))).toBe(true)

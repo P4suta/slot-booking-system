@@ -2,45 +2,73 @@
   import { onDestroy, onMount } from "svelte"
   import {
     type ApiResult,
+    callBatch,
     callNext,
+    callSpecific,
     connectQueueFeed,
+    type Lane,
     markNoShow,
     markServed,
     type QueueFeedHandle,
     type QueueFeedState,
     recall,
+    reorder,
     staffCancel,
     staffShopState,
+    startServing,
     type Ticket,
   } from "$lib/api.js"
+  import Button from "$lib/components/Button.svelte"
+  import Card from "$lib/components/Card.svelte"
+  import Dialog from "$lib/components/Dialog.svelte"
+  import Toast from "$lib/components/Toast.svelte"
 
-  let token = $state(typeof window === "undefined" ? "" : (localStorage.getItem("queue.staffToken") ?? ""))
+  type LaneFilter = "all" | Lane
+
+  /* ---------- state ---------- */
+  let token = $state(
+    typeof window === "undefined" ? "" : (localStorage.getItem("queue.staffToken") ?? ""),
+  )
   let authenticated = $state(token.length > 0)
   let waitingCount = $state(0)
-  let serving: Ticket | null = $state(null)
-  // Staff 画面は受付業務 — 各待ちチケットの kana / 末尾4 / 用件まで
-  // 表示する。 公開 endpoint と違って PII 込みの shape を fetch する。
-  let preview: ReadonlyArray<Ticket> = $state([])
+  let waiting: ReadonlyArray<Ticket> = $state([])
+  let calling: ReadonlyArray<Ticket> = $state([])
+  let servingList: ReadonlyArray<Ticket> = $state([])
+  let done: Ticket[] = $state([])
   let busy = $state(false)
   let error: string | null = $state(null)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
-  // 直前の待ち人数。 WebSocket refresh で増分を検出して、 タブが背面
-  // にある間だけ Notification を発火する。 null = 初回 refresh 前
-  // (= ページロード直後の「5件溜まってます」では鳴らさない)。
   let prevWaitingCount: number | null = null
+  let laneFilter: LaneFilter = $state("all")
+  let search = $state("")
+  let batchN = $state(1)
+  let selected: Set<string> = $state(new Set())
+  let detail: Ticket | null = $state(null)
+  let helpOpen = $state(false)
+  let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
+  let audioCue = $state(
+    typeof window === "undefined" ? false : localStorage.getItem("queue.audioCue") === "1",
+  )
+  let searchInput: HTMLInputElement | null = $state(null)
 
-  /**
-   * Re-fetch the staff-side shop state. Tolerant: a transient network
-   * error never throws — it just leaves the previous state on screen
-   * and surfaces the message in `error`.
-   *
-   * After applying the new snapshot, compare `waitingCount` against
-   * the previously-observed value and fire a desktop notification when
-   * the queue grew while the tab was in the background. The first
-   * observation initialises the baseline (no notification fires for
-   * the queue that already existed at page-load time).
-   */
+  /* ---------- derived ---------- */
+  const filteredWaiting = $derived.by(() => {
+    let list = waiting
+    if (laneFilter !== "all") list = list.filter((t) => t.lane === laneFilter)
+    const q = search.trim().toLowerCase()
+    if (q.length > 0) {
+      list = list.filter(
+        (t) =>
+          (t.nameKana ?? "").toLowerCase().includes(q) ||
+          (t.phoneLast4 ?? "") === q,
+      )
+    }
+    return list
+  })
+  const selectionCount = $derived(selected.size)
+
+  /* ---------- refresh ---------- */
   const refresh = async (): Promise<void> => {
     try {
       const r = await staffShopState(token)
@@ -55,54 +83,60 @@
       }
       prevWaitingCount = nextCount
       waitingCount = nextCount
-      serving = r.value.serving
-      preview = r.value.waitingPreview
+      waiting = r.value.waitingPreview
+      calling = r.value.calling
+      servingList = r.value.serving
+      error = null
     } catch (e) {
       error = `refresh: ${String(e)}`
     }
   }
 
-  /**
-   * Fire a desktop Notification announcing newly-arrived tickets.
-   * Skipped when permission was declined, when the runtime has no
-   * Notification API (older mobile Safari, SSR), or when the tab is
-   * already in the foreground (the dashboard's own UI suffices).
-   * `tag` collapses repeated bursts into a single notification.
-   */
+  /* ---------- desktop / audio cue ---------- */
   const notifyArrival = (delta: number): void => {
+    const body = delta === 1 ? "新しい順番待ちが追加されました" : `${delta}件の新規順番待ち`
+    if (audioCue && typeof window !== "undefined") {
+      try {
+        const ctx = new AudioContext()
+        const o = ctx.createOscillator()
+        const g = ctx.createGain()
+        o.connect(g)
+        g.connect(ctx.destination)
+        o.frequency.value = 880
+        g.gain.value = 0.05
+        o.start()
+        setTimeout(() => {
+          o.stop()
+          void ctx.close()
+        }, 120)
+      } catch {
+        // AudioContext 不可 (insecure context, autoplay policy) — silent
+      }
+    }
     if (typeof Notification === "undefined") return
     if (Notification.permission !== "granted") return
     if (typeof document !== "undefined" && !document.hidden) return
-    const body = delta === 1 ? "新しい順番待ちが追加されました" : `${delta}件の新規順番待ち`
     try {
       new Notification("店舗管理", { body, tag: "queue-new-arrival" })
     } catch {
-      // Some browsers (notably mobile) throw on direct construction
-      // outside ServiceWorker context. Swallow — the in-app counter
-      // is still updated.
+      // mobile Safari: outside ServiceWorker context — silent
     }
   }
 
-  /**
-   * Ask the user once for desktop-notification permission. Triggered
-   * from a user-gesture handler (login submit / mount when already
-   * authenticated) because Chrome / Safari reject `requestPermission`
-   * outside an interaction.
-   */
   const ensureNotificationPermission = (): void => {
     if (typeof Notification === "undefined") return
     if (Notification.permission !== "default") return
     void Notification.requestPermission()
   }
 
+  /* ---------- live feed ---------- */
   const startLiveFeed = async (): Promise<void> => {
     await refresh()
     if (feed === undefined) {
       feed = connectQueueFeed({
         onProjection: () => {
-          // The staff dashboard wants the PII-bearing projection, so we
-          // re-fetch via REST after every WS push instead of trusting
-          // the anonymous projection the WS carries.
+          // PII-bearing snapshot lives behind the staff token, so we
+          // re-fetch over REST after every WS push.
           void refresh()
         },
         onState: (next) => {
@@ -112,21 +146,11 @@
     }
   }
 
-  /**
-   * Run an action against the worker. Guarantees `busy` is released
-   * even on fetch reject; surfaces the error tag/code in `error` so
-   * stalls are debuggable from the UI alone.
-   *
-   * Written as a `function` declaration (not an arrow) on purpose:
-   * Svelte's `<script lang="ts">` preprocessor parses
-   * `async <A>(args) => …` as JSX and silently drops the arg list
-   * (`label is not defined` at runtime). Function declarations carry
-   * no parser ambiguity, so the generic survives — and we get the
-   * full type-narrowed `ApiResult<A>` back.
-   */
+  /* ---------- generic action runner ---------- */
   async function runAction<A>(
     label: string,
     fn: () => Promise<ApiResult<A>>,
+    onSuccess?: (value: A) => void,
   ): Promise<void> {
     busy = true
     error = null
@@ -138,29 +162,29 @@
           onLogout()
           return
         }
+        showToast(`${label} 失敗 (${r.error._tag})`, "danger")
+        return
       }
+      onSuccess?.(r.value)
     } catch (e) {
       error = `${label}: ${e instanceof Error ? e.message : String(e)}`
     } finally {
       busy = false
     }
-    // Refresh after every action — successful or not — so the queue
-    // counters reflect any concurrent change. Failures inside refresh
-    // are themselves swallowed by the helper.
     void refresh()
   }
 
+  const showToast = (message: string, variant?: "info" | "success" | "warning" | "danger", undoLabel?: string, onUndo?: () => void) => {
+    toast = { message, variant, undoLabel, onUndo }
+  }
+
+  /* ---------- auth ---------- */
   const onLogin = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
     if (token.length === 0) return
     localStorage.setItem("queue.staffToken", token)
     authenticated = true
-    // The submit click is the user gesture browsers require for
-    // `Notification.requestPermission` — request before kicking off
-    // the live feed so notifications are armed for the first arrival.
     ensureNotificationPermission()
-    // onMount only runs on component mount; arriving here means the
-    // user just typed the token, so kick off the live feed manually.
     await startLiveFeed()
   }
 
@@ -171,323 +195,605 @@
     feed?.close()
     feed = undefined
     waitingCount = 0
-    serving = null
-    preview = []
+    waiting = []
+    calling = []
+    servingList = []
+    done = []
+    selected = new Set()
     prevWaitingCount = null
     error = null
   }
 
-  const onCallNext = (): Promise<void> =>
-    runAction("call-next", () => callNext(token))
+  /* ---------- operator actions ---------- */
+  const onCallNext = (lane?: Lane) =>
+    runAction(
+      "call-next",
+      () => callNext(token, lane !== undefined ? { lane } : {}),
+      (v) => {
+        const t = (v as { ticket: Ticket }).ticket
+        showToast(`#${t.displaySeq} を呼び出しました`, "info", "取消", () => onRecallTicket(t.id))
+      },
+    )
 
-  const onMarkServed = (): Promise<void> => {
-    const target = serving
-    if (target === null) return Promise.resolve()
-    return runAction("mark-served", () => markServed(token, target.id))
+  const onCallSpecific = (ticketId: string) =>
+    runAction(
+      "call-specific",
+      () => callSpecific(token, ticketId),
+      (v) => {
+        const t = (v as { ticket: Ticket }).ticket
+        showToast(`#${t.displaySeq} を呼び出しました`, "info", "取消", () => onRecallTicket(t.id))
+      },
+    )
+
+  const onCallBatch = () => {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
+    void runAction(
+      "call-batch",
+      () => callBatch(token, ids),
+      () => {
+        showToast(`${ids.length} 件をまとめて呼び出しました`, "info")
+        selected = new Set()
+      },
+    )
   }
 
-  const onMarkNoShow = (): Promise<void> => {
-    const target = serving
-    if (target === null) return Promise.resolve()
-    return runAction("mark-no-show", () => markNoShow(token, target.id))
+  const onCallNextBatch = () => {
+    const ids = filteredWaiting.slice(0, batchN).map((t) => t.id)
+    if (ids.length === 0) return
+    void runAction(
+      "call-next-batch",
+      () => callBatch(token, ids),
+      () => showToast(`${ids.length} 件を順次呼び出しました`, "info"),
+    )
   }
 
-  /**
-   * Take back an accidental "次を呼ぶ". Confirms first because the
-   * action is rare and usually a "oops"; canceling the dialog leaves
-   * the call in place. The worker emits a `Recalled` event alongside
-   * the original `Called`, so the audit log retains both — the UI
-   * promise of "なかったことに" never erases history.
-   */
-  const onRecall = (): Promise<void> => {
-    const target = serving
-    if (target === null) return Promise.resolve()
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm("呼び出しを取消して列の先頭に戻しますか？")
-    ) {
-      return Promise.resolve()
+  const onStartServing = (ticketId: string) =>
+    runAction("start-serving", () => startServing(token, ticketId), () => showToast("対応中に切り替えました", "success"))
+
+  const onMarkServed = (ticketId: string) =>
+    runAction("mark-served", () => markServed(token, ticketId), () => showToast("対応完了", "success"))
+
+  const onMarkNoShow = (ticketId: string) =>
+    runAction("mark-no-show", () => markNoShow(token, ticketId), () => showToast("不在 (NoShow) に記録", "warning"))
+
+  const onRecallTicket = (ticketId: string) =>
+    runAction("recall", () => recall(token, ticketId), () => showToast("取り消しました", "info"))
+
+  const onStaffCancel = (ticketId: string) =>
+    runAction("cancel", () => staffCancel(token, ticketId, "staff-cancel"), () => showToast("キャンセル", "warning"))
+
+  const onReorderToHead = (ticketId: string) =>
+    runAction("reorder", () => reorder(token, { ticketId, afterTicketId: null }), () => showToast("先頭に移動", "info"))
+
+  /* ---------- selection ---------- */
+  const toggleSelect = (id: string, event?: MouseEvent) => {
+    const next = new Set(selected)
+    if (event?.shiftKey === true) {
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+    } else {
+      next.clear()
+      next.add(id)
     }
-    return runAction("recall", () => recall(token, target.id))
+    selected = next
   }
 
-  const onCancel = (id: string): Promise<void> =>
-    runAction("cancel", () => staffCancel(token, id, "staff cancel"))
+  /* ---------- keyboard ---------- */
+  const onKey = (event: KeyboardEvent) => {
+    if (!authenticated) return
+    const target = event.target as HTMLElement | null
+    const isInput =
+      target !== null && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
+    if (event.key === "/" && !isInput) {
+      event.preventDefault()
+      searchInput?.focus()
+      return
+    }
+    if (event.key === "Escape") {
+      selected = new Set()
+      detail = null
+      helpOpen = false
+      return
+    }
+    if (isInput) return
+    if (event.key === "?") {
+      event.preventDefault()
+      helpOpen = true
+      return
+    }
+    if (event.key.toLowerCase() === "n") {
+      void onCallNext()
+      return
+    }
+    const firstSelected = selected.values().next().value
+    if (firstSelected === undefined) return
+    if (event.key.toLowerCase() === "s") void onStartServing(firstSelected)
+    if (event.key.toLowerCase() === "c") void onMarkServed(firstSelected)
+    if (event.key.toLowerCase() === "r") void onRecallTicket(firstSelected)
+  }
 
+  const onAudioToggle = () => {
+    audioCue = !audioCue
+    localStorage.setItem("queue.audioCue", audioCue ? "1" : "0")
+  }
+
+  /* ---------- lifecycle ---------- */
   onMount(async () => {
-    // Token restored from localStorage → `authenticated = true` at
-    // construction → start the live feed. Otherwise wait until the
-    // login form fires `onLogin`.
     if (authenticated) {
       ensureNotificationPermission()
       await startLiveFeed()
     }
+    window.addEventListener("keydown", onKey)
   })
 
-  onDestroy(() => feed?.close())
+  onDestroy(() => {
+    feed?.close()
+    if (typeof window !== "undefined") window.removeEventListener("keydown", onKey)
+  })
 </script>
 
-<section>
-  {#if !authenticated}
-    <h1>店舗管理</h1>
-    <p class="lede">担当者トークンでログインしてください。</p>
-    <form onsubmit={onLogin}>
-      <label>
-        <span>担当者トークン</span>
-        <input type="password" bind:value={token} required autocomplete="off" />
-      </label>
-      <button type="submit">ログイン</button>
-    </form>
-  {:else}
-    <header>
-      <h1>店舗管理</h1>
-      <button class="logout" onclick={onLogout}>ログアウト</button>
-    </header>
-    <div class="status">
-      <div class="metric">
-        <span>待ち</span>
-        <strong>{waitingCount}</strong>
-      </div>
-      <div class="metric">
-        <span>呼び出し中</span>
-        {#if serving !== null}
-          <strong>#{serving.seq}</strong>
-          {#if serving.nameKana !== null}
-            <p class="serving-name">{serving.nameKana}</p>
-          {/if}
-          {#if serving.phoneLast4 !== null}
-            <p class="serving-meta">末尾 {serving.phoneLast4}</p>
-          {/if}
-          {#if serving.freeText !== null && serving.freeText !== ""}
-            <p class="serving-meta">📝 {serving.freeText}</p>
-          {/if}
-        {:else}
-          <strong class="muted">—</strong>
-        {/if}
-      </div>
-    </div>
-    <div class="actions">
-      <button class="primary" onclick={onCallNext} disabled={busy || waitingCount === 0}>
-        次を呼ぶ
-      </button>
-      {#if serving !== null}
-        <button onclick={onMarkServed} disabled={busy}>対応完了</button>
-        <button class="warn" onclick={onMarkNoShow} disabled={busy}>不在</button>
-        <button class="ghost" onclick={onRecall} disabled={busy} title="呼び出しを取消して列の先頭に戻す">
-          呼び出し取消
-        </button>
-      {/if}
-    </div>
-    {#if error !== null}
-      <p class="error">エラー: {error}</p>
-    {/if}
-    {#if feedState === "reconnecting"}
-      <p class="banner">再接続中…</p>
-    {/if}
-    <h2>待ち行列</h2>
-    {#if preview.length === 0}
-      <p class="empty">待ち行列は空です</p>
-    {:else}
-      <ul class="queue">
-        {#each preview as t (t.id)}
-          <li class="queue-row">
-            <span class="seq">#{t.seq}</span>
-            <div class="info">
-              <p class="info-name">{t.nameKana ?? "(名前なし)"}</p>
-              <p class="info-meta">
-                <span class="phone">末尾 {t.phoneLast4 ?? "—"}</span>
-                {#if t.freeText !== null && t.freeText !== ""}
-                  <span class="free-text">— {t.freeText}</span>
-                {/if}
-              </p>
-            </div>
-            <button class="warn small" onclick={() => onCancel(t.id)} disabled={busy}>キャンセル</button>
-          </li>
+<svelte:head>
+  <title>店舗管理 — 整理券</title>
+  <meta name="robots" content="noindex" />
+</svelte:head>
+
+{#if !authenticated}
+  <section class="login">
+    <Card>
+      <h1>担当者ログイン</h1>
+      <form onsubmit={onLogin}>
+        <label class="field">
+          <span class="label">担当者トークン</span>
+          <input type="password" bind:value={token} required autocomplete="off" />
+        </label>
+        <Button type="submit" size="lg" fullWidth>ログイン</Button>
+      </form>
+    </Card>
+  </section>
+{:else}
+  <div class="staff">
+    <!-- top bar -->
+    <header class="topbar">
+      <div class="lane-chips" role="tablist" aria-label="lane filter">
+        {#each ["all", "walkIn", "priority", "reservation"] as filter}
+          <button
+            type="button"
+            role="tab"
+            class="chip"
+            data-active={laneFilter === filter ? "true" : undefined}
+            onclick={() => (laneFilter = filter as LaneFilter)}
+          >
+            {filter === "all" ? "全部" : filter === "priority" ? "優先" : filter === "reservation" ? "予約" : "通常"}
+          </button>
         {/each}
-      </ul>
+      </div>
+      <input
+        bind:this={searchInput}
+        type="search"
+        bind:value={search}
+        placeholder="名前 (一部) / 末尾4桁"
+        class="search"
+      />
+      <div class="batch">
+        <input type="number" bind:value={batchN} min="1" max="20" />
+        <Button variant="secondary" size="md" onclick={onCallNextBatch}>{batchN} 人呼ぶ</Button>
+      </div>
+      <div class="meta">
+        <span class="dot" data-state={feedState} aria-label={`feed: ${feedState}`}></span>
+        <Button variant="ghost" size="md" onclick={() => (helpOpen = true)} aria-label="help (?)">?</Button>
+        <Button variant="ghost" size="md" onclick={onAudioToggle} aria-label="audio cue">
+          {audioCue ? "🔔" : "🔕"}
+        </Button>
+        <Button variant="ghost" size="md" onclick={onLogout}>ログアウト</Button>
+      </div>
+    </header>
+
+    {#if error !== null}
+      <p class="error" role="alert">{error}</p>
     {/if}
-  {/if}
-</section>
+
+    <!-- 4-column kanban -->
+    <div class="kanban">
+      <section class="col">
+        <header><h2>待機 ({filteredWaiting.length} / {waitingCount})</h2></header>
+        <div class="cards">
+          {#each filteredWaiting as t (t.id)}
+            <Card interactive>
+              <div
+                class="ticket"
+                role="button"
+                tabindex="0"
+                aria-pressed={selected.has(t.id)}
+                data-selected={selected.has(t.id) ? "true" : undefined}
+                onclick={(e) => toggleSelect(t.id, e)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    detail = t
+                  }
+                }}
+                ondblclick={() => (detail = t)}
+              >
+                <div class="ticket-head">
+                  <span class="numeral">{t.displaySeq}</span>
+                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                </div>
+                <div class="ticket-body">
+                  <span class="kana">{t.nameKana ?? ""}</span>
+                  <span class="last4">{t.phoneLast4 ?? ""}</span>
+                </div>
+              </div>
+            </Card>
+          {/each}
+          {#if filteredWaiting.length === 0}
+            <p class="empty">該当なし</p>
+          {/if}
+        </div>
+      </section>
+
+      <section class="col">
+        <header><h2>呼び出し中 ({calling.length})</h2></header>
+        <div class="cards">
+          {#each calling as t (t.id)}
+            <Card>
+              <div class="ticket" role="group" aria-label="called ticket">
+                <div class="ticket-head">
+                  <span class="numeral">{t.displaySeq}</span>
+                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                </div>
+                <div class="ticket-body">
+                  <span class="kana">{t.nameKana ?? ""}</span>
+                  <span class="last4">{t.phoneLast4 ?? ""}</span>
+                </div>
+                <div class="row">
+                  <Button variant="primary" size="md" onclick={() => onStartServing(t.id)} disabled={busy}>対応開始</Button>
+                  <Button variant="secondary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
+                  <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>不在</Button>
+                  <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>取消</Button>
+                </div>
+              </div>
+            </Card>
+          {/each}
+          {#if calling.length === 0}
+            <p class="empty">なし</p>
+          {/if}
+        </div>
+      </section>
+
+      <section class="col">
+        <header><h2>対応中 ({servingList.length})</h2></header>
+        <div class="cards">
+          {#each servingList as t (t.id)}
+            <Card>
+              <div class="ticket" role="group" aria-label="serving ticket">
+                <div class="ticket-head">
+                  <span class="numeral">{t.displaySeq}</span>
+                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                </div>
+                <div class="ticket-body">
+                  <span class="kana">{t.nameKana ?? ""}</span>
+                  <span class="last4">{t.phoneLast4 ?? ""}</span>
+                </div>
+                <div class="row">
+                  <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
+                  <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>キャンセル</Button>
+                </div>
+              </div>
+            </Card>
+          {/each}
+          {#if servingList.length === 0}
+            <p class="empty">なし</p>
+          {/if}
+        </div>
+      </section>
+
+      <section class="col">
+        <header><h2>履歴</h2></header>
+        <div class="cards">
+          {#each done.slice(0, 8) as t (t.id)}
+            <Card>
+              <div class="ticket muted">
+                <div class="ticket-head">
+                  <span class="numeral">{t.displaySeq}</span>
+                  <span class="lane">{t.state}</span>
+                </div>
+              </div>
+            </Card>
+          {/each}
+          {#if done.length === 0}
+            <p class="empty">なし</p>
+          {/if}
+        </div>
+      </section>
+    </div>
+
+    <!-- bottom action bar -->
+    {#if selectionCount > 0}
+      <footer class="action-bar">
+        <span>{selectionCount} 件選択</span>
+        <Button variant="primary" onclick={onCallBatch} disabled={busy}>{selectionCount} 件呼ぶ</Button>
+        <Button variant="ghost" onclick={() => (selected = new Set())}>選択解除</Button>
+      </footer>
+    {/if}
+
+    <!-- detail drawer (Dialog) -->
+    <Dialog
+      bind:open={() => detail !== null, (v) => { if (!v) detail = null }}
+      title={detail !== null ? `#${detail.displaySeq} 詳細` : ""}
+      onClose={() => (detail = null)}
+    >
+      {#if detail !== null}
+        <dl class="detail">
+          <dt>state</dt><dd>{detail.state}</dd>
+          <dt>lane</dt><dd>{detail.lane}</dd>
+          <dt>seq</dt><dd>{detail.seq}</dd>
+          <dt>displaySeq</dt><dd>{detail.displaySeq}</dd>
+          <dt>name</dt><dd>{detail.nameKana ?? ""}</dd>
+          <dt>last4</dt><dd>{detail.phoneLast4 ?? ""}</dd>
+          {#if detail.freeText !== null && detail.freeText !== undefined}
+            <dt>用件</dt><dd>{detail.freeText}</dd>
+          {/if}
+        </dl>
+      {/if}
+      {#snippet actions()}
+        {#if detail !== null}
+          {#if detail.state === "Waiting"}
+            <Button variant="primary" onclick={() => detail !== null && onCallSpecific(detail.id)}>個別呼び出し</Button>
+            <Button variant="secondary" onclick={() => detail !== null && onReorderToHead(detail.id)}>先頭に移動</Button>
+          {/if}
+          <Button variant="ghost" onclick={() => (detail = null)}>閉じる</Button>
+        {/if}
+      {/snippet}
+    </Dialog>
+
+    <!-- help dialog -->
+    <Dialog bind:open={helpOpen} title="キーボード操作" onClose={() => (helpOpen = false)}>
+      <dl class="help">
+        <dt>N</dt><dd>次を呼ぶ (CallNext)</dd>
+        <dt>S</dt><dd>選択中チケットの対応開始 (StartServing)</dd>
+        <dt>C</dt><dd>選択中チケットの対応完了 (MarkServed)</dd>
+        <dt>R</dt><dd>選択中チケットの取消 (Recall)</dd>
+        <dt>/</dt><dd>検索フォーカス</dd>
+        <dt>?</dt><dd>このヘルプ</dd>
+        <dt>Esc</dt><dd>選択解除 / dialog 閉じる</dd>
+        <dt>Click</dt><dd>選択 (Shift+click で複数選択)</dd>
+        <dt>Dbl-click / Enter</dt><dd>詳細を開く</dd>
+      </dl>
+    </Dialog>
+
+    <!-- toast -->
+    {#if toast !== null}
+      <div class="toast-host">
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          undoLabel={toast.undoLabel}
+          onUndo={toast.onUndo}
+          onDismiss={() => (toast = null)}
+        />
+      </div>
+    {/if}
+  </div>
+{/if}
 
 <style>
-  section {
-    max-width: 32rem;
-    margin: 1rem auto;
-    padding: 0 1rem;
+  .login {
+    max-width: 24rem;
+    margin: var(--space-12) auto;
+    padding: 0 var(--space-4);
   }
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .login h1 {
+    font: var(--text-numeral-md);
+    margin: 0 0 var(--space-4);
   }
-  h1 {
-    margin: 0;
-  }
-  .lede {
-    color: #6e6e73;
-  }
-  form {
+  .field {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    max-width: 20rem;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
   }
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
+  .label {
+    font: var(--text-label-md);
+    color: var(--color-fg-secondary);
   }
   input {
-    padding: 0.7rem;
-    border: 1px solid #d2d2d7;
-    border-radius: 8px;
-    font-size: 1rem;
+    background: var(--color-bg-raised);
+    color: var(--color-fg-primary);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
   }
-  button {
-    padding: 0.7rem 1.2rem;
-    background: #1d1d1f;
-    color: white;
-    border: none;
-    border-radius: 999px;
-    cursor: pointer;
+  .staff {
+    padding: var(--space-4);
   }
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  button.primary {
-    background: #0071e3;
-  }
-  button.warn {
-    background: #c11;
-  }
-  button.ghost {
-    background: transparent;
-    color: #1d1d1f;
-    border: 1px solid #d2d2d7;
-  }
-  button.small {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.85rem;
-  }
-  button.logout {
-    background: transparent;
-    color: #1d1d1f;
-    border: 1px solid #d2d2d7;
-    padding: 0.4rem 1rem;
-    font-size: 0.85rem;
-  }
-  .status {
+  .topbar {
     display: flex;
-    gap: 1rem;
-    margin: 1.5rem 0;
-  }
-  .metric {
-    flex: 1;
-    background: #f5f5f7;
-    padding: 1rem;
-    border-radius: 12px;
-  }
-  .metric span {
-    color: #86868b;
-    font-size: 0.85rem;
-  }
-  .metric strong {
-    display: block;
-    font-size: 2rem;
-    margin-top: 0.25rem;
-  }
-  .metric .muted {
-    color: #d2d2d7;
-  }
-  .serving-name {
-    margin: 0.25rem 0 0;
-    font-size: 1rem;
-    font-weight: 500;
-    color: #1d1d1f;
-  }
-  .serving-meta {
-    margin: 0.1rem 0 0;
-    font-size: 0.85rem;
-    color: #6e6e73;
-  }
-  .actions {
-    display: flex;
-    gap: 0.5rem;
+    align-items: center;
+    gap: var(--space-3);
     flex-wrap: wrap;
-    margin-bottom: 1.5rem;
+    margin-bottom: var(--space-4);
+  }
+  .lane-chips {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .chip {
+    background: transparent;
+    color: var(--color-fg-secondary);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-pill);
+    padding: var(--space-2) var(--space-4);
+    font: var(--text-label-sm);
+  }
+  .chip[data-active="true"] {
+    background: var(--color-fg-primary);
+    color: var(--color-bg-surface);
+    border-color: transparent;
+  }
+  .search {
+    flex: 1;
+    min-width: 12rem;
+  }
+  .batch {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+  .batch input {
+    width: 4rem;
+    padding: var(--space-2);
+  }
+  .meta {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    margin-left: auto;
+  }
+  .dot {
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-fg-muted);
+  }
+  .dot[data-state="open"] {
+    background: var(--color-state-serving);
+  }
+  .dot[data-state="reconnecting"] {
+    background: var(--color-state-called);
+  }
+  .dot[data-state="closed"] {
+    background: var(--color-state-danger);
   }
   .error {
-    background: #fff1f0;
-    color: #c11;
-    padding: 0.75rem;
-    border-radius: 8px;
-    margin: 1rem 0;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 0.85rem;
-    word-break: break-word;
+    background: oklch(95% 0.05 25);
+    color: var(--color-state-danger);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    margin: 0 0 var(--space-4);
+    font: var(--text-body-sm);
   }
-  .banner {
-    background: #fff4d6;
-    border: 1px solid #f0c040;
-    color: #8a5a00;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    margin: 1rem 0;
+  .kanban {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
   }
-  h2 {
-    margin: 1.5rem 0 0.75rem;
-    font-size: 1.2rem;
+  @container (min-width: 56rem) {
+    .kanban {
+      grid-template-columns: 1.5fr 1fr 1fr 1fr;
+    }
+  }
+  @media (min-width: 56rem) {
+    .kanban {
+      grid-template-columns: 1.5fr 1fr 1fr 1fr;
+    }
+  }
+  .col header {
+    margin-bottom: var(--space-3);
+  }
+  .col h2 {
+    font: var(--text-label-md);
+    margin: 0;
+    color: var(--color-fg-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .ticket {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .ticket[data-selected="true"] {
+    outline: 2px solid var(--color-accent-primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-md);
+  }
+  .ticket-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .numeral {
+    font: var(--text-numeral-md);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-fg-primary);
+  }
+  .lane {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+    background: var(--color-bg-subtle);
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+  }
+  .lane.lane-priority {
+    color: var(--color-state-called);
+    background: oklch(95% 0.05 65 / 30%);
+  }
+  .ticket-body {
+    display: flex;
+    justify-content: space-between;
+    font: var(--text-body-sm);
+    color: var(--color-fg-secondary);
+  }
+  .last4 {
+    font: var(--text-mono-sm);
+    color: var(--color-fg-muted);
+  }
+  .row {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
   }
   .empty {
-    color: #86868b;
-    font-style: italic;
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
+    text-align: center;
+    padding: var(--space-4);
   }
-  .queue {
-    list-style: none;
-    padding: 0;
-    margin: 0;
+  .muted {
+    opacity: 0.55;
+  }
+  .action-bar {
+    position: fixed;
+    bottom: var(--space-4);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-3) var(--space-5);
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--space-3);
+    align-items: center;
+    z-index: 100;
   }
-  .queue-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 1rem;
-    padding: 0.85rem 1rem;
-    background: #f5f5f7;
-    border-radius: 10px;
-  }
-  .seq {
-    font-weight: 600;
-    font-size: 1.05rem;
-    color: #1d1d1f;
-    min-width: 2.5rem;
-    padding-top: 0.1rem;
-  }
-  .info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    min-width: 0;
-  }
-  .info-name {
+  .detail,
+  .help {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-2) var(--space-4);
     margin: 0;
-    font-weight: 500;
-    color: #1d1d1f;
   }
-  .info-meta {
+  .detail dt,
+  .help dt {
+    font: var(--text-label-md);
+    color: var(--color-fg-secondary);
+  }
+  .detail dd,
+  .help dd {
     margin: 0;
-    font-size: 0.85rem;
-    color: #6e6e73;
-    word-break: break-word;
+    color: var(--color-fg-primary);
   }
-  .phone {
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  }
-  .free-text {
-    color: #1d1d1f;
+  .toast-host {
+    position: fixed;
+    bottom: var(--space-6);
+    right: var(--space-6);
+    z-index: 1000;
   }
 </style>

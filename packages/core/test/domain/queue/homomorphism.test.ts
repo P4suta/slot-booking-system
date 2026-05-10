@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest"
 import { applyEvent, empty, replay } from "../../../src/domain/queue/projection.js"
 import type { Called, Ticket, Waiting } from "../../../src/domain/queue/Ticket.js"
 import {
-  applyCallNext,
+  applyCall,
   applyCancel,
   applyIssue,
   applyMarkNoShow,
@@ -63,9 +63,12 @@ const drive = (
     switch (step.kind) {
       case "issue": {
         const id = newTicketId()
+        const seq = tickets.size + 1
         const out = applyIssue({
           id,
-          seq: tickets.size + 1,
+          seq,
+          lane: "walkIn",
+          displaySeq: seq,
           nameKana: kana,
           phoneLast4: phone,
           freeText: free,
@@ -79,14 +82,14 @@ const drive = (
       case "call": {
         // Model the `CallNext` use case's "at most one serving" guard:
         // skip if anyone is already in `Called`, otherwise pick the
-        // lowest-seq Waiting ticket (queue head).
+        // lowest-displaySeq Waiting ticket (lane head).
         const anyCalled = [...tickets.values()].some((t) => t.state === "Called")
         if (anyCalled) continue
         const head = [...tickets.values()]
           .filter((t): t is Waiting => t.state === "Waiting")
-          .sort((a, b) => a.seq - b.seq)[0]
+          .sort((a, b) => a.displaySeq - b.displaySeq)[0]
         if (head === undefined) continue
-        const out = applyCallNext(head, at(tick), newTicketEventId())
+        const out = applyCall(head, { at: at(tick), eventId: newTicketEventId() })
         events.push(out.event)
         tickets.set(out.ticket.id, out.ticket)
         continue

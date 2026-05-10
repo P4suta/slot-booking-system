@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte"
+  import Card from "$lib/components/Card.svelte"
   import {
     connectQueueFeed,
+    type LaneCounts,
     type QueueFeedHandle,
     type QueueFeedState,
     type ShopState,
@@ -9,13 +11,15 @@
   } from "$lib/api.js"
 
   let waitingCount = $state(0)
-  let serving: { id: string; seq: number } | null = $state(null)
+  let laneCounts: LaneCounts = $state({ walkIn: 0, priority: 0, reservation: 0 })
+  let calling = $state(0)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
 
   const refresh = (data: ShopState) => {
     waitingCount = data.waitingCount
-    serving = data.serving === null ? null : { id: data.serving.id, seq: data.serving.seq }
+    laneCounts = data.laneCounts
+    calling = data.calling.length + data.serving.length
   }
 
   onMount(async () => {
@@ -26,98 +30,147 @@
       // initial fetch failure is non-fatal — the WS feed catches up
     }
     feed = connectQueueFeed({
-      onProjection: (parsed) => {
-        refresh(parsed as ShopState)
-      },
+      onProjection: (parsed) => refresh(parsed as ShopState),
       onState: (next) => {
         feedState = next
       },
-      // onError is intentionally a no-op here; the reconnect logic
-      // owns recovery, and the banner reflects the current `state`.
     })
   })
 
   onDestroy(() => feed?.close())
 </script>
 
+<svelte:head>
+  <title>並ぶ — 整理券</title>
+</svelte:head>
+
 <section class="hero">
   <h1>並ぶ</h1>
   <p class="lede">店の行列に番号を取って加わる。 列の進みはそのまま見える。</p>
+
   {#if feedState === "reconnecting"}
-    <p class="banner">再接続中…</p>
+    <p class="banner" role="status" aria-live="polite">再接続中…</p>
   {/if}
+
   <div class="status">
-    <p>現在 <strong>{waitingCount}</strong> 人待ち</p>
-    {#if serving !== null}
-      <p>呼び出し中: <code>{serving.id.slice(-6)}</code> (#{serving.seq})</p>
-    {/if}
+    <Card>
+      <div class="status-grid">
+        <div class="metric">
+          <span class="metric-label">待ち人数</span>
+          <span class="metric-value">{waitingCount}</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">対応中</span>
+          <span class="metric-value">{calling}</span>
+        </div>
+      </div>
+      {#if waitingCount > 0}
+        <div class="lanes">
+          {#if laneCounts.priority > 0}
+            <span class="lane-chip priority">優先 {laneCounts.priority}</span>
+          {/if}
+          <span class="lane-chip">通常 {laneCounts.walkIn}</span>
+          {#if laneCounts.reservation > 0}
+            <span class="lane-chip">予約 {laneCounts.reservation}</span>
+          {/if}
+        </div>
+      {/if}
+    </Card>
   </div>
-  <a class="cta" href="/issue">並ぶ</a>
-  <p class="hint">
-    既に番号をお持ちの方は <a href="/ticket">ticket panel</a> から確認できます。
-  </p>
+
+  <div class="actions">
+    <a class="cta" href="/issue">並ぶ</a>
+    <a class="link" href="/recover">自分の番号を確認</a>
+  </div>
 </section>
 
 <style>
   .hero {
     text-align: center;
-    padding: 4rem 1rem;
+    padding: var(--space-12) var(--space-4);
     max-width: 32rem;
     margin: 0 auto;
   }
   h1 {
-    font-size: 3rem;
-    margin: 0 0 0.5rem;
+    font: var(--text-numeral-xl);
+    margin: 0 0 var(--space-2);
     letter-spacing: -0.02em;
   }
   .lede {
-    color: #6e6e73;
-    font-size: 1.05rem;
-    margin: 0 0 2rem;
+    color: var(--color-fg-muted);
+    font: var(--text-body-lg);
+    margin: 0 0 var(--space-8);
   }
   .status {
-    background: #f5f5f7;
-    border-radius: 16px;
-    padding: 1.5rem;
-    margin: 0 0 2rem;
+    margin: 0 0 var(--space-8);
   }
-  .status p {
-    margin: 0.25rem 0;
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-6);
   }
-  .status strong {
-    font-size: 2rem;
-    color: #1d1d1f;
+  .metric {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .metric-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+  }
+  .metric-value {
+    font: var(--text-numeral-md);
+    color: var(--color-fg-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .lanes {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: center;
+    margin-top: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .lane-chip {
+    font: var(--text-label-sm);
+    color: var(--color-fg-secondary);
+    background: var(--color-bg-subtle);
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+  }
+  .lane-chip.priority {
+    color: var(--color-state-called);
+    background: oklch(95% 0.05 65 / 30%);
+  }
+  .actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    align-items: center;
   }
   .cta {
     display: inline-block;
-    background: #1d1d1f;
-    color: white;
+    background: var(--color-accent-primary);
+    color: var(--color-accent-on-primary);
     text-decoration: none;
-    padding: 1rem 2.5rem;
-    border-radius: 999px;
-    font-size: 1.1rem;
+    padding: var(--space-4) var(--space-12);
+    border-radius: var(--radius-pill);
+    font: var(--text-body-lg);
     font-weight: 500;
   }
   .cta:hover {
-    background: #333;
+    filter: brightness(1.08);
+  }
+  .link {
+    color: var(--color-fg-secondary);
+    font: var(--text-body-sm);
+    text-decoration: underline;
   }
   .banner {
-    background: #fff4d6;
-    border: 1px solid #f0c040;
-    color: #8a5a00;
-    border-radius: 12px;
-    padding: 0.75rem 1rem;
-    margin: 0 0 1rem;
-  }
-  .hint {
-    margin-top: 2rem;
-    color: #86868b;
-    font-size: 0.9rem;
-  }
-  code {
-    background: #f5f5f7;
-    padding: 0.2rem 0.5rem;
-    border-radius: 6px;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: oklch(95% 0.07 65);
+    color: oklch(40% 0.13 65);
+    border: 1px solid oklch(85% 0.15 65);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    margin: 0 0 var(--space-4);
   }
 </style>

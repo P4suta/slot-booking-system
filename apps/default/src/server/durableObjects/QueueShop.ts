@@ -1,16 +1,29 @@
 import { DurableObject } from "cloudflare:workers"
 import {
+  CallBatch,
   CallNext,
+  CallSpecific,
   CancelTicket,
+  type Clock,
+  type ConcurrencyError,
   type CustomerHandle,
   codeOf,
+  type DomainError,
+  type IdGenerator,
   IssueTicket,
+  type Lane,
+  type Logger,
   MarkNoShow,
   MarkServed,
+  type NonEmptyReadonlyArray,
   Recall,
+  Reorder,
+  StartServing,
+  type StorageError,
   SystemClockLive,
   type Ticket,
   type TicketId,
+  type TicketRepository,
   TicketSchema,
   UlidIdGeneratorLive,
 } from "@booking/core"
@@ -29,13 +42,27 @@ type Env = {
  * Action dispatched by the worker to the single QueueShop instance.
  * Discriminated union over the use cases; the DO routes each action
  * through the matching `application/usecases/queue/` entry point.
+ *
+ * Per ADR-0062 / ADR-0063 / ADR-0065 the operator-grade actions
+ * (CallSpecific / CallBatch / StartServing / Reorder) join the
+ * original five so the action surface stays small (10 total) but
+ * each operator intent has a named entry.
  */
 export type QueueAction =
-  | { type: "IssueTicket"; handle: CustomerHandle; freeText: string | null }
-  | { type: "CallNext"; actor: "staff" | "system" }
+  | { type: "IssueTicket"; handle: CustomerHandle; freeText: string | null; lane?: Lane }
+  | { type: "CallNext"; actor: "staff" | "system"; lane?: Lane }
+  | { type: "CallSpecific"; ticketId: TicketId; actor: "staff" | "system" }
+  | { type: "CallBatch"; ticketIds: NonEmptyReadonlyArray<TicketId>; actor: "staff" | "system" }
+  | { type: "StartServing"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "MarkServed"; ticketId: TicketId }
   | { type: "MarkNoShow"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "Recall"; ticketId: TicketId; actor: "staff" | "system" }
+  | {
+      type: "Reorder"
+      ticketId: TicketId
+      afterTicketId: TicketId | null
+      actor: "staff" | "system"
+    }
   | {
       type: "CancelTicket"
       ticketId: TicketId
@@ -53,8 +80,14 @@ export type QueueAction =
  */
 export type EncodedTicket = (typeof TicketSchema)["Encoded"]
 
+/**
+ * Result envelope. Single-ticket actions return `ticket`; CallBatch
+ * returns `tickets` (the array of every member that landed Called).
+ * Failure carries the `_tag + code` pair the boundary surfaces.
+ */
 export type QueueResult =
   | { ok: true; ticket: EncodedTicket }
+  | { ok: true; tickets: readonly EncodedTicket[] }
   | { ok: false; error: { _tag: string; code: string } }
 
 const encodeTicket = (t: Ticket): EncodedTicket => Schema.encodeUnknownSync(TicketSchema)(t)
@@ -89,29 +122,61 @@ export class QueueShop extends DurableObject<Env> {
 
   async dispatch(action: QueueAction): Promise<QueueResult> {
     const layer = this.layer()
-    const eff = (() => {
-      switch (action.type) {
-        case "IssueTicket":
-          return IssueTicket({
-            handle: action.handle,
-            freeText: action.freeText as Ticket["freeText"],
-          })
-        case "CallNext":
-          return CallNext(action.actor)
-        case "MarkServed":
-          return MarkServed(action.ticketId)
-        case "MarkNoShow":
-          return MarkNoShow(action.ticketId, action.actor)
-        case "Recall":
-          return Recall(action.ticketId, action.actor)
-        case "CancelTicket":
-          return CancelTicket(action.ticketId, action.actor, action.reason, action.handle)
-      }
-    })()
-    const result = await Effect.runPromise(
+    type DispatchOk = Ticket | readonly Ticket[]
+    type DispatchErr = DomainError | ConcurrencyError | StorageError
+    type DispatchDeps = Clock | IdGenerator | TicketRepository | Logger
+    let eff: Effect.Effect<DispatchOk, DispatchErr, DispatchDeps>
+    switch (action.type) {
+      case "IssueTicket":
+        eff = IssueTicket({
+          handle: action.handle,
+          freeText: action.freeText as Ticket["freeText"],
+          ...(action.lane !== undefined ? { lane: action.lane } : {}),
+        })
+        break
+      case "CallNext":
+        eff = CallNext(action.lane, action.actor)
+        break
+      case "CallSpecific":
+        eff = CallSpecific(action.ticketId, action.actor)
+        break
+      case "CallBatch":
+        eff = CallBatch(action.ticketIds, action.actor)
+        break
+      case "StartServing":
+        eff = StartServing(action.ticketId, action.actor)
+        break
+      case "MarkServed":
+        eff = MarkServed(action.ticketId)
+        break
+      case "MarkNoShow":
+        eff = MarkNoShow(action.ticketId, action.actor)
+        break
+      case "Recall":
+        eff = Recall(action.ticketId, action.actor)
+        break
+      case "Reorder":
+        eff = Reorder(action.ticketId, action.afterTicketId, action.actor)
+        break
+      case "CancelTicket":
+        eff = CancelTicket(action.ticketId, action.actor, action.reason, action.handle)
+        break
+    }
+    const result: QueueResult = await Effect.runPromise(
       Effect.matchCauseEffect(eff, {
-        onSuccess: (ticket) =>
-          Effect.succeed({ ok: true, ticket: encodeTicket(ticket) } satisfies QueueResult),
+        onSuccess: (out: DispatchOk): Effect.Effect<QueueResult> => {
+          if (Array.isArray(out)) {
+            const tickets = out as readonly Ticket[]
+            return Effect.succeed({
+              ok: true,
+              tickets: tickets.map(encodeTicket),
+            } satisfies QueueResult)
+          }
+          return Effect.succeed({
+            ok: true,
+            ticket: encodeTicket(out as Ticket),
+          } satisfies QueueResult)
+        },
         onFailure: (cause) => {
           const fails = cause.reasons.filter(Cause.isFailReason)
           const first = fails[0]?.error
@@ -219,19 +284,44 @@ export class QueueShop extends DurableObject<Env> {
   }
 
   /**
-   * Build the anonymous projection payload — staff PII never crosses
-   * the WebSocket feed. Mirrors the public `GET /api/v1/queue` shape
-   * so the client renders the same view from either source.
+   * Build the anonymous v2 projection payload — staff PII never
+   * crosses the WebSocket feed. Mirrors the public `GET /api/v1/queue`
+   * shape so the client renders the same view from either source.
+   *
+   * v2 (ADR-0062 / 0063 / 0065): `lane` partitions the queue and
+   * `displaySeq` controls per-lane order; `calling[]` and
+   * `serving[]` replace the v1 single `serving` field.
    */
   private async projectionPayload(): Promise<string> {
     const tickets = await this.listTickets()
-    const waiting = tickets.filter((t) => t.state === "Waiting").sort((a, b) => a.seq - b.seq)
-    const serving = tickets.find((t) => t.state === "Called") ?? null
+    const project = (t: EncodedTicket) => ({
+      id: t.id,
+      seq: t.seq,
+      lane: t.lane,
+      displaySeq: t.displaySeq,
+    })
+    const waiting = tickets
+      .filter((t) => t.state === "Waiting")
+      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const calling = tickets
+      .filter((t) => t.state === "Called")
+      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const serving = tickets
+      .filter((t) => t.state === "Serving")
+      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const laneCount = (lane: Lane) => waiting.filter((t) => t.lane === lane).length
     return JSON.stringify({
       ok: true,
+      v: 2,
       waitingCount: waiting.length,
-      serving: serving === null ? null : { id: serving.id, seq: serving.seq },
-      waitingPreview: waiting.slice(0, 10).map((t) => ({ id: t.id, seq: t.seq })),
+      laneCounts: {
+        walkIn: laneCount("walkIn"),
+        priority: laneCount("priority"),
+        reservation: laneCount("reservation"),
+      },
+      calling: calling.map(project),
+      serving: serving.map(project),
+      waitingPreview: waiting.slice(0, 10).map(project),
     })
   }
 

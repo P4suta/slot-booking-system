@@ -4,7 +4,7 @@ import { bench, describe } from "vitest"
 import { applyEvent, empty, replay } from "../../src/domain/queue/projection.js"
 import type { Called, Waiting } from "../../src/domain/queue/Ticket.js"
 import type { TicketEvent } from "../../src/domain/queue/TicketEvent.js"
-import { applyCallNext, applyIssue, applyMarkServed } from "../../src/domain/queue/transitions.js"
+import { applyCall, applyIssue, applyMarkServed } from "../../src/domain/queue/transitions.js"
 import { newTicketEventId, newTicketId } from "../../src/domain/types/EntityId.js"
 import { NameKanaSchema } from "../../src/domain/value-objects/NameKana.js"
 import { PhoneLast4Schema } from "../../src/domain/value-objects/PhoneLast4.js"
@@ -15,7 +15,7 @@ import { PhoneLast4Schema } from "../../src/domain/value-objects/PhoneLast4.js"
  * revision (ADR-0059); regressions in `applyEvent` show up here
  * before they surface as user-visible request latency.
  *
- * Fixture: 1 000 events covering Issue → CallNext → MarkServed
+ * Fixture: 1 000 events covering Issue → Call → MarkServed
  * triplets across 333 distinct tickets. Vitest bench reports
  * iterations per second; the CI regression gate (±20 %) lives in
  * the bench-baseline JSON and is checked outside this file.
@@ -30,9 +30,12 @@ const buildFixture = (tickets: number): readonly TicketEvent[] => {
   const events: TicketEvent[] = []
   for (let i = 0; i < tickets; i += 1) {
     const id = newTicketId()
+    const seq = i + 1
     const issue = applyIssue({
       id,
-      seq: i + 1,
+      seq,
+      lane: "walkIn",
+      displaySeq: seq,
       nameKana: kana,
       phoneLast4: phone,
       freeText: null,
@@ -41,7 +44,11 @@ const buildFixture = (tickets: number): readonly TicketEvent[] => {
     })
     events.push(issue.event)
     const waiting = issue.ticket as Waiting
-    const call = applyCallNext(waiting, at(i * 3 + 1), newTicketEventId(), "staff")
+    const call = applyCall(waiting, {
+      at: at(i * 3 + 1),
+      eventId: newTicketEventId(),
+      calledBy: "staff",
+    })
     events.push(call.event)
     const called = call.ticket as Called
     const served = applyMarkServed(called, at(i * 3 + 2), newTicketEventId())

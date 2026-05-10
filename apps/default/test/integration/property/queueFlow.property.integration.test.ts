@@ -54,11 +54,25 @@ const cmdArb: fc.Arbitrary<Command> = fc.oneof(
   fc.constant({ kind: "projection" } as const),
 )
 
+type ProjectionEntry = {
+  readonly id: string
+  readonly seq: number
+  readonly lane: "walkIn" | "priority" | "reservation"
+  readonly displaySeq: number
+}
+
 type Projection = {
   readonly ok: boolean
+  readonly v: 2
   readonly waitingCount: number
-  readonly serving: { readonly id: string; readonly seq: number } | null
-  readonly waitingPreview: readonly { readonly id: string; readonly seq: number }[]
+  readonly laneCounts: {
+    readonly walkIn: number
+    readonly priority: number
+    readonly reservation: number
+  }
+  readonly calling: readonly ProjectionEntry[]
+  readonly serving: readonly ProjectionEntry[]
+  readonly waitingPreview: readonly ProjectionEntry[]
 }
 
 // vitest-pool-workers (0.16) doesn't propagate the host's
@@ -100,8 +114,9 @@ describe("HTTP queue flow (property, integration)", () => {
             case "recall": {
               const projRes = await worker().fetch(req.queueProjection())
               const proj = await parseJson<Projection>(projRes)
-              if (proj.serving === null) break
-              const id = proj.serving.id
+              const target = proj.calling[0] ?? proj.serving[0]
+              if (target === undefined) break
+              const id = target.id
               if (cmd.kind === "markServed") {
                 await worker().fetch(req.markServed(id, auth.bearerHeaders))
               } else if (cmd.kind === "markNoShow") {
@@ -123,6 +138,7 @@ describe("HTTP queue flow (property, integration)", () => {
         const final = await parseJson<Projection>(finalRes)
 
         expect(final.ok).toBe(true)
+        expect(final.v).toBe(2)
         expect(typeof final.waitingCount).toBe("number")
         expect(final.waitingCount).toBeGreaterThanOrEqual(0)
         // Total tickets in the system can never exceed what was
@@ -133,14 +149,27 @@ describe("HTTP queue flow (property, integration)", () => {
         // longer than the live waitingCount.
         expect(final.waitingPreview.length).toBeLessThanOrEqual(10)
         expect(final.waitingPreview.length).toBeLessThanOrEqual(final.waitingCount)
-        // Strictly monotonic seq across the public preview.
-        for (let i = 1; i < final.waitingPreview.length; i += 1) {
-          const prev = final.waitingPreview[i - 1]
-          const curr = final.waitingPreview[i]
-          if (prev !== undefined && curr !== undefined) {
-            expect(curr.seq).toBeGreaterThan(prev.seq)
+        // Strictly monotonic per-lane displaySeq across the public
+        // preview within each lane (ADR-0065).
+        const byLane = new Map<string, ProjectionEntry[]>()
+        for (const entry of final.waitingPreview) {
+          const list = byLane.get(entry.lane) ?? []
+          list.push(entry)
+          byLane.set(entry.lane, list)
+        }
+        for (const list of byLane.values()) {
+          for (let i = 1; i < list.length; i += 1) {
+            const prev = list[i - 1]
+            const curr = list[i]
+            if (prev !== undefined && curr !== undefined) {
+              expect(curr.displaySeq).toBeGreaterThan(prev.displaySeq)
+            }
           }
         }
+        // laneCounts agrees with waitingCount across the three lanes.
+        const laneTotal =
+          final.laneCounts.walkIn + final.laneCounts.priority + final.laneCounts.reservation
+        expect(laneTotal).toBe(final.waitingCount)
       }),
       { numRuns: NUM_RUNS, verbose: false },
     )

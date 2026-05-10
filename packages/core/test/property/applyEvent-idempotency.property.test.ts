@@ -6,7 +6,7 @@ import { applyEvent, empty } from "../../src/domain/queue/projection.js"
 import type { Called, Ticket, Waiting } from "../../src/domain/queue/Ticket.js"
 import type { TicketEvent } from "../../src/domain/queue/TicketEvent.js"
 import {
-  applyCallNext,
+  applyCall,
   applyCancel,
   applyIssue,
   applyMarkNoShow,
@@ -26,9 +26,9 @@ import { numRuns } from "../_arb/numRuns.js"
  * completed.
  *
  * For Issued the proof is `Map.set` — same key, same struct, same
- * map. For the other five tags the proof is the prior-state
- * guard: a second application sees the wrong source state and
- * short-circuits to the unchanged snapshot.
+ * map. For the other six tags the proof is the prior-state guard:
+ * a second application sees the wrong source state and short-
+ * circuits to the unchanged snapshot.
  */
 const kana = Schema.decodeUnknownSync(NameKanaSchema)("ヤマダ タロウ")
 const phone = Schema.decodeUnknownSync(PhoneLast4Schema)("1234")
@@ -61,9 +61,12 @@ const drive = (steps: readonly Step[]): readonly TicketEvent[] => {
     switch (step.kind) {
       case "issue": {
         const id = newTicketId()
+        const seq = tickets.size + 1
         const out = applyIssue({
           id,
-          seq: tickets.size + 1,
+          seq,
+          lane: "walkIn",
+          displaySeq: seq,
           nameKana: kana,
           phoneLast4: phone,
           freeText: free,
@@ -78,9 +81,9 @@ const drive = (steps: readonly Step[]): readonly TicketEvent[] => {
         if ([...tickets.values()].some((t) => t.state === "Called")) continue
         const head = [...tickets.values()]
           .filter((t): t is Waiting => t.state === "Waiting")
-          .sort((a, b) => a.seq - b.seq)[0]
+          .sort((a, b) => a.displaySeq - b.displaySeq)[0]
         if (head === undefined) continue
-        const out = applyCallNext(head, at(tick), newTicketEventId())
+        const out = applyCall(head, { at: at(tick), eventId: newTicketEventId() })
         events.push(out.event)
         tickets.set(out.ticket.id, out.ticket)
         continue
@@ -135,7 +138,6 @@ describe("applyEvent idempotency (property)", () => {
         for (const e of events) {
           const once = applyEvent(snap, e)
           const twice = applyEvent(once, e)
-          // Map equality via key set + per-key strict equality.
           expect(twice.tickets.size).toBe(once.tickets.size)
           for (const [id, t] of once.tickets) {
             expect(twice.tickets.get(id)).toEqual(t)

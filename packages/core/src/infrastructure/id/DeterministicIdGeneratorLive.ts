@@ -2,6 +2,7 @@ import { Effect, Layer, Ref } from "effect"
 import { IdGenerator } from "../../application/ports/IdGenerator.js"
 import type {
   AuditLogId,
+  BatchId,
   IdempotencyKeyId,
   StaffId,
   TicketEventId,
@@ -35,6 +36,7 @@ export const DeterministicIdGeneratorLive = Layer.effect(
     const staf = yield* Ref.make(0)
     const audt = yield* Ref.make(0)
     const idem = yield* Ref.make(0)
+    const bch = yield* Ref.make(0)
     const mint = <T extends string>(prefix: string, ref: Ref.Ref<number>): Effect.Effect<T> =>
       Ref.modify(ref, (n) => {
         const next = n + 1
@@ -46,6 +48,7 @@ export const DeterministicIdGeneratorLive = Layer.effect(
       newStaffId: mint<StaffId>("staf", staf),
       newAuditLogId: mint<AuditLogId>("audt", audt),
       newIdempotencyKeyId: mint<IdempotencyKeyId>("idem", idem),
+      newBatchId: mint<BatchId>("bch", bch),
     }
   }),
 )

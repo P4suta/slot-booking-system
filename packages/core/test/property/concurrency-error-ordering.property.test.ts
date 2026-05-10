@@ -6,7 +6,7 @@ import { applyEvent, replay } from "../../src/domain/queue/projection.js"
 import type { Called, Ticket, Waiting } from "../../src/domain/queue/Ticket.js"
 import type { TicketEvent } from "../../src/domain/queue/TicketEvent.js"
 import {
-  applyCallNext,
+  applyCall,
   applyCancel,
   applyIssue,
   applyMarkNoShow,
@@ -71,9 +71,12 @@ const drive = (steps: readonly Step[]): readonly TicketEvent[] => {
     switch (step.kind) {
       case "issue": {
         const id = newTicketId()
+        const seq = tickets.size + 1
         const out = applyIssue({
           id,
-          seq: tickets.size + 1,
+          seq,
+          lane: "walkIn",
+          displaySeq: seq,
           nameKana: kana,
           phoneLast4: phone,
           freeText: free,
@@ -88,9 +91,9 @@ const drive = (steps: readonly Step[]): readonly TicketEvent[] => {
         if ([...tickets.values()].some((t) => t.state === "Called")) continue
         const head = [...tickets.values()]
           .filter((t): t is Waiting => t.state === "Waiting")
-          .sort((a, b) => a.seq - b.seq)[0]
+          .sort((a, b) => a.displaySeq - b.displaySeq)[0]
         if (head === undefined) continue
-        const out = applyCallNext(head, at(tick), newTicketEventId())
+        const out = applyCall(head, { at: at(tick), eventId: newTicketEventId() })
         events.push(out.event)
         tickets.set(out.ticket.id, out.ticket)
         continue

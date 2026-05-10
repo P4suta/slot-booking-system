@@ -1,3 +1,4 @@
+export * from "./Lane.js"
 export * from "./projection.js"
 export * from "./Ticket.js"
 export * from "./TicketEvent.js"

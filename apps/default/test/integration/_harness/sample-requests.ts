@@ -18,8 +18,10 @@ export type Handle = {
   readonly phoneLast4: string
 }
 
+export type Lane = "walkIn" | "priority" | "reservation"
+
 export const issueTicket = (
-  body: { handle: Handle; freeText: string | null },
+  body: { handle: Handle; freeText: string | null; lane?: Lane },
   init: { readonly headers?: Record<string, string> } = {},
 ) =>
   buildRequest("/api/v1/tickets", {
@@ -29,6 +31,7 @@ export const issueTicket = (
       nameKana: body.handle.nameKana,
       phoneLast4: body.handle.phoneLast4,
       freeText: body.freeText,
+      ...(body.lane !== undefined ? { lane: body.lane } : {}),
     }),
   })
 
@@ -59,10 +62,49 @@ export const staffCancel = (
     body: JSON.stringify({ reason }),
   })
 
-export const callNext = (staffHeaders: Record<string, string>) =>
-  buildRequest("/api/v1/queue/call-next", {
+export const callNext = (staffHeaders: Record<string, string>, body: { lane?: Lane } = {}) =>
+  body.lane !== undefined
+    ? buildRequest("/api/v1/queue/call-next", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...staffHeaders },
+        body: JSON.stringify({ lane: body.lane }),
+      })
+    : buildRequest("/api/v1/queue/call-next", {
+        method: "POST",
+        headers: staffHeaders,
+      })
+
+export const callSpecific = (ticketId: string, staffHeaders: Record<string, string>) =>
+  buildRequest("/api/v1/queue/call-specific", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...staffHeaders },
+    body: JSON.stringify({ ticketId }),
+  })
+
+export const callBatch = (ticketIds: readonly string[], staffHeaders: Record<string, string>) =>
+  buildRequest("/api/v1/queue/call-batch", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...staffHeaders },
+    body: JSON.stringify({ ticketIds }),
+  })
+
+export const startServing = (ticketId: string, staffHeaders: Record<string, string>) =>
+  buildRequest(`/api/v1/tickets/${ticketId}/start-serving`, {
     method: "POST",
     headers: staffHeaders,
+  })
+
+export const reorder = (
+  body: { ticketId: string; afterTicketId: string | null },
+  staffHeaders: Record<string, string>,
+) =>
+  buildRequest("/api/v1/queue/reorder", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...staffHeaders },
+    body: JSON.stringify({
+      ticketId: body.ticketId,
+      afterTicketId: body.afterTicketId,
+    }),
   })
 
 export const markServed = (ticketId: string, staffHeaders: Record<string, string>) =>

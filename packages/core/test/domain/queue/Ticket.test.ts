@@ -17,6 +17,8 @@ const decodeOrThrow = (raw: unknown): Ticket => {
 const baseFields = {
   id: newTicketId(),
   seq: 1,
+  lane: "walkIn",
+  displaySeq: 1,
   nameKana: "ヤマダ タロウ",
   phoneLast4: "1234",
   freeText: null,
@@ -33,6 +35,17 @@ describe("TicketSchema discrimination", () => {
         state: "Called",
         calledAt: "2026-05-08T09:05:00Z",
         calledBy: "staff",
+      },
+    ],
+    [
+      "Serving",
+      {
+        ...baseFields,
+        state: "Serving",
+        calledAt: "2026-05-08T09:05:00Z",
+        calledBy: "staff",
+        servingStartedAt: "2026-05-08T09:07:00Z",
+        servingStartedBy: "staff",
       },
     ],
     [
@@ -76,10 +89,24 @@ describe("TicketSchema discrimination", () => {
     const r = Schema.decodeUnknownResult(TicketSchema)({ ...baseFields, state: "Unknown" })
     expect(Result.isFailure(r)).toBe(true)
   })
+
+  it.each(["walkIn", "priority", "reservation"])("decodes a %s lane", (lane) => {
+    const t = decodeOrThrow({ ...baseFields, lane, state: "Waiting" })
+    expect(t.lane).toBe(lane)
+  })
+
+  it("rejects an unknown lane", () => {
+    const r = Schema.decodeUnknownResult(TicketSchema)({
+      ...baseFields,
+      lane: "vip",
+      state: "Waiting",
+    })
+    expect(Result.isFailure(r)).toBe(true)
+  })
 })
 
 describe("TERMINAL_TICKET_STATES / isTerminal", () => {
-  it("lists Served / NoShow / Cancelled", () => {
+  it("lists Served / NoShow / Cancelled (Serving stays active)", () => {
     expect(TERMINAL_TICKET_STATES).toEqual(["Served", "NoShow", "Cancelled"])
   })
 
@@ -121,7 +148,7 @@ describe("TERMINAL_TICKET_STATES / isTerminal", () => {
     ).toBe(true)
   })
 
-  it("isTerminal returns false for Waiting and Called", () => {
+  it("isTerminal returns false for Waiting / Called / Serving (all active)", () => {
     expect(isTerminal(decodeOrThrow({ ...baseFields, state: "Waiting" }))).toBe(false)
     expect(
       isTerminal(
@@ -130,6 +157,18 @@ describe("TERMINAL_TICKET_STATES / isTerminal", () => {
           state: "Called",
           calledAt: "2026-05-08T09:00:00Z",
           calledBy: "staff",
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      isTerminal(
+        decodeOrThrow({
+          ...baseFields,
+          state: "Serving",
+          calledAt: "2026-05-08T09:00:00Z",
+          calledBy: "staff",
+          servingStartedAt: "2026-05-08T09:01:00Z",
+          servingStartedBy: "staff",
         }),
       ),
     ).toBe(false)

@@ -6,11 +6,15 @@ import { readSessionCookie, verifySession } from "../security/session.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
 import { handleStaffLogin } from "./auth/login.js"
 import {
+  CallBatchBodySchema,
+  CallNextBodySchema,
+  CallSpecificBodySchema,
   CancelBodySchema,
   decodeTicketIdParam,
   dispatchDecodeFailure,
   IssueTicketBodySchema,
   MyTicketQuerySchema,
+  ReorderBodySchema,
   StaffCancelBodySchema,
 } from "./boundarySchemas.js"
 import { envelopeLog } from "./envelopeLog.js"
@@ -31,39 +35,48 @@ import type { Env } from "./types.js"
  * dispatches, the envelope helpers project errors to status codes.
  *
  * Endpoints (all `/api/v1` prefixed):
- *   POST  /tickets                 issue
- *   GET   /tickets/me              customer self-fetch
- *   POST  /tickets/:id/cancel      cancel (customer with handle, or staff)
- *   POST  /tickets/:id/served      staff: mark served
- *   POST  /tickets/:id/no-show     staff: mark no-show
- *   POST  /tickets/:id/recall      staff: recall (Called -> Waiting)
- *   GET   /queue                   shop state (PII for staff, anon otherwise)
- *   POST  /queue/call-next         staff: call next
- *   GET   /queue/feed              DO Hibernating WebSocket projection feed
+ *   POST  /tickets                       issue (body lane? — ADR-0062)
+ *   GET   /tickets/me                    customer self-fetch
+ *   POST  /tickets/:id/cancel            cancel (customer with handle, or staff)
+ *   POST  /tickets/:id/served            staff: mark served (Called | Serving)
+ *   POST  /tickets/:id/no-show           staff: mark no-show (Called only)
+ *   POST  /tickets/:id/recall            staff: recall (Called -> Waiting)
+ *   POST  /tickets/:id/start-serving     staff: Called -> Serving (ADR-0063)
+ *   GET   /queue                         shop state v2 (calling[]/serving[],
+ *                                        PII for staff, anon otherwise)
+ *   POST  /queue/call-next               staff: call next (body lane?)
+ *   POST  /queue/call-specific           staff: call a specific Waiting (ADR-0065)
+ *   POST  /queue/call-batch               staff: atomic batch call (ADR-0065)
+ *   POST  /queue/reorder                 staff: reorder within lane (ADR-0065)
+ *   GET   /queue/feed                    DO Hibernating WebSocket projection feed (v2)
  */
 
 const stub = (env: Env): DurableObjectStub<QueueShop> =>
   env.QUEUE_SHOP.get(env.QUEUE_SHOP.idFromName("shop"))
 
-const dispatchEnvelope = (result: QueueResult, status = 200): Response =>
-  result.ok
-    ? new Response(JSON.stringify({ ok: true, ticket: result.ticket }), {
-        status,
-        headers: { "content-type": "application/json; charset=utf-8" },
-      })
-    : new Response(
-        JSON.stringify({
-          ok: false,
-          error: { _tag: result.error._tag, code: result.error.code },
-        }),
-        {
-          status:
-            result.error._tag === "Defect"
-              ? DEFECT_STATUS
-              : statusForTag(result.error._tag as never),
-          headers: { "content-type": "application/json; charset=utf-8" },
-        },
-      )
+const dispatchEnvelope = (result: QueueResult, status = 200): Response => {
+  if (result.ok) {
+    const body =
+      "tickets" in result
+        ? { ok: true, tickets: result.tickets }
+        : { ok: true, ticket: result.ticket }
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    })
+  }
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: { _tag: result.error._tag, code: result.error.code },
+    }),
+    {
+      status:
+        result.error._tag === "Defect" ? DEFECT_STATUS : statusForTag(result.error._tag as never),
+      headers: { "content-type": "application/json; charset=utf-8" },
+    },
+  )
+}
 
 const failResponse = (
   status: number,
@@ -177,6 +190,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         phoneLast4: decoded.success.phoneLast4,
       },
       freeText: decoded.success.freeText,
+      ...(decoded.success.lane !== undefined ? { lane: decoded.success.lane } : {}),
     }
     return dispatchEnvelope(await stub(c.env).dispatch(action), 201)
   })
@@ -207,14 +221,17 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     })
   })
 
-  // POST /api/v1/tickets/:id/cancel — staff or customer
+  // POST /api/v1/tickets/:id/cancel — staff or customer. Body parse
+  // must run **before** the path-param TicketId decode so a
+  // malformed body surfaces as a distinct 400 InvalidPayload (C7);
+  // id-shape failures fall through to the standard 404 TicketNotFound.
   app.post("/api/v1/tickets/:id/cancel", async (c) => {
-    const idR = decodeTicketIdParam(c.req.param("id"))
-    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
       return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
     }
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     const raw = parsed.raw
     const isStaff = c.req.header("x-staff-token") !== undefined
     if (isStaff) {
@@ -253,11 +270,29 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     )
   })
 
-  // GET /api/v1/queue — shop projection (staff sees PII)
+  // GET /api/v1/queue — shop projection v2 (ADR-0062 / 0063 / 0065).
+  // Anonymous payload exposes lane / displaySeq + calling[] +
+  // serving[] arrays; staff payload carries the full ticket rows
+  // (PII inclusive).
   app.get("/api/v1/queue", async (c) => {
     const tickets = await stub(c.env).listTickets()
-    const waiting = tickets.filter((t) => t.state === "Waiting").sort((a, b) => a.seq - b.seq)
-    const serving = tickets.find((t) => t.state === "Called") ?? null
+    const waiting = tickets
+      .filter((t) => t.state === "Waiting")
+      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const calling = tickets
+      .filter((t) => t.state === "Called")
+      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const serving = tickets
+      .filter((t) => t.state === "Serving")
+      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const project = (t: (typeof tickets)[number]) => ({
+      id: t.id,
+      seq: t.seq,
+      lane: t.lane,
+      displaySeq: t.displaySeq,
+    })
+    const laneCount = (lane: "walkIn" | "priority" | "reservation") =>
+      waiting.filter((t) => t.lane === lane).length
     const isStaff =
       c.env.STAFF_SESSION_SECRET !== undefined &&
       c.req.header("x-staff-token") === c.env.STAFF_SESSION_SECRET
@@ -265,7 +300,14 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return new Response(
         JSON.stringify({
           ok: true,
+          v: 2,
           waitingCount: waiting.length,
+          laneCounts: {
+            walkIn: laneCount("walkIn"),
+            priority: laneCount("priority"),
+            reservation: laneCount("reservation"),
+          },
+          calling,
           serving,
           waitingPreview: waiting.slice(0, 20),
         }),
@@ -275,19 +317,141 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return new Response(
       JSON.stringify({
         ok: true,
+        v: 2,
         waitingCount: waiting.length,
-        serving: serving === null ? null : { id: serving.id, seq: serving.seq },
-        waitingPreview: waiting.slice(0, 10).map((t) => ({ id: t.id, seq: t.seq })),
+        laneCounts: {
+          walkIn: laneCount("walkIn"),
+          priority: laneCount("priority"),
+          reservation: laneCount("reservation"),
+        },
+        calling: calling.map(project),
+        serving: serving.map(project),
+        waitingPreview: waiting.slice(0, 10).map(project),
       }),
       { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
     )
   })
 
-  // Staff mutations rate-limited per token hash (300 / min).
+  // POST /api/v1/queue/call-next — staff. Body `{ lane? }` chooses
+  // a specific lane head; an empty body means "preferred-lane chain
+  // default" (ADR-0062). Rate-limited per token hash (300 / min).
   app.post("/api/v1/queue/call-next", rateLimitMiddleware("RL_OPERATE"), async (c) => {
     const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
-    return dispatchEnvelope(await stub(c.env).dispatch({ type: "CallNext", actor: "staff" }))
+    let raw: unknown = {}
+    try {
+      const text = await c.req.text()
+      if (text.length > 0) raw = JSON.parse(text)
+    } catch (err) {
+      return failResponse(400, "InvalidPayload", "E_VAL_PAYLOAD", {
+        reason: err instanceof Error ? err.message : "non-json body",
+      })
+    }
+    const decoded = Schema.decodeUnknownResult(CallNextBodySchema)(raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const action: QueueAction = {
+      type: "CallNext",
+      actor: "staff",
+      ...(decoded.success.lane !== undefined ? { lane: decoded.success.lane } : {}),
+    }
+    return dispatchEnvelope(await stub(c.env).dispatch(action))
+  })
+
+  // POST /api/v1/queue/call-specific — staff. Body `{ ticketId }`
+  // (ADR-0065).
+  app.post("/api/v1/queue/call-specific", rateLimitMiddleware("RL_OPERATE"), async (c) => {
+    const guard = await requireStaff(c)
+    if (!guard.ok) return guard.res
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    }
+    const decoded = Schema.decodeUnknownResult(CallSpecificBodySchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    return dispatchEnvelope(
+      await stub(c.env).dispatch({
+        type: "CallSpecific",
+        ticketId: decoded.success.ticketId,
+        actor: "staff",
+      }),
+    )
+  })
+
+  // POST /api/v1/queue/call-batch — staff. Body
+  // `{ ticketIds: NonEmpty<TicketId> }` (ADR-0065). Atomic batch:
+  // any per-member failure rolls every member back; the response
+  // carries `tickets[]` (every member that landed Called).
+  app.post("/api/v1/queue/call-batch", rateLimitMiddleware("RL_OPERATE"), async (c) => {
+    const guard = await requireStaff(c)
+    if (!guard.ok) return guard.res
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    }
+    const decoded = Schema.decodeUnknownResult(CallBatchBodySchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const ids = decoded.success.ticketIds
+    const head = ids[0]
+    /* v8 ignore next 3 */
+    if (head === undefined) {
+      return failResponse(422, "InvalidBody", "E_VAL_BODY")
+    }
+    return dispatchEnvelope(
+      await stub(c.env).dispatch({
+        type: "CallBatch",
+        ticketIds: [head, ...ids.slice(1)] as const,
+        actor: "staff",
+      }),
+    )
+  })
+
+  // POST /api/v1/queue/reorder — staff. Body
+  // `{ ticketId, afterTicketId: TicketId | null }` (ADR-0065). Lane
+  // mismatch surfaces 409 LaneMismatch.
+  app.post("/api/v1/queue/reorder", rateLimitMiddleware("RL_OPERATE"), async (c) => {
+    const guard = await requireStaff(c)
+    if (!guard.ok) return guard.res
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    }
+    const decoded = Schema.decodeUnknownResult(ReorderBodySchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    return dispatchEnvelope(
+      await stub(c.env).dispatch({
+        type: "Reorder",
+        ticketId: decoded.success.ticketId,
+        afterTicketId: decoded.success.afterTicketId,
+        actor: "staff",
+      }),
+    )
+  })
+
+  // POST /api/v1/tickets/:id/start-serving — staff (ADR-0063).
+  app.post("/api/v1/tickets/:id/start-serving", rateLimitMiddleware("RL_OPERATE"), async (c) => {
+    const guard = await requireStaff(c)
+    if (!guard.ok) return guard.res
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    return dispatchEnvelope(
+      await stub(c.env).dispatch({
+        type: "StartServing",
+        ticketId: idR.success,
+        actor: "staff",
+      }),
+    )
   })
 
   // POST /api/v1/tickets/:id/served — staff
