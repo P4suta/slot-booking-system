@@ -235,6 +235,22 @@ export const cancelTicket = async (
     body: JSON.stringify(body),
   })
 
+// ADR-0070 — atomic appointmentAt swap. Customer path: handle is
+// passed in the body so the server can verify it (constant-time
+// compare against the stored ticket). Same handle gates as
+// `cancelTicket`. The new slot's capacity is checked excluding
+// `ticketId` itself, so submitting the current appointmentAt is a
+// no-op success rather than a 409.
+export const rescheduleTicket = async (
+  ticketId: string,
+  body: { nameKana: string; phoneLast4: string; newAppointmentAt: string },
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/reschedule`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
 export const shopState = async (): Promise<ApiResult<ShopState>> =>
   fetchJson(`${baseUrl()}/api/v1/queue`)
 
