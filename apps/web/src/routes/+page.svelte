@@ -12,6 +12,7 @@
   } from "$lib/api.js"
   import { loadingState } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache } from "$lib/ticketCache.js"
+  import { wsStatus } from "$lib/wsStatus.js"
 
   let waitingCount = $state(0)
   let laneCounts: LaneCounts = $state({ walkIn: 0, priority: 0, reservation: 0 })
@@ -55,6 +56,7 @@
       onProjection: (parsed) => refresh(parsed as ShopState),
       onState: (next) => {
         feedState = next
+        wsStatus.set(next)
       },
     })
   })

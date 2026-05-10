@@ -56,5 +56,20 @@
   "confirm_reschedule_body": "This will move your appointment to the new time. The original slot is released and a new one is reserved on the same ticket.",
   "reservation_modify_help": "You can change the appointment time from this card. To correct other details (such as your name), cancel and reissue the ticket.",
   "notify_permission_question": "Would you like to be notified when you're called?",
-  "notify_permission_help": "We'll let you know with a sound, vibration, and a screen notification."
+  "notify_permission_help": "We'll let you know with a sound, vibration, and a screen notification.",
+  "ws_status_label": "Server connection",
+  "ws_status_open": "Connected",
+  "ws_status_connecting": "Connecting…",
+  "ws_status_reconnecting": "Reconnecting…",
+  "ws_status_closed": "Disconnected",
+  "numeral_label": "Ticket number",
+  "lane_note_reservation": "This ticket has an appointment time",
+  "lane_help_summary": "Walk-in: issued on the spot. Priority: called ahead of walk-ins. Reservation: booked for a specific time slot.",
+  "filter_label": "Filter",
+  "call_next_one_button": "Call the next customer",
+  "call_next_batch_link": "Call multiple customers…",
+  "call_batch_dialog_title": "Call multiple customers",
+  "call_batch_dialog_intro": "How many customers should we call in order?",
+  "call_batch_dialog_confirm": "Call {count}",
+  "call_batch_dialog_cancel": "Cancel"
 }

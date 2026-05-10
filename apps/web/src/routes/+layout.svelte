@@ -2,11 +2,34 @@
   import "../app.css"
   import { goto } from "$app/navigation"
   import { onMount } from "svelte"
+  import { m } from "$lib/messages.js"
+  import { wsStatus } from "$lib/wsStatus.js"
+  import type { QueueFeedState } from "$lib/api.js"
 
   let { children } = $props()
 
   type Theme = "light" | "dark" | "auto"
   let theme: Theme = $state("auto")
+
+  // Resolve a single WS-status descriptor (label + tone) per
+  // QueueFeedState value. Color alone fails a11y; the visible text
+  // tells screen readers and colour-blind users the same thing.
+  const wsDescriptor = (
+    state: QueueFeedState,
+  ): { readonly text: string; readonly tone: "ok" | "pending" | "error" } => {
+    switch (state) {
+      case "open":
+        return { text: m.ws_status_open(), tone: "ok" }
+      case "connecting":
+        return { text: m.ws_status_connecting(), tone: "pending" }
+      case "reconnecting":
+        return { text: m.ws_status_reconnecting(), tone: "pending" }
+      case "closed":
+        return { text: m.ws_status_closed(), tone: "error" }
+    }
+  }
+
+  const ws = $derived(wsDescriptor($wsStatus))
 
   // The header brand link bounces to `/` by default. On a device
   // that already has a customer cache or a staff token, that "/"
@@ -70,6 +93,13 @@
 <header>
   <nav aria-label="メイン">
     <a href="/" onclick={onBrandClick}>整理券</a>
+    <span class="ws-chip" data-tone={ws.tone} role="status" aria-live="polite">
+      <span class="ws-dot" aria-hidden="true"></span>
+      <span class="ws-text">
+        <span class="ws-label">{m.ws_status_label()}:</span>
+        <span class="ws-value">{ws.text}</span>
+      </span>
+    </span>
   </nav>
   <button
     type="button"
@@ -102,6 +132,54 @@
   }
   header a:hover {
     text-decoration: underline;
+  }
+  header nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+  .ws-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-border-subtle);
+    font: var(--text-label-sm);
+  }
+  .ws-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-fg-muted);
+    flex-shrink: 0;
+  }
+  .ws-chip[data-tone="ok"] .ws-dot {
+    background: var(--color-state-serving);
+  }
+  .ws-chip[data-tone="pending"] .ws-dot {
+    background: var(--color-state-called);
+  }
+  .ws-chip[data-tone="error"] .ws-dot {
+    background: var(--color-state-danger);
+  }
+  .ws-chip[data-tone="error"] {
+    background: oklch(95% 0.07 25);
+    border-color: var(--color-state-danger);
+  }
+  .ws-label {
+    color: var(--color-fg-muted);
+    margin-right: var(--space-1);
+  }
+  .ws-value {
+    color: var(--color-fg-primary);
+    font-weight: 500;
+  }
+  @media (max-width: 32rem) {
+    .ws-label {
+      display: none;
+    }
   }
   .theme-toggle {
     background: transparent;

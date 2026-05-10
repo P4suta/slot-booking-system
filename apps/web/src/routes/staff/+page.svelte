@@ -23,6 +23,7 @@
   import Dialog from "$lib/components/Dialog.svelte"
   import Toast from "$lib/components/Toast.svelte"
   import { emptyState, m } from "$lib/messages.js"
+  import { wsStatus } from "$lib/wsStatus.js"
 
   type LaneFilter = "all" | Lane
 
@@ -158,6 +159,7 @@
         },
         onState: (next) => {
           feedState = next
+          wsStatus.set(next)
         },
       })
     }

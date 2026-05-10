@@ -37,6 +37,7 @@
     readTicketCache,
     writeTicketCache,
   } from "$lib/ticketCache.js"
+  import { wsStatus } from "$lib/wsStatus.js"
 
   type Stored = { ticketId: string; nameKana: string; phoneLast4: string }
 
@@ -392,6 +393,7 @@
       },
       onState: (next) => {
         feedState = next
+        wsStatus.set(next)
       },
     })
     // 1Hz countdown tick — only mounts client-side via onMount, so

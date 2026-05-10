@@ -56,5 +56,20 @@
   "confirm_reschedule_body": "現在の予約時刻を新しい時刻に変更します。 元の枠は解放されますが、 同じ整理券のまま新しい枠を取り直します。",
   "reservation_modify_help": "予約時刻はこのカードから変更できます。 その他の修正 (お名前など) は一度キャンセルしてから再度発券してください。",
   "notify_permission_question": "呼ばれたときに通知を受け取りますか?",
-  "notify_permission_help": "音とバイブと画面通知でお知らせします。"
+  "notify_permission_help": "音とバイブと画面通知でお知らせします。",
+  "ws_status_label": "サーバ通信",
+  "ws_status_open": "正常",
+  "ws_status_connecting": "接続中…",
+  "ws_status_reconnecting": "再接続中…",
+  "ws_status_closed": "切断されています",
+  "numeral_label": "整理券番号",
+  "lane_note_reservation": "予約時刻が指定された整理券です",
+  "lane_help_summary": "通常: 当日にその場で発券された整理券です。 優先: 高齢の方など先にお呼びする整理券です。 予約: 事前に時間を指定した整理券です。",
+  "filter_label": "絞り込み",
+  "call_next_one_button": "次の 1 人を呼ぶ",
+  "call_next_batch_link": "複数人をまとめて呼ぶ…",
+  "call_batch_dialog_title": "複数人をまとめて呼ぶ",
+  "call_batch_dialog_intro": "先頭から何人をまとめて呼びますか?",
+  "call_batch_dialog_confirm": "{count} 人を呼ぶ",
+  "call_batch_dialog_cancel": "やめる"
 }
