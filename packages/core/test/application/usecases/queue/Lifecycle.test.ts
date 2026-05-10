@@ -306,6 +306,36 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
+  it("ADR-0069: CancelTicket from Serving recovers a misclick (staff path)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* CallNext()
+        const serving = yield* StartServing(t1.id)
+        expect(serving.state).toBe("Serving")
+        const cancelled = yield* CancelTicket(t1.id, "staff", "misclick-recovery")
+        expect(cancelled.state).toBe("Cancelled")
+        if (cancelled.state === "Cancelled") {
+          expect(cancelled.reason).toBe("misclick-recovery")
+        }
+      }),
+    ))
+
+  it("ADR-0069: customer CancelTicket from Serving with handle succeeds", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null })
+        yield* CallNext()
+        yield* StartServing(t1.id)
+        const cancelled = yield* CancelTicket(t1.id, "customer", "abort", h)
+        expect(cancelled.state).toBe("Cancelled")
+      }),
+    ))
+
   it("CancelTicket on a non-existent ticket (customer path) yields TicketNotFound", async () =>
     runScenario(
       Effect.gen(function* () {

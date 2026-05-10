@@ -276,12 +276,16 @@ export const applyRecall = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* Cancel — Waiting | Called → Cancelled. Both customer-issued (self-service)*/
-/* and staff-issued cancellations land here; the actor records who.            */
+/* Cancel — Waiting | Called | Serving → Cancelled. Both customer-issued      */
+/* (self-service) and staff-issued cancellations land here; the actor records */
+/* who. Serving is included so a mistaken `StartServing` (= staff misclick)   */
+/* is recoverable from the customer's keyboard too; the Cancelled event's     */
+/* `reason` carries the operational context. ADR-0063 keeps Serving as the    */
+/* "in-progress" state — but in-progress ≠ uncancellable.                     */
 /* -------------------------------------------------------------------------- */
 
 export const applyCancel = (
-  t: Waiting | Called,
+  t: Waiting | Called | Serving,
   at: Temporal.Instant,
   eventId: TicketEventId,
   cancelledBy: Actor,

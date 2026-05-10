@@ -404,7 +404,12 @@
 
     {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Serving"}
       <div class="actions">
-        <Button variant="ghost" size="md" onclick={() => (cancelDialogOpen = true)}>
+        <Button
+          variant="ghost"
+          size="md"
+          disabled={feedState !== "open"}
+          onclick={() => (cancelDialogOpen = true)}
+        >
           キャンセル
         </Button>
       </div>
