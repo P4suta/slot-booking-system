@@ -7,6 +7,7 @@ import {
   CallNext,
   CallSpecific,
   CancelTicket,
+  CheckIn,
   IssueTicket,
   MarkNoShow,
   MarkServed,
@@ -622,4 +623,88 @@ describe("queue lifecycle round-trip", () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error._tag).toBe("QueueEmpty")
   })
+
+  it("CheckIn on a reservation within the 10-min window succeeds", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        // Issue a reservation with appointmentAt = now + 5min so the
+        // CheckIn window (`now ≥ apptAt - 10min`) is open.
+        const apptAt = Temporal.Now.instant().add({ minutes: 5 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptAt,
+        })
+        yield* CheckIn(t1.id)
+      }),
+    ))
+
+  it("CheckIn before the 10-min window yields CheckInTooEarly", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        // appointmentAt = now + 30min → window opens at now + 20min
+        const apptAt = Temporal.Now.instant().add({ minutes: 30 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptAt,
+        })
+        const r = yield* eitherEffect(CheckIn(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("CheckInTooEarly")
+        }
+      }),
+    ))
+
+  it("CheckIn on a walk-in ticket yields AppointmentRequired (no reservation)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        const r = yield* eitherEffect(CheckIn(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("AppointmentRequiredForReservationLane")
+        }
+      }),
+    ))
+
+  it("CheckIn on a Called ticket yields InvalidStateTransition", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const apptAt = Temporal.Now.instant().add({ minutes: 5 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptAt,
+        })
+        yield* CallNext()
+        const r = yield* eitherEffect(CheckIn(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("InvalidStateTransition")
+        }
+      }),
+    ))
+
+  it("CheckIn on an unknown ticket yields TicketNotFound", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const r = yield* eitherEffect(CheckIn(newTicketId()))
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("TicketNotFound")
+        }
+      }),
+    ))
 })

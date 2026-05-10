@@ -36,15 +36,18 @@ ON CONFLICT(ticket_id) DO UPDATE SET
 const TICKET_INSERT_SQL = `INSERT INTO tickets (
   id, seq, state, name_kana, phone_last4, free_text, issued_at,
   called_at, served_at, cancelled_at, marked_at,
+  appointment_at, checked_in_at,
   reason, cancelled_by, called_by, served_by, marked_by,
   payload, revision
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   state = excluded.state,
   called_at = excluded.called_at,
   served_at = excluded.served_at,
   cancelled_at = excluded.cancelled_at,
   marked_at = excluded.marked_at,
+  appointment_at = excluded.appointment_at,
+  checked_in_at = excluded.checked_in_at,
   reason = excluded.reason,
   cancelled_by = excluded.cancelled_by,
   called_by = excluded.called_by,
@@ -70,6 +73,8 @@ const ticketColumns = (
   "servedAt" in next ? String(next.servedAt) : null,
   "cancelledAt" in next ? String(next.cancelledAt) : null,
   "markedAt" in next ? String(next.markedAt) : null,
+  next.appointmentAt !== null ? String(next.appointmentAt) : null,
+  next.checkedInAt !== null ? String(next.checkedInAt) : null,
   "reason" in next ? next.reason : null,
   "cancelledBy" in next ? next.cancelledBy : null,
   "calledBy" in next ? next.calledBy : null,

@@ -59,7 +59,9 @@ const dispatchEnvelope = (result: QueueResult, status = 200): Response => {
     const body =
       "tickets" in result
         ? { ok: true, tickets: result.tickets }
-        : { ok: true, ticket: result.ticket }
+        : "ticket" in result
+          ? { ok: true, ticket: result.ticket }
+          : { ok: true }
     return new Response(JSON.stringify(body), {
       status,
       headers: { "content-type": "application/json; charset=utf-8" },

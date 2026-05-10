@@ -4,6 +4,7 @@ import {
   CallNext,
   CallSpecific,
   CancelTicket,
+  CheckIn,
   type Clock,
   type ConcurrencyError,
   type CustomerHandle,
@@ -18,6 +19,7 @@ import {
   type NonEmptyReadonlyArray,
   Recall,
   Reorder,
+  reservationsByDeadline,
   StartServing,
   type StorageError,
   SystemClockLive,
@@ -49,7 +51,13 @@ type Env = {
  * each operator intent has a named entry.
  */
 export type QueueAction =
-  | { type: "IssueTicket"; handle: CustomerHandle; freeText: string | null; lane?: Lane }
+  | {
+      type: "IssueTicket"
+      handle: CustomerHandle
+      freeText: string | null
+      lane?: Lane
+      appointmentAt?: NonNullable<Ticket["appointmentAt"]>
+    }
   | { type: "CallNext"; actor: "staff" | "system"; lane?: Lane }
   | { type: "CallSpecific"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "CallBatch"; ticketIds: NonEmptyReadonlyArray<TicketId>; actor: "staff" | "system" }
@@ -70,6 +78,7 @@ export type QueueAction =
       reason: string
       handle?: CustomerHandle
     }
+  | { type: "CheckIn"; ticketId: TicketId }
 
 /**
  * The Worker boundary serialises every DO RPC return through
@@ -88,6 +97,7 @@ export type EncodedTicket = (typeof TicketSchema)["Encoded"]
 export type QueueResult =
   | { ok: true; ticket: EncodedTicket }
   | { ok: true; tickets: readonly EncodedTicket[] }
+  | { ok: true }
   | { ok: false; error: { _tag: string; code: string } }
 
 const encodeTicket = (t: Ticket): EncodedTicket => Schema.encodeUnknownSync(TicketSchema)(t)
@@ -122,7 +132,7 @@ export class QueueShop extends DurableObject<Env> {
 
   async dispatch(action: QueueAction): Promise<QueueResult> {
     const layer = this.layer()
-    type DispatchOk = Ticket | readonly Ticket[]
+    type DispatchOk = Ticket | readonly Ticket[] | undefined
     type DispatchErr = DomainError | ConcurrencyError | StorageError
     type DispatchDeps = Clock | IdGenerator | TicketRepository | Logger
     let eff: Effect.Effect<DispatchOk, DispatchErr, DispatchDeps>
@@ -132,6 +142,7 @@ export class QueueShop extends DurableObject<Env> {
           handle: action.handle,
           freeText: action.freeText as Ticket["freeText"],
           ...(action.lane !== undefined ? { lane: action.lane } : {}),
+          ...(action.appointmentAt !== undefined ? { appointmentAt: action.appointmentAt } : {}),
         })
         break
       case "CallNext":
@@ -161,10 +172,19 @@ export class QueueShop extends DurableObject<Env> {
       case "CancelTicket":
         eff = CancelTicket(action.ticketId, action.actor, action.reason, action.handle)
         break
+      case "CheckIn":
+        eff = CheckIn(action.ticketId)
+        break
     }
     const result: QueueResult = await Effect.runPromise(
       Effect.matchCauseEffect(eff, {
         onSuccess: (out: DispatchOk): Effect.Effect<QueueResult> => {
+          if (out === undefined) {
+            // CheckIn returns void — the customer-side audit event
+            // does not change the ticket shape the wire surfaces;
+            // the projection broadcast emitted below is enough.
+            return Effect.succeed({ ok: true } satisfies QueueResult)
+          }
           if (Array.isArray(out)) {
             const tickets = out as readonly Ticket[]
             return Effect.succeed({
@@ -284,13 +304,20 @@ export class QueueShop extends DurableObject<Env> {
   }
 
   /**
-   * Build the anonymous v2 projection payload — staff PII never
+   * Build the anonymous v3 projection payload — staff PII never
    * crosses the WebSocket feed. Mirrors the public `GET /api/v1/queue`
    * shape so the client renders the same view from either source.
    *
    * v2 (ADR-0062 / 0063 / 0065): `lane` partitions the queue and
    * `displaySeq` controls per-lane order; `calling[]` and
    * `serving[]` replace the v1 single `serving` field.
+   *
+   * v3 (ADR-0066 / 0067): waiting tickets carry `appointmentAt`,
+   * the payload surfaces `nextReservationDeadline` (the earliest
+   * reservation `appointmentAt` among Waiting tickets, or null) so
+   * the staff Kanban / customer countdown render without a second
+   * fetch. v2 readers ignore the new fields per ADR-0061's `v`
+   * discriminator forward-compatibility rule.
    */
   private async projectionPayload(): Promise<string> {
     const tickets = await this.listTickets()
@@ -299,6 +326,7 @@ export class QueueShop extends DurableObject<Env> {
       seq: t.seq,
       lane: t.lane,
       displaySeq: t.displaySeq,
+      appointmentAt: t.appointmentAt,
     })
     const waiting = tickets
       .filter((t) => t.state === "Waiting")
@@ -310,9 +338,15 @@ export class QueueShop extends DurableObject<Env> {
       .filter((t) => t.state === "Serving")
       .sort((a, b) => a.displaySeq - b.displaySeq)
     const laneCount = (lane: Lane) => waiting.filter((t) => t.lane === lane).length
+    // Decode just the waiting subset to drive the EDF deadline read;
+    // the rest of the payload stays in encoded form to keep the wire
+    // shape JSON-safe under structuredClone.
+    const decodedWaitingTickets = this.listDecodedWaitingTickets()
+    const ranked = reservationsByDeadline({ tickets: decodedWaitingTickets })
+    const nextDeadline = ranked[0]?.appointmentAt ?? null
     return JSON.stringify({
       ok: true,
-      v: 2,
+      v: 3,
       waitingCount: waiting.length,
       laneCounts: {
         walkIn: laneCount("walkIn"),
@@ -322,7 +356,18 @@ export class QueueShop extends DurableObject<Env> {
       calling: calling.map(project),
       serving: serving.map(project),
       waitingPreview: waiting.slice(0, 10).map(project),
+      nextReservationDeadline: nextDeadline !== null ? String(nextDeadline) : null,
     })
+  }
+
+  private listDecodedWaitingTickets(): Map<TicketId, Ticket> {
+    const rows = this.sql.exec("SELECT payload FROM tickets WHERE state = 'Waiting'").toArray()
+    const m = new Map<TicketId, Ticket>()
+    for (const r of rows) {
+      const decoded = Schema.decodeUnknownSync(TicketSchema)(JSON.parse(r.payload as string))
+      m.set(decoded.id, decoded)
+    }
+    return m
   }
 
   private async sendProjectionTo(ws: WebSocket): Promise<void> {
