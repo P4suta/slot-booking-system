@@ -81,11 +81,34 @@
     }
   }
 
+  // navigator.onLine is the simplest heuristic to tell "device is
+  // disconnected" (= WiFi / airplane / data off) from "server is
+  // unreachable but local network is fine" (= Cloudflare or app
+  // backend outage). It does miss some failure modes — captive
+  // portal, broken DNS, ISP outage that does not flip the OS-level
+  // online state — but for the common case it lets us steer the
+  // alert copy toward the right place to look first.
+  let online = $state(true)
+
+  const onOnline = (): void => {
+    online = true
+  }
+  const onOffline = (): void => {
+    online = false
+  }
+
   onMount(() => {
     const stored = localStorage.getItem("queue.theme")
     if (stored === "dark" || stored === "light") {
       theme = stored
       applyTheme(stored)
+    }
+    online = navigator.onLine
+    window.addEventListener("online", onOnline)
+    window.addEventListener("offline", onOffline)
+    return () => {
+      window.removeEventListener("online", onOnline)
+      window.removeEventListener("offline", onOffline)
     }
   })
 </script>
@@ -123,13 +146,22 @@
     content. A centered, floating banner makes the loss
     unmissable so the customer knows their countdown / staff
     knows the queue might be stale, without us blocking
-    interaction (they can still cancel, navigate, etc.).
+    interaction (they can still cancel, navigate, etc.). The
+    body copy is split by `online`: if the OS reports offline we
+    point them at Wi-Fi / airplane mode first (most common
+    cause); if the OS thinks we are online we tell them the
+    server is probably the one in trouble.
   -->
   <div class="ws-alert" role="alert" aria-live="assertive">
     <span class="ws-alert-icon" aria-hidden="true">!</span>
     <div class="ws-alert-body">
-      <strong>{m.ws_status_closed()}</strong>
-      <span>表示が古い可能性があります。 復旧をお待ちください。</span>
+      {#if !online}
+        <strong>{m.ws_alert_offline_title()}</strong>
+        <span>{m.ws_alert_offline_body()}</span>
+      {:else}
+        <strong>{m.ws_alert_server_title()}</strong>
+        <span>{m.ws_alert_server_body()}</span>
+      {/if}
     </div>
   </div>
 {/if}

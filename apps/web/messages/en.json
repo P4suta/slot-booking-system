@@ -71,5 +71,9 @@
   "call_batch_dialog_title": "Call multiple customers",
   "call_batch_dialog_intro": "How many customers should we call in order?",
   "call_batch_dialog_confirm": "Call {count}",
-  "call_batch_dialog_cancel": "Cancel"
+  "call_batch_dialog_cancel": "Cancel",
+  "ws_alert_offline_title": "Your device is offline",
+  "ws_alert_offline_body": "Check Wi-Fi, airplane mode, or your mobile data. The page will reconnect automatically once the device is back online.",
+  "ws_alert_server_title": "Server connection lost",
+  "ws_alert_server_body": "Your device's network looks fine — the server may be experiencing an outage. If this does not resolve within a few minutes, please speak to staff."
 }
