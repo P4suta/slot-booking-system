@@ -45,12 +45,10 @@
   let batchN = $state(1)
   let selected: Set<string> = $state(new Set())
   let detail: Ticket | null = $state(null)
-  let helpOpen = $state(false)
   let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
   let audioCue = $state(
     typeof window === "undefined" ? false : localStorage.getItem("queue.audioCue") === "1",
   )
-  let searchInput: HTMLInputElement | null = $state(null)
   let now = $state(Date.now())
   let slotChipTick: ReturnType<typeof setInterval> | undefined
 
@@ -355,7 +353,6 @@
         {/each}
       </div>
       <input
-        bind:this={searchInput}
         type="search"
         bind:value={search}
         placeholder="名前 (一部) / 末尾4桁"
