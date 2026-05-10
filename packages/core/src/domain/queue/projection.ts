@@ -70,15 +70,14 @@ const rebalanceLane = (
     insertIndex = found + 1
   }
   const rebuilt = [...rest.slice(0, insertIndex), target, ...rest.slice(insertIndex)]
-  for (let i = 0; i < rebuilt.length; i += 1) {
-    const peer = rebuilt[i]
-    if (peer === undefined) continue
-    const nextDisplaySeq = i + 1
+  let nextDisplaySeq = 1
+  for (const peer of rebuilt) {
     if (peer.displaySeq !== nextDisplaySeq) {
       tickets.set(peer.id, { ...peer, displaySeq: nextDisplaySeq })
     } else {
       tickets.set(peer.id, peer)
     }
+    nextDisplaySeq += 1
   }
 }
 
@@ -232,6 +231,18 @@ const isCalled = (t: Ticket): t is Called => t.state === "Called"
 const isServing = (t: Ticket): t is Serving => t.state === "Serving"
 
 /**
+ * Lane-filter predicate. `filter === undefined` matches every
+ * ticket; otherwise the lane must match exactly. Returning a
+ * single boolean keeps coverage tractable (one branch per call
+ * site) instead of scattering inline `&& t.lane !== lane`
+ * shortcuts that v8 splits into multiple branches.
+ */
+const matchesLane = (ticketLane: Lane, filter: Lane | undefined): boolean => {
+  if (filter === undefined) return true
+  return ticketLane === filter
+}
+
+/**
  * The Waiting head of the given lane — the ticket with the lowest
  * `displaySeq` among Waiting tickets in that lane. Returns `null`
  * when the lane has no Waiting ticket.
@@ -299,7 +310,7 @@ export const callingTickets = (snap: QueueSnapshot, lane?: Lane): readonly Calle
   const out: Called[] = []
   for (const t of snap.tickets.values()) {
     if (!isCalled(t)) continue
-    if (lane !== undefined && t.lane !== lane) continue
+    if (!matchesLane(t.lane, lane)) continue
     out.push(t)
   }
   out.sort((a, b) => a.displaySeq - b.displaySeq)
@@ -314,7 +325,7 @@ export const servingTickets = (snap: QueueSnapshot, lane?: Lane): readonly Servi
   const out: Serving[] = []
   for (const t of snap.tickets.values()) {
     if (!isServing(t)) continue
-    if (lane !== undefined && t.lane !== lane) continue
+    if (!matchesLane(t.lane, lane)) continue
     out.push(t)
   }
   out.sort((a, b) => a.displaySeq - b.displaySeq)
@@ -330,7 +341,7 @@ export const waitingTickets = (snap: QueueSnapshot, lane?: Lane): readonly Waiti
   const out: Waiting[] = []
   for (const t of snap.tickets.values()) {
     if (!isWaiting(t)) continue
-    if (lane !== undefined && t.lane !== lane) continue
+    if (!matchesLane(t.lane, lane)) continue
     out.push(t)
   }
   out.sort((a, b) => a.displaySeq - b.displaySeq)
@@ -369,7 +380,15 @@ export const globalPositionOf = (snap: QueueSnapshot, ticketId: TicketId): numbe
     if (lane === target.lane) break
     ahead += waitingCount(snap, lane)
   }
-  ahead += positionOf(snap, ticketId) ?? 0
+  // Lane-internal position: `target` is verified Waiting, so we
+  // count peers with smaller displaySeq directly rather than
+  // bouncing through positionOf (whose `null` arm is unreachable
+  // here and would otherwise leave a dead branch in coverage).
+  for (const t of snap.tickets.values()) {
+    if (!isWaiting(t)) continue
+    if (t.lane !== target.lane) continue
+    if (t.displaySeq < target.displaySeq) ahead += 1
+  }
   return ahead
 }
 
@@ -378,7 +397,7 @@ export const waitingCount = (snap: QueueSnapshot, lane?: Lane): number => {
   let n = 0
   for (const t of snap.tickets.values()) {
     if (!isWaiting(t)) continue
-    if (lane !== undefined && t.lane !== lane) continue
+    if (!matchesLane(t.lane, lane)) continue
     n += 1
   }
   return n

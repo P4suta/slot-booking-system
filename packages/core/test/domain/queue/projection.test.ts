@@ -295,6 +295,154 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     expect(ids).toContain(b.ticket.id)
   })
 
+  it("waitingTickets skips non-Waiting tickets in a mixed-state snapshot", () => {
+    // A ticket that has been Called must not appear in waitingTickets
+    // even when the lane filter matches.
+    const a = issue(1, { lane: "walkIn", displaySeq: 1 })
+    const b = issue(2, { lane: "walkIn", displaySeq: 2 })
+    const callA = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([a.event, b.event, callA.event])
+    expect(waitingTickets(snap, "walkIn").map((t) => t.id)).toEqual([b.ticket.id])
+    expect(waitingTickets(snap).map((t) => t.id)).toEqual([b.ticket.id])
+  })
+
+  it("waitingTickets with lane filter excludes tickets from other lanes", () => {
+    const w = issue(1, { lane: "walkIn", displaySeq: 1 })
+    const p = issue(2, { lane: "priority", displaySeq: 1 })
+    const snap = replay([w.event, p.event])
+    const priorityOnly = waitingTickets(snap, "priority").map((t) => t.id)
+    expect(priorityOnly).toEqual([p.ticket.id])
+    const walkInOnly = waitingTickets(snap, "walkIn").map((t) => t.id)
+    expect(walkInOnly).toEqual([w.ticket.id])
+  })
+
+  it("nextDisplaySeqInLane updates max as it scans (priority + walkIn coexist)", () => {
+    const a = issue(1, { lane: "walkIn", displaySeq: 3 })
+    const b = issue(2, { lane: "walkIn", displaySeq: 1 })
+    const c = issue(3, { lane: "walkIn", displaySeq: 5 })
+    const p = issue(4, { lane: "priority", displaySeq: 9 })
+    const snap = replay([a.event, b.event, c.event, p.event])
+    expect(nextDisplaySeqInLane(snap, "walkIn")).toBe(6)
+    expect(nextDisplaySeqInLane(snap, "priority")).toBe(10)
+  })
+
+  it("servingTickets sorts by displaySeq across multiple Serving variants", () => {
+    const a = issue(1, { lane: "walkIn", displaySeq: 2 })
+    const b = issue(2, { lane: "walkIn", displaySeq: 1 })
+    const ca = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const cb = applyCall(b.ticket as Waiting, {
+      at: at("2026-05-08T09:06:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const sa = applyStartServing(
+      ca.ticket as Called,
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    const sb = applyStartServing(
+      cb.ticket as Called,
+      at("2026-05-08T09:08:00Z"),
+      newTicketEventId(),
+    )
+    const snap = replay([a.event, b.event, ca.event, cb.event, sa.event, sb.event])
+    const order = servingTickets(snap).map((t) => t.id)
+    expect(order).toEqual([b.ticket.id, a.ticket.id])
+  })
+
+  it("callingTickets / servingTickets honour lane filter against cross-lane peers", () => {
+    const w = issue(1, { lane: "walkIn", displaySeq: 1 })
+    const p = issue(2, { lane: "priority", displaySeq: 1 })
+    const cw = applyCall(w.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const cp = applyCall(p.ticket as Waiting, {
+      at: at("2026-05-08T09:06:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([w.event, p.event, cw.event, cp.event])
+    expect(callingTickets(snap, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
+    expect(callingTickets(snap, "priority").map((t) => t.id)).toEqual([p.ticket.id])
+    const sw = applyStartServing(
+      cw.ticket as Called,
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    const snap2 = replay([w.event, p.event, cw.event, cp.event, sw.event])
+    expect(servingTickets(snap2, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
+    expect(servingTickets(snap2, "priority").map((t) => t.id)).toEqual([])
+  })
+
+  it("positionOf scopes counts to the ticket's own lane (cross-lane peers ignored)", () => {
+    const w1 = issue(1, { lane: "walkIn", displaySeq: 1 })
+    const w2 = issue(2, { lane: "walkIn", displaySeq: 2 })
+    const p1 = issue(3, { lane: "priority", displaySeq: 1 })
+    const snap = replay([w1.event, w2.event, p1.event])
+    // w2 is second in walkIn; the priority peer p1 must not count.
+    expect(positionOf(snap, w2.ticket.id)).toBe(1)
+    expect(positionOf(snap, p1.ticket.id)).toBe(0)
+  })
+
+  it("globalPositionOf skips Called/Serving peers in the target's own lane", () => {
+    // Called peer in same lane as target should NOT count toward
+    // the customer-facing position.
+    const head = issue(1, { lane: "walkIn", displaySeq: 1 })
+    const target = issue(2, { lane: "walkIn", displaySeq: 2 })
+    const callHead = applyCall(head.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([head.event, target.event, callHead.event])
+    // Once `head` is Called, target is at position 0 inside walkIn
+    // (no Waiting peer ahead) and 0 in upstream lanes (none).
+    expect(globalPositionOf(snap, target.ticket.id)).toBe(0)
+  })
+
+  it("Reorder skips peers in other lanes when computing the rebalance set", () => {
+    // rebalanceLane's lane filter: peers in different lanes (here
+    // priority) must NOT participate in the walkIn rebalance even
+    // though they share the snapshot.
+    const w1 = issue(1, { lane: "walkIn", displaySeq: 1 })
+    const w2 = issue(2, { lane: "walkIn", displaySeq: 2 })
+    const p1 = issue(3, { lane: "priority", displaySeq: 5 })
+    const reorder = applyReorder(w2.ticket as Waiting, {
+      afterTicketId: null,
+      at: at("2026-05-08T09:10:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([w1.event, w2.event, p1.event, reorder.event])
+    const walkIn = waitingTickets(snap, "walkIn").map((t) => t.id)
+    expect(walkIn).toEqual([w2.ticket.id, w1.ticket.id])
+    // priority lane is untouched.
+    const priority = waitingTickets(snap, "priority").map((t) => t.id)
+    expect(priority).toEqual([p1.ticket.id])
+    expect((snap.tickets.get(p1.ticket.id) as Waiting).displaySeq).toBe(5)
+  })
+
+  it("Reorder event with afterTicketId === null preserves displaySeq when target is already lane-head", () => {
+    // rebalanceLane's `if (peer.displaySeq !== nextDisplaySeq)` else
+    // branch: when the rebuilt order already matches the existing
+    // displaySeq, the snapshot map gets a no-op set (the same row).
+    const a = issue(1, { lane: "walkIn", displaySeq: 1 })
+    const b = issue(2, { lane: "walkIn", displaySeq: 2 })
+    const reorder = applyReorder(a.ticket as Waiting, {
+      afterTicketId: null,
+      at: at("2026-05-08T09:10:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([a.event, b.event, reorder.event])
+    const got = waitingTickets(snap, "walkIn")
+    expect(got.map((t) => t.id)).toEqual([a.ticket.id, b.ticket.id])
+    expect(got[0]?.displaySeq).toBe(1)
+    expect(got[1]?.displaySeq).toBe(2)
+  })
+
   it("callingTickets returns only Called variants, sorted by displaySeq", () => {
     const a = issue(1)
     const b = issue(2)

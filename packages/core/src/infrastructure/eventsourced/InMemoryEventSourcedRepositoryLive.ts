@@ -131,10 +131,14 @@ export const makeInMemoryTicketRepositoryLive = (
         saveBatch: (updates: NonEmptyReadonlyArray<BatchedSave>) =>
           Effect.gen(function* () {
             const m = yield* Ref.get(store)
-            // Two-phase: first verify every member's revision; only
-            // mutate the store / event log / snapshots once all checks
-            // pass. ConcurrencyError on any member rolls the whole
-            // batch back without partial writes.
+            // Single pass: stage every member's update on a copy of
+            // the store; bail out with ConcurrencyError on the first
+            // mismatched revision *before* committing the staged copy.
+            // The staged map is discarded on the failure path so no
+            // member of the batch lands — atomic-or-rollback.
+            const updatedStore = new Map(m)
+            const newEvents: TicketEvent[] = []
+            const snapshotPatches: { id: TicketId; row: Row }[] = []
             for (const u of updates) {
               const row = m.get(u.id)
               if (row?.revision !== u.expected) {
@@ -144,16 +148,6 @@ export const makeInMemoryTicketRepositoryLive = (
                     actual: row?.revision ?? 0,
                   }),
                 )
-              }
-            }
-            const updatedStore = new Map(m)
-            const newEvents: TicketEvent[] = []
-            const snapshotPatches: { id: TicketId; row: Row }[] = []
-            for (const u of updates) {
-              const row = m.get(u.id)
-              /* v8 ignore next 3 */
-              if (row === undefined) {
-                continue
               }
               const nextRevision = row.revision + u.events.length
               updatedStore.set(u.id, { state: u.next, revision: nextRevision })

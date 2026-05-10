@@ -37,6 +37,3 @@ export const renderQrToDataUrl = async (text: string): Promise<string> =>
       light: "#ffffff",
     },
   })
-
-export const buildRecoveryShareUrl = (origin: string, ticketId: string): string =>
-  `${origin}/recover?id=${encodeURIComponent(ticketId)}`

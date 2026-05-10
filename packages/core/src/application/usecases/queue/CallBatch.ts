@@ -1,8 +1,9 @@
+import type { Temporal } from "@js-temporal/polyfill"
 import { Effect } from "effect"
 import type { ConcurrencyError, DomainError, StorageError } from "../../../domain/errors/Errors.js"
 import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
 import { applyCall, guardActive, invalidTransition } from "../../../domain/queue/transitions.js"
-import type { TicketId } from "../../../domain/types/EntityId.js"
+import type { BatchId, TicketId } from "../../../domain/types/EntityId.js"
 import { Clock } from "../../ports/Clock.js"
 import {
   type BatchedSave,
@@ -24,6 +25,39 @@ import { infoPayload } from "../_log.js"
  * entire batch — the operator sees the same failure mode whether
  * the bad member was first, last, or in the middle.
  */
+
+type Member = { readonly update: BatchedSave; readonly ticket: Ticket }
+
+const buildMember = (
+  id: TicketId,
+  at: Temporal.Instant,
+  actor: Actor,
+  batchId: BatchId,
+): Effect.Effect<
+  Member,
+  DomainError | ConcurrencyError | StorageError,
+  IdGenerator | TicketRepository
+> =>
+  Effect.gen(function* () {
+    const idgen = yield* IdGenerator
+    const loaded = yield* loadOrTicketNotFound(id)
+    const terminal = guardActive(loaded.state)
+    if (terminal !== null) return yield* Effect.fail(terminal)
+    if (loaded.state.state !== "Waiting") {
+      return yield* Effect.fail(invalidTransition(loaded.state.state, "CallBatch"))
+    }
+    const waiting = loaded.state
+    const eventId = yield* idgen.newTicketEventId
+    const { ticket, event } = applyCall(waiting, { at, eventId, calledBy: actor, batchId })
+    const update: BatchedSave = {
+      id: waiting.id,
+      expected: loaded.revision,
+      events: [event] as const,
+      next: ticket,
+    }
+    return { update, ticket }
+  })
+
 export const CallBatch = (
   ticketIds: NonEmptyReadonlyArray<TicketId>,
   actor: Actor = "staff",
@@ -39,46 +73,21 @@ export const CallBatch = (
     const logger = yield* Logger
     const batchId = yield* idgen.newBatchId
     const at = yield* clock.nowInstant
-    const updates: BatchedSave[] = []
-    const calledTickets: Ticket[] = []
-    for (const id of ticketIds) {
-      const loaded = yield* loadOrTicketNotFound(id)
-      const terminal = guardActive(loaded.state)
-      if (terminal !== null) return yield* Effect.fail(terminal)
-      if (loaded.state.state !== "Waiting") {
-        return yield* Effect.fail(invalidTransition(loaded.state.state, "CallBatch"))
-      }
-      const waiting = loaded.state
-      const eventId = yield* idgen.newTicketEventId
-      const { ticket, event } = applyCall(waiting, { at, eventId, calledBy: actor, batchId })
-      updates.push({
-        id: waiting.id,
-        expected: loaded.revision,
-        events: [event] as const,
-        next: ticket,
-      })
-      calledTickets.push(ticket)
+    const [firstId, ...restIds] = ticketIds
+
+    const head = yield* buildMember(firstId, at, actor, batchId)
+    const tail: Member[] = []
+    for (const id of restIds) {
+      const member = yield* buildMember(id, at, actor, batchId)
+      tail.push(member)
     }
-    const head = updates[0]
-    /* v8 ignore next 3 */
-    if (head === undefined) {
-      return yield* Effect.fail(new Error("unreachable: NonEmpty input") as never)
-    }
-    const nonEmpty: NonEmptyReadonlyArray<BatchedSave> = [head, ...updates.slice(1)] as const
-    yield* repo.saveBatch(nonEmpty).pipe(
-      Effect.tapError((err) =>
-        logger.error({
-          _tag: "SaveBatchFailed",
-          code: "I_USECASE_SAVE_BATCH_FAILED",
-          severity: "infrastructure",
-          data: {
-            count: ticketIds.length,
-            actor,
-            errorTag: err._tag,
-          },
-        }),
-      ),
-    )
+    const updates: NonEmptyReadonlyArray<BatchedSave> = [
+      head.update,
+      ...tail.map((m) => m.update),
+    ] as const
+    const calledTickets: readonly Ticket[] = [head.ticket, ...tail.map((m) => m.ticket)]
+
+    yield* repo.saveBatch(updates)
     yield* logger.info(
       infoPayload("CallBatch", "I_USECASE_CALL_BATCH", {
         batchId,

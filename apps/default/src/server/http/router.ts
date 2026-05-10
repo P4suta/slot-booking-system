@@ -341,7 +341,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     let raw: unknown = {}
     try {
       const text = await c.req.text()
-      if (text.length > 0) raw = JSON.parse(text) as unknown
+      if (text.length > 0) raw = JSON.parse(text)
     } catch (err) {
       return failResponse(400, "InvalidPayload", "E_VAL_PAYLOAD", {
         reason: err instanceof Error ? err.message : "non-json body",

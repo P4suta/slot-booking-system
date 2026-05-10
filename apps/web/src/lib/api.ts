@@ -9,14 +9,13 @@ type ErrorEnvelope = {
 }
 
 export type Lane = "walkIn" | "priority" | "reservation"
-export type TicketState = "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
 
 export type Ticket = {
   readonly id: string
   readonly seq: number
   readonly lane: Lane
   readonly displaySeq: number
-  readonly state: TicketState
+  readonly state: "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
   readonly nameKana: string | null
   readonly phoneLast4: string | null
   readonly freeText: string | null
