@@ -70,7 +70,11 @@ const dispatchEnvelope = (result: QueueResult, status = 200): Response => {
       "tickets" in result
         ? { ok: true, tickets: result.tickets }
         : "ticket" in result
-          ? { ok: true, ticket: result.ticket }
+          ? {
+              ok: true,
+              ticket: result.ticket,
+              ...(result.merged === true ? { merged: true } : {}),
+            }
           : { ok: true }
     return new Response(JSON.stringify(body), {
       status,
@@ -211,7 +215,13 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         ? { appointmentAt: String(decoded.success.appointmentAt) }
         : {}),
     }
-    return dispatchEnvelope(await stub(c.env).dispatch(action), 201)
+    // ADR-0069: idempotent merge surfaces as 200 OK; a fresh issue
+    // remains 201 Created. The body carries `merged: true` on the
+    // merged variant so the web client can show "this is your
+    // existing ticket" rather than a fresh-issue label.
+    const result = await stub(c.env).dispatch(action)
+    const merged = result.ok && "ticket" in result && result.merged === true
+    return dispatchEnvelope(result, merged ? 200 : 201)
   })
 
   // GET /api/v1/tickets/me — customer self-fetch (handle in querystring).

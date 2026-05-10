@@ -98,9 +98,14 @@ export type EncodedTicket = (typeof TicketSchema)["Encoded"]
  * Result envelope. Single-ticket actions return `ticket`; CallBatch
  * returns `tickets` (the array of every member that landed Called).
  * Failure carries the `_tag + code` pair the boundary surfaces.
+ *
+ * `merged` (ADR-0069) is set on the single-ticket variant when an
+ * IssueTicket call short-circuited to an existing active ticket
+ * (handle already held). The HTTP layer surfaces this as 200 OK
+ * (vs 201 Created for a fresh issue).
  */
 export type QueueResult =
-  | { ok: true; ticket: EncodedTicket }
+  | { ok: true; ticket: EncodedTicket; merged?: boolean }
   | { ok: true; tickets: readonly EncodedTicket[] }
   | { ok: true }
   | { ok: false; error: { _tag: string; code: string } }
@@ -141,6 +146,21 @@ export class QueueShop extends DurableObject<Env> {
     type DispatchErr = DomainError | ConcurrencyError | StorageError
     type DispatchDeps = Clock | IdGenerator | TicketRepository | Logger
     let eff: Effect.Effect<DispatchOk, DispatchErr, DispatchDeps>
+    // ADR-0069: detect idempotent merge for IssueTicket BEFORE the
+    // use case runs. If the active set already holds a ticket with
+    // this handle, IssueTicket short-circuits and returns that same
+    // ticket — the HTTP layer surfaces this as 200 OK + merged:true.
+    let issueExistedId: string | undefined
+    if (action.type === "IssueTicket") {
+      const row = this.sql
+        .exec(
+          "SELECT id FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','Serving') LIMIT 1",
+          action.handle.nameKana,
+          action.handle.phoneLast4,
+        )
+        .toArray()[0]
+      issueExistedId = row?.id as string | undefined
+    }
     switch (action.type) {
       case "IssueTicket": {
         const appointmentAt =
@@ -202,9 +222,12 @@ export class QueueShop extends DurableObject<Env> {
               tickets: tickets.map(encodeTicket),
             } satisfies QueueResult)
           }
+          const ticket = out as Ticket
+          const merged = issueExistedId !== undefined && issueExistedId === ticket.id
           return Effect.succeed({
             ok: true,
-            ticket: encodeTicket(out as Ticket),
+            ticket: encodeTicket(ticket),
+            ...(merged ? { merged: true } : {}),
           } satisfies QueueResult)
         },
         onFailure: (cause) => {
