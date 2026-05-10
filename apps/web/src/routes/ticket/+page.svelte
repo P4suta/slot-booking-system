@@ -231,6 +231,16 @@
     feed = connectQueueFeed({
       onProjection: (parsed) => {
         snapshot = parsed as ShopState
+        // ADR-0061 — the WS broadcasts the public projection only.
+        // The customer's own state (Waiting → Called → Serving →
+        // Served) lives behind /api/v1/tickets/me and is never
+        // serialised onto the feed. Refetch on every broadcast so a
+        // staff CallNext / MarkServed / Recall flips this tab's
+        // hero state — without this, only freshly-loaded tabs would
+        // see the transition (the 「呼ばれました」 hero would be
+        // stuck on the original /ticket tab while a tab opened from
+        // the recovery URL renders correctly).
+        if (stored !== null) void refresh(stored)
       },
       onState: (next) => {
         feedState = next

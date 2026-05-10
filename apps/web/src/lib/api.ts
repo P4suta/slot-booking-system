@@ -43,6 +43,7 @@ export type ProjectionEntry = {
   readonly seq: number
   readonly lane: Lane
   readonly displaySeq: number
+  readonly appointmentAt: string | null
 }
 
 export type LaneCounts = {
@@ -52,18 +53,21 @@ export type LaneCounts = {
 }
 
 /**
- * v2 anonymous shop projection (ADR-0062 / ADR-0063 / ADR-0065).
- * Lane-aware preview, `calling[]` + `serving[]` arrays, and
- * `laneCounts` so the client renders the same shape from
- * `GET /api/v1/queue` and the WebSocket feed.
+ * v3 anonymous shop projection (ADR-0062 / ADR-0063 / ADR-0065 /
+ * ADR-0066 / ADR-0067). Lane-aware preview with `appointmentAt`,
+ * `calling[]` + `serving[]` arrays, and `laneCounts`. The
+ * `nextReservationDeadline` mirrors the EDF scheduling target used
+ * by the staff Kanban so the client can render the next-due slot
+ * chip without consulting `waitingPreview` directly.
  */
 export type ShopState = {
-  readonly v: 2
+  readonly v: 3
   readonly waitingCount: number
   readonly laneCounts: LaneCounts
   readonly calling: readonly ProjectionEntry[]
   readonly serving: readonly ProjectionEntry[]
   readonly waitingPreview: readonly ProjectionEntry[]
+  readonly nextReservationDeadline: string | null
 }
 
 /**

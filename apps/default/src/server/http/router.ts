@@ -1,3 +1,10 @@
+import {
+  BusinessTimeZoneSchema,
+  intervalOf,
+  reservationsByDeadline,
+  type Slot,
+  TicketSchema,
+} from "@booking/core"
 import { Result, Schema } from "effect"
 import { Hono } from "hono"
 import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
@@ -260,6 +267,12 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     }
     const { from, to, granularity } = decoded.success
     const capacity = Number(c.env.SLOT_DEFAULT_CAPACITY ?? 2)
+    // The bucket→instant projection lives in the business time zone
+    // (ADR-0066 §morphism); a JST deployment computes 09:00 buckets
+    // at JST 09:00 = 00:00 UTC, not 09:00 UTC. `intervalOf` is the
+    // canonical morphism — using it here means the slot endpoint
+    // matches `slotOccupancy`'s aggregation path inside the DO.
+    const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)(c.env.DEPLOYMENT_TIMEZONE)
     const all = await stub(c.env).listTickets()
     const reservations = all.filter(
       (t) =>
@@ -267,7 +280,9 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         t.appointmentAt !== null &&
         (t.state === "Waiting" || t.state === "Called" || t.state === "Serving"),
     )
-    const granMs = granularity * 60 * 1000
+    const reservationStartMs = reservations.map((t) =>
+      t.appointmentAt !== null ? Date.parse(t.appointmentAt) : Number.NaN,
+    )
     const result: {
       readonly date: string
       readonly bucketId: number
@@ -278,12 +293,18 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     }[] = []
     let cursor = from
     while (cursor.toString() <= to.toString()) {
-      const dayStartMs = Date.UTC(cursor.year, cursor.month - 1, cursor.day)
       for (let b = 0; b * granularity < 24 * 60; b += 1) {
-        const slotMs = dayStartMs + b * granMs
-        const taken = reservations.filter(
-          (t) => t.appointmentAt !== null && Date.parse(t.appointmentAt) === slotMs,
-        ).length
+        const slot: Slot = {
+          date: cursor,
+          bucketId: b as never,
+          granularity,
+          capacity,
+        }
+        const slotStartMs = intervalOf(slot, tz).startAt.epochMilliseconds
+        let taken = 0
+        for (const ms of reservationStartMs) {
+          if (ms === slotStartMs) taken += 1
+        }
         result.push({
           date: cursor.toString(),
           bucketId: b,
@@ -350,10 +371,12 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     )
   })
 
-  // GET /api/v1/queue — shop projection v2 (ADR-0062 / 0063 / 0065).
-  // Anonymous payload exposes lane / displaySeq + calling[] +
-  // serving[] arrays; staff payload carries the full ticket rows
-  // (PII inclusive).
+  // GET /api/v1/queue — shop projection v3 (ADR-0062 / 0063 /
+  // 0065 / 0066 / 0067). Anonymous payload exposes lane /
+  // displaySeq / appointmentAt + calling[] + serving[] arrays;
+  // staff payload carries the full ticket rows (PII inclusive).
+  // `nextReservationDeadline` mirrors the WS broadcast field so
+  // initial-load and live-update paths converge on the same shape.
   app.get("/api/v1/queue", async (c) => {
     const tickets = await stub(c.env).listTickets()
     const waiting = tickets
@@ -370,9 +393,19 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       seq: t.seq,
       lane: t.lane,
       displaySeq: t.displaySeq,
+      appointmentAt: t.appointmentAt,
     })
     const laneCount = (lane: "walkIn" | "priority" | "reservation") =>
       waiting.filter((t) => t.lane === lane).length
+    // Compute the EDF next-deadline from the encoded snapshot. The
+    // helper expects decoded Tickets, so we round-trip via Schema.
+    const decodedWaiting = waiting.map((w) => Schema.decodeUnknownSync(TicketSchema)(w))
+    const decodedMap = new Map(decodedWaiting.map((t) => [t.id, t] as const))
+    const ranked = reservationsByDeadline({ tickets: decodedMap })
+    const nextReservationDeadline =
+      ranked[0]?.appointmentAt !== null && ranked[0]?.appointmentAt !== undefined
+        ? String(ranked[0].appointmentAt)
+        : null
     const isStaff =
       c.env.STAFF_SESSION_SECRET !== undefined &&
       c.req.header("x-staff-token") === c.env.STAFF_SESSION_SECRET
@@ -380,7 +413,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return new Response(
         JSON.stringify({
           ok: true,
-          v: 2,
+          v: 3,
           waitingCount: waiting.length,
           laneCounts: {
             walkIn: laneCount("walkIn"),
@@ -390,6 +423,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
           calling,
           serving,
           waitingPreview: waiting.slice(0, 20),
+          nextReservationDeadline,
         }),
         { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
       )
@@ -397,7 +431,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return new Response(
       JSON.stringify({
         ok: true,
-        v: 2,
+        v: 3,
         waitingCount: waiting.length,
         laneCounts: {
           walkIn: laneCount("walkIn"),
@@ -407,6 +441,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         calling: calling.map(project),
         serving: serving.map(project),
         waitingPreview: waiting.slice(0, 10).map(project),
+        nextReservationDeadline,
       }),
       { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
     )

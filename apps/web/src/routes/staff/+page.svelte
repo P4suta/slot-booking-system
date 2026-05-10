@@ -296,40 +296,6 @@
     selected = next
   }
 
-  /* ---------- keyboard ---------- */
-  const onKey = (event: KeyboardEvent) => {
-    if (!authenticated) return
-    const target = event.target as HTMLElement | null
-    const isInput =
-      target !== null && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
-    if (event.key === "/" && !isInput) {
-      event.preventDefault()
-      searchInput?.focus()
-      return
-    }
-    if (event.key === "Escape") {
-      selected = new Set()
-      detail = null
-      helpOpen = false
-      return
-    }
-    if (isInput) return
-    if (event.key === "?") {
-      event.preventDefault()
-      helpOpen = true
-      return
-    }
-    if (event.key.toLowerCase() === "n") {
-      void onCallNext()
-      return
-    }
-    const firstSelected = selected.values().next().value
-    if (firstSelected === undefined) return
-    if (event.key.toLowerCase() === "s") void onStartServing(firstSelected)
-    if (event.key.toLowerCase() === "c") void onMarkServed(firstSelected)
-    if (event.key.toLowerCase() === "r") void onRecallTicket(firstSelected)
-  }
-
   const onAudioToggle = () => {
     audioCue = !audioCue
     localStorage.setItem("queue.audioCue", audioCue ? "1" : "0")
@@ -341,7 +307,6 @@
       ensureNotificationPermission()
       await startLiveFeed()
     }
-    window.addEventListener("keydown", onKey)
     // 1Hz tick drives the slot chip due/overdue colour transition.
     slotChipTick = setInterval(() => {
       now = Date.now()
@@ -350,7 +315,6 @@
 
   onDestroy(() => {
     feed?.close()
-    if (typeof window !== "undefined") window.removeEventListener("keydown", onKey)
     if (slotChipTick !== undefined) clearInterval(slotChipTick)
   })
 </script>
@@ -403,7 +367,6 @@
       </div>
       <div class="meta">
         <span class="dot" data-state={feedState} aria-label={`feed: ${feedState}`}></span>
-        <Button variant="ghost" size="md" onclick={() => (helpOpen = true)} aria-label="help (?)">?</Button>
         <Button variant="ghost" size="md" onclick={onAudioToggle} aria-label="audio cue">
           {audioCue ? "🔔" : "🔕"}
         </Button>
@@ -585,20 +548,6 @@
     </Dialog>
 
     <!-- help dialog -->
-    <Dialog bind:open={helpOpen} title="キーボード操作" onClose={() => (helpOpen = false)}>
-      <dl class="help">
-        <dt>N</dt><dd>次を呼ぶ (CallNext)</dd>
-        <dt>S</dt><dd>選択中チケットの対応開始 (StartServing)</dd>
-        <dt>C</dt><dd>選択中チケットの対応完了 (MarkServed)</dd>
-        <dt>R</dt><dd>選択中チケットの取消 (Recall)</dd>
-        <dt>/</dt><dd>検索フォーカス</dd>
-        <dt>?</dt><dd>このヘルプ</dd>
-        <dt>Esc</dt><dd>選択解除 / dialog 閉じる</dd>
-        <dt>Click</dt><dd>選択 (Shift+click で複数選択)</dd>
-        <dt>Dbl-click / Enter</dt><dd>詳細を開く</dd>
-      </dl>
-    </Dialog>
-
     <!-- toast -->
     {#if toast !== null}
       <div class="toast-host">
