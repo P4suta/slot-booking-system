@@ -14,6 +14,7 @@ import { readSessionCookie, verifySession } from "../security/session.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
 import { handleStaffLogin } from "./auth/login.js"
 import {
+  ByHandleQuerySchema,
   CallBatchBodySchema,
   CallNextBodySchema,
   CallSpecificBodySchema,
@@ -244,6 +245,29 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     if (!kanaOK || !phoneOK) {
       return failResponse(403, "PhoneMismatch", "E_DOM_PHONE_MISMATCH")
     }
+    return new Response(JSON.stringify({ ok: true, ticket }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    })
+  })
+
+  // GET /api/v1/tickets/by-handle?k&p — customer recovery primitive
+  // (ADR-0069). The handle is the active-set primary key, so a 200
+  // response carries the single active ticket for the supplied
+  // (nameKana, phoneLast4); 404 means "no active ticket". Same
+  // RL_VERIFY ceiling as /tickets/me, mitigating the (kana × last4)
+  // enumeration oracle.
+  app.get("/api/v1/tickets/by-handle", rateLimitMiddleware("RL_VERIFY"), async (c) => {
+    const decoded = Schema.decodeUnknownResult(ByHandleQuerySchema)({
+      nameKana: c.req.query("nameKana"),
+      phoneLast4: c.req.query("phoneLast4"),
+    })
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const ticket = await stub(c.env).getByHandle(decoded.success)
+    if (ticket === null) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     return new Response(JSON.stringify({ ok: true, ticket }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },

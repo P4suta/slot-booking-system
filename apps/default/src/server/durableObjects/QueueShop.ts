@@ -275,6 +275,26 @@ export class QueueShop extends DurableObject<Env> {
   }
 
   /**
+   * Active-set handle lookup (ADR-0069). Served off the partial UNIQUE
+   * index `uq_tickets_handle_active`, which makes the predicate
+   * (state IN active × name_kana × phone_last4) an O(log N) index seek
+   * with at most one matching row by construction. Powers the
+   * customer recovery endpoint `GET /api/v1/tickets/by-handle`.
+   */
+  getByHandle(handle: CustomerHandle): Promise<EncodedTicket | null> {
+    const rows = this.sql
+      .exec(
+        "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','Serving') LIMIT 1",
+        handle.nameKana,
+        handle.phoneLast4,
+      )
+      .toArray()
+    const r = rows[0]
+    if (r === undefined) return Promise.resolve(null)
+    return Promise.resolve(JSON.parse(r.payload as string) as EncodedTicket)
+  }
+
+  /**
    * Hibernating WebSocket entry — Cloudflare Workers Durable Object
    * runtime forwards `Upgrade: websocket` requests to this method
    * (set up by the Hono router at `/api/v1/queue/feed`). The DO

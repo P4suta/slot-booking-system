@@ -53,6 +53,11 @@ export const myTicket = (query: { ticketId: string; nameKana: string; phoneLast4
   return buildRequest(`/api/v1/tickets/me?${params.toString()}`)
 }
 
+export const ticketByHandle = (query: { nameKana: string; phoneLast4: string }) => {
+  const params = new URLSearchParams(query)
+  return buildRequest(`/api/v1/tickets/by-handle?${params.toString()}`)
+}
+
 export const cancelTicket = (ticketId: string, body: { handle: Handle; reason: string }) =>
   buildRequest(`/api/v1/tickets/${ticketId}/cancel`, {
     method: "POST",

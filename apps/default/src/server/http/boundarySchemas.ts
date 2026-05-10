@@ -102,6 +102,18 @@ export const MyTicketQuerySchema = Schema.Struct({
   phoneLast4: PhoneLast4Schema,
 })
 
+/**
+ * `GET /api/v1/tickets/by-handle?k&p` (ADR-0069). The customer-side
+ * recovery primitive: the handle alone (no ticketId) resolves to the
+ * single active ticket the customer has. The use case enforces handle
+ * uniqueness across the active set, so the response is at most one
+ * ticket; 404 means "no active ticket for this handle".
+ */
+export const ByHandleQuerySchema = Schema.Struct({
+  nameKana: NameKanaSchema,
+  phoneLast4: PhoneLast4Schema,
+})
+
 export const CancelBodySchema = Schema.Struct({
   nameKana: NameKanaSchema,
   phoneLast4: PhoneLast4Schema,
