@@ -51,6 +51,23 @@
     typeof window === "undefined" ? false : localStorage.getItem("queue.audioCue") === "1",
   )
   let searchInput: HTMLInputElement | null = $state(null)
+  let now = $state(Date.now())
+  let slotChipTick: ReturnType<typeof setInterval> | undefined
+
+  // ADR-0067 grace window — same threshold the EDF lane-chain promotes
+  // a reservation. The chip turns "due" within the same 5min window the
+  // backend uses, so the operator sees the same boundary the projection
+  // is computing.
+  const SLOT_CHIP_DUE_MS = 5 * 60 * 1000
+
+  const slotChipState = (appointmentAt: string): "due" | "overdue" | "soon" | "future" => {
+    const ms = Date.parse(appointmentAt)
+    const delta = ms - now
+    if (delta <= -SLOT_CHIP_DUE_MS) return "overdue"
+    if (delta <= SLOT_CHIP_DUE_MS) return "due"
+    if (delta <= 30 * 60 * 1000) return "soon"
+    return "future"
+  }
 
   /* ---------- derived ---------- */
   const filteredWaiting = $derived.by(() => {
@@ -325,11 +342,16 @@
       await startLiveFeed()
     }
     window.addEventListener("keydown", onKey)
+    // 1Hz tick drives the slot chip due/overdue colour transition.
+    slotChipTick = setInterval(() => {
+      now = Date.now()
+    }, 1000)
   })
 
   onDestroy(() => {
     feed?.close()
     if (typeof window !== "undefined") window.removeEventListener("keydown", onKey)
+    if (slotChipTick !== undefined) clearInterval(slotChipTick)
   })
 </script>
 
@@ -418,6 +440,11 @@
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  {#if t.appointmentAt !== null}
+                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                      {t.appointmentAt.slice(11, 16)}
+                    </span>
+                  {/if}
                 </div>
                 <div class="ticket-body">
                   <span class="kana">{t.nameKana ?? ""}</span>
@@ -441,6 +468,11 @@
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  {#if t.appointmentAt !== null}
+                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                      {t.appointmentAt.slice(11, 16)}
+                    </span>
+                  {/if}
                 </div>
                 <div class="ticket-body">
                   <span class="kana">{t.nameKana ?? ""}</span>
@@ -470,6 +502,11 @@
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  {#if t.appointmentAt !== null}
+                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                      {t.appointmentAt.slice(11, 16)}
+                    </span>
+                  {/if}
                 </div>
                 <div class="ticket-body">
                   <span class="kana">{t.nameKana ?? ""}</span>
@@ -733,6 +770,27 @@
   .lane.lane-priority {
     color: var(--color-state-called);
     background: oklch(95% 0.05 65 / 30%);
+  }
+  .slot-chip {
+    font: var(--text-mono-sm);
+    color: var(--color-fg-secondary);
+    background: var(--color-bg-subtle);
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+  }
+  .slot-chip[data-state="soon"] {
+    color: oklch(40% 0.13 65);
+    background: oklch(95% 0.07 65 / 50%);
+  }
+  .slot-chip[data-state="due"] {
+    color: oklch(35% 0.18 30);
+    background: oklch(92% 0.13 30 / 60%);
+    font-weight: 600;
+  }
+  .slot-chip[data-state="overdue"] {
+    color: oklch(35% 0.22 25);
+    background: oklch(85% 0.18 25 / 70%);
+    font-weight: 700;
   }
   .ticket-body {
     display: flex;
