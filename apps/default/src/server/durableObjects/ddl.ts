@@ -55,17 +55,35 @@ const renderColumn = (col: RenderableColumn): string => {
  * automatically appears in the DO's `ensureDurableObjectSchema`
  * idempotent migration with no hand-rolled DDL drift.
  */
+const renderWhere = (where: unknown): string => {
+  if (typeof where !== "object" || where === null || !("queryChunks" in where)) return ""
+  const inner = (where as SQL).getSQL().toQuery({
+    escapeName: (n) => `"${n}"`,
+    escapeParam: (_, v) => String(v),
+    escapeString: (s) => `'${s.replace(/'/g, "''")}'`,
+  })
+  return `\n  WHERE ${inner.sql}`
+}
+
 const tableToDDL = (table: SQLiteTable): readonly string[] => {
   const cfg = getTableConfig(table)
   const cols = cfg.columns.map((c) => renderColumn(c as unknown as RenderableColumn))
   const create = `CREATE TABLE IF NOT EXISTS ${cfg.name} (\n  ${cols.join(",\n  ")}\n)`
   const indexes = cfg.indexes.map((idx) => {
     const idxCfg = (
-      idx as unknown as { config: { name: string; columns: { name: string }[]; unique?: boolean } }
+      idx as unknown as {
+        config: {
+          name: string
+          columns: { name: string }[]
+          unique?: boolean
+          where?: unknown
+        }
+      }
     ).config
     const colNames = idxCfg.columns.map((c) => c.name).join(", ")
     const uniq = idxCfg.unique === true ? "UNIQUE " : ""
-    return `CREATE ${uniq}INDEX IF NOT EXISTS ${idxCfg.name}\n  ON ${cfg.name} (${colNames})`
+    const where = renderWhere(idxCfg.where)
+    return `CREATE ${uniq}INDEX IF NOT EXISTS ${idxCfg.name}\n  ON ${cfg.name} (${colNames})${where}`
   })
   return [create, ...indexes]
 }

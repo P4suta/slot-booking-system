@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm"
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
 
 /**
  * Read-side projection materialized view of the ticket aggregate.
@@ -48,5 +48,14 @@ export const tickets = sqliteTable(
   (t) => [
     index("ix_tickets_appointment_at").on(t.appointmentAt),
     index("ix_tickets_state_appointment_seq").on(t.state, t.appointmentAt, t.seq),
+    // ADR-0069: handle is the active-set primary key. A partial UNIQUE
+    // index on (name_kana, phone_last4) over the pre-terminal states
+    // physically enforces what `findActiveByHandle` reads — the core
+    // layer's idempotent merge is the first line of defence, this is
+    // the SQLite-side safety net that catches any direct INSERT that
+    // bypasses the use case.
+    uniqueIndex("uq_tickets_handle_active")
+      .on(t.nameKana, t.phoneLast4)
+      .where(sql`state IN ('Waiting', 'Called', 'Serving')`),
   ],
 )
