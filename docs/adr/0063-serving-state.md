@@ -9,7 +9,7 @@
 Add a `Serving` state to the `Ticket` discriminated union,
 positioned between `Called` and `Served`:
 
-```
+```text
 Waiting → Called → (Serving) → Served | NoShow
 ```
 
@@ -55,7 +55,8 @@ for the agnostic core.
 
 ## Implementation
 
-- `Ticket` discriminated union gains:
+- `Ticket` discriminated union gains a `Serving` variant:
+
   ```ts
   ServingSchema = Schema.Struct({
     ...TicketCommonFields,
@@ -64,6 +65,7 @@ for the agnostic core.
     servingStartedAt: Instant, servingStartedBy: Actor,
   })
   ```
+
 - `transitions.ts` adds `applyStartServing(t: Called) → Serving`
   and broadens `applyMarkServed` to `Called | Serving → Served`.
 - `TicketEvent.ts` adds `ServingStarted { ticketId,

@@ -1,5 +1,6 @@
 import { Effect, Layer, Ref } from "effect"
 import {
+  type BatchedSave,
   type NonEmptyReadonlyArray,
   TicketRepository,
 } from "../../application/ports/EventSourcedRepository.js"
@@ -123,6 +124,53 @@ export const makeInMemoryTicketRepositoryLive = (
               yield* Ref.update(snapshots, (snaps) => {
                 const copy = new Map(snaps)
                 copy.set(next.id, { state: next, revision: nextRevision })
+                return copy
+              })
+            }
+          }),
+        saveBatch: (updates: NonEmptyReadonlyArray<BatchedSave>) =>
+          Effect.gen(function* () {
+            const m = yield* Ref.get(store)
+            // Two-phase: first verify every member's revision; only
+            // mutate the store / event log / snapshots once all checks
+            // pass. ConcurrencyError on any member rolls the whole
+            // batch back without partial writes.
+            for (const u of updates) {
+              const row = m.get(u.id)
+              if (row?.revision !== u.expected) {
+                return yield* Effect.fail(
+                  new ConcurrencyError({
+                    expected: u.expected,
+                    actual: row?.revision ?? 0,
+                  }),
+                )
+              }
+            }
+            const updatedStore = new Map(m)
+            const newEvents: TicketEvent[] = []
+            const snapshotPatches: { id: TicketId; row: Row }[] = []
+            for (const u of updates) {
+              const row = m.get(u.id)
+              /* v8 ignore next 3 */
+              if (row === undefined) {
+                continue
+              }
+              const nextRevision = row.revision + u.events.length
+              updatedStore.set(u.id, { state: u.next, revision: nextRevision })
+              for (const ev of u.events) newEvents.push(ev)
+              if (nextRevision % snapshotInterval === 0) {
+                snapshotPatches.push({
+                  id: u.id,
+                  row: { state: u.next, revision: nextRevision },
+                })
+              }
+            }
+            yield* Ref.set(store, updatedStore)
+            yield* Ref.update(events, (xs) => xs.concat(newEvents))
+            if (snapshotPatches.length > 0) {
+              yield* Ref.update(snapshots, (snaps) => {
+                const copy = new Map(snaps)
+                for (const p of snapshotPatches) copy.set(p.id, p.row)
                 return copy
               })
             }

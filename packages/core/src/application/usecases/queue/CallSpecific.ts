@@ -1,11 +1,7 @@
 import { Effect } from "effect"
 import type { ConcurrencyError, DomainError, StorageError } from "../../../domain/errors/Errors.js"
-import type { Ticket } from "../../../domain/queue/Ticket.js"
-import {
-  applyMarkServed,
-  guardActive,
-  invalidTransition,
-} from "../../../domain/queue/transitions.js"
+import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
+import { applyCall, guardActive, invalidTransition } from "../../../domain/queue/transitions.js"
 import type { TicketId } from "../../../domain/types/EntityId.js"
 import type { Clock } from "../../ports/Clock.js"
 import type { TicketRepository } from "../../ports/EventSourcedRepository.js"
@@ -15,13 +11,14 @@ import { loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * MarkServed — `Called | Serving → Served` (ADR-0063 broadens the
- * source). Staff-only command; the GraphQL resolver upstream already
- * enforces the `operate_queue` scope, so the use case body trusts
- * the caller and focuses on the state machine.
+ * CallSpecific — call a specific Waiting ticket regardless of lane
+ * head / FIFO position (ADR-0065). Sibling of {@link CallNext}; both
+ * route through {@link applyCall}, but the entry point names the
+ * intent in the audit log.
  */
-export const MarkServed = (
+export const CallSpecific = (
   ticketId: TicketId,
+  actor: Actor = "staff",
 ): Effect.Effect<
   Ticket,
   DomainError | ConcurrencyError | StorageError,
@@ -31,13 +28,17 @@ export const MarkServed = (
     const loaded = yield* loadOrTicketNotFound(ticketId)
     const terminal = guardActive(loaded.state)
     if (terminal !== null) return yield* Effect.fail(terminal)
-    if (loaded.state.state !== "Called" && loaded.state.state !== "Serving") {
-      return yield* Effect.fail(invalidTransition(loaded.state.state, "MarkServed"))
+    if (loaded.state.state !== "Waiting") {
+      return yield* Effect.fail(invalidTransition(loaded.state.state, "CallSpecific"))
     }
-    const source = loaded.state
+    const waiting = loaded.state
     return yield* applyAndPersist({
       loaded,
-      apply: (at, eventId) => applyMarkServed(source, at, eventId),
-      log: { tag: "MarkServed", code: "I_USECASE_MARK_SERVED", data: { ticketId } },
+      apply: (at, eventId) => applyCall(waiting, { at, eventId, calledBy: actor }),
+      log: {
+        tag: "CallSpecific",
+        code: "I_USECASE_CALL_SPECIFIC",
+        data: { ticketId, lane: waiting.lane },
+      },
     })
   })

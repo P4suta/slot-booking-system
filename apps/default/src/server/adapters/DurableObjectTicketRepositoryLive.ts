@@ -1,6 +1,7 @@
 import {
   AggregateNotFoundError,
   applyEvent,
+  type BatchedSave,
   ConcurrencyError,
   empty as emptySnapshot,
   type NonEmptyReadonlyArray,
@@ -259,6 +260,57 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           }
         },
         catch: (e) => new StorageError({ reason: "issue", cause: e }),
+      }),
+    saveBatch: (updates: NonEmptyReadonlyArray<BatchedSave>) =>
+      Effect.try({
+        try: () => {
+          // Two-phase: verify every revision first so a single
+          // mismatched member rolls the whole batch back without
+          // partial writes. The DO single-writer guarantee makes the
+          // verify→commit race-free; we still scan inside the same
+          // synchronous batch so the SqlStorage transaction is the
+          // unit of atomicity.
+          for (const u of updates) {
+            const cur = sql.exec("SELECT revision FROM tickets WHERE id = ?", u.id).toArray()
+            const current = cur[0] !== undefined ? Number(cur[0].revision ?? 0) : 0
+            if (current !== u.expected) {
+              throw new ConcurrencyError({ expected: u.expected, actual: current })
+            }
+          }
+          for (const u of updates) {
+            let seq = u.expected
+            for (const ev of u.events) {
+              seq += 1
+              const encoded = Schema.encodeUnknownSync(TicketEventSchema)(ev)
+              sql.exec(
+                "INSERT INTO ticket_events (id, ticket_id, seq, type, occurred_at, recorded_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ev.id,
+                ev.ticketId,
+                seq,
+                ev.type,
+                String(ev.occurredAt),
+                String(ev.recordedAt),
+                JSON.stringify(encoded),
+              )
+              sql.exec(
+                "INSERT OR IGNORE INTO outbox (id, ticket_id, payload) VALUES (?, ?, ?)",
+                ev.id,
+                ev.ticketId,
+                JSON.stringify(encoded),
+              )
+            }
+            const encodedTicket = Schema.encodeUnknownSync(TicketSchema)(u.next)
+            const nextRevision = u.expected + u.events.length
+            sql.exec(TICKET_INSERT_SQL, ...ticketColumns(u.next, encodedTicket, nextRevision))
+            if (nextRevision % SNAPSHOT_INTERVAL === 0) {
+              sql.exec(SNAPSHOT_UPSERT_SQL, u.id, nextRevision, JSON.stringify(encodedTicket))
+            }
+          }
+        },
+        catch: (e) => {
+          if (e instanceof ConcurrencyError) return e
+          return new StorageError({ reason: "saveBatch", cause: e })
+        },
       }),
     nextSeq: () =>
       Effect.try({

@@ -1,14 +1,16 @@
 import { Temporal } from "@js-temporal/polyfill"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import type { Called, Waiting } from "../../../src/domain/queue/Ticket.js"
+import type { Called, Serving, Waiting } from "../../../src/domain/queue/Ticket.js"
 import {
-  applyCallNext,
+  applyCall,
   applyCancel,
   applyIssue,
   applyMarkNoShow,
   applyMarkServed,
   applyRecall,
+  applyReorder,
+  applyStartServing,
   guardActive,
   invalidTransition,
 } from "../../../src/domain/queue/transitions.js"
@@ -26,6 +28,8 @@ const issued = (): Waiting => {
   const { ticket } = applyIssue({
     id: newTicketId(),
     seq: 1,
+    lane: "walkIn",
+    displaySeq: 1,
     nameKana: kana,
     phoneLast4: phone,
     freeText: free,
@@ -40,6 +44,8 @@ describe("applyIssue", () => {
     const w = issued()
     expect(w.state).toBe("Waiting")
     expect(w.seq).toBe(1)
+    expect(w.lane).toBe("walkIn")
+    expect(w.displaySeq).toBe(1)
   })
 
   it("the issued event mirrors the ticket fields", () => {
@@ -47,6 +53,8 @@ describe("applyIssue", () => {
     const { ticket, event } = applyIssue({
       id,
       seq: 5,
+      lane: "priority",
+      displaySeq: 1,
       nameKana: kana,
       phoneLast4: phone,
       freeText: null,
@@ -54,51 +62,114 @@ describe("applyIssue", () => {
       eventId: newTicketEventId(),
     })
     expect(ticket.id).toBe(id)
+    expect(ticket.lane).toBe("priority")
     expect(event.type).toBe("Issued")
     if (event.type === "Issued") {
       expect(event.seq).toBe(5)
+      expect(event.lane).toBe("priority")
+      expect(event.displaySeq).toBe(1)
       expect(event.freeText).toBeNull()
     }
   })
 })
 
-describe("applyCallNext", () => {
+describe("applyCall", () => {
   it("transitions Waiting → Called", () => {
-    const { ticket, event } = applyCallNext(
-      issued(),
-      at("2026-05-08T09:05:00Z"),
-      newTicketEventId(),
-    )
+    const { ticket, event } = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
     expect(ticket.state).toBe("Called")
     expect(event.type).toBe("Called")
   })
 
   it("defaults calledBy to staff", () => {
-    const { ticket } = applyCallNext(issued(), at("2026-05-08T09:05:00Z"), newTicketEventId())
+    const { ticket } = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
     if (ticket.state === "Called") expect(ticket.calledBy).toBe("staff")
   })
 
   it("respects an explicit non-staff actor on both ticket and event", () => {
-    const { ticket, event } = applyCallNext(
-      issued(),
-      at("2026-05-08T09:05:00Z"),
-      newTicketEventId(),
-      "system",
-    )
+    const { ticket, event } = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+      calledBy: "system",
+    })
     if (ticket.state === "Called") expect(ticket.calledBy).toBe("system")
     if (event.type === "Called") expect(event.calledBy).toBe("system")
   })
+
+  it("records batchId on the event when supplied (CallBatch members share one id)", () => {
+    const batchId = "bch_00000000000000000000000001" as never
+    const { event } = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+      batchId,
+    })
+    if (event.type === "Called") expect(event.batchId).toBe(batchId)
+  })
+
+  it("omits batchId when not supplied (CallNext / CallSpecific)", () => {
+    const { event } = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    if (event.type === "Called") expect(event.batchId).toBeUndefined()
+  })
 })
 
-describe("applyMarkServed / applyMarkNoShow / applyCancel", () => {
+describe("applyMarkServed / applyMarkNoShow / applyCancel / applyStartServing", () => {
   const called = (): Called => {
-    const { ticket } = applyCallNext(issued(), at("2026-05-08T09:05:00Z"), newTicketEventId())
+    const { ticket } = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
     return ticket as Called
   }
+
+  it("applyStartServing transitions Called → Serving", () => {
+    const { ticket, event } = applyStartServing(
+      called(),
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    expect(ticket.state).toBe("Serving")
+    expect(event.type).toBe("ServingStarted")
+    if (ticket.state === "Serving") {
+      expect(ticket.servingStartedBy).toBe("staff")
+    }
+  })
+
+  it("applyStartServing accepts an explicit servingStartedBy actor", () => {
+    const { ticket } = applyStartServing(
+      called(),
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+      "system",
+    )
+    if (ticket.state === "Serving") expect(ticket.servingStartedBy).toBe("system")
+  })
 
   it("applyMarkServed transitions Called → Served", () => {
     const { ticket } = applyMarkServed(called(), at("2026-05-08T09:10:00Z"), newTicketEventId())
     expect(ticket.state).toBe("Served")
+  })
+
+  it("applyMarkServed transitions Serving → Served and carries the serving audit fields", () => {
+    const c = called()
+    const { ticket: serving } = applyStartServing(c, at("2026-05-08T09:07:00Z"), newTicketEventId())
+    const { ticket: served } = applyMarkServed(
+      serving as Serving,
+      at("2026-05-08T09:10:00Z"),
+      newTicketEventId(),
+    )
+    expect(served.state).toBe("Served")
+    if (served.state === "Served") {
+      expect(served.servingStartedAt).toBeDefined()
+      expect(served.servingStartedBy).toBe("staff")
+    }
   })
 
   it("applyMarkServed honours an explicit servedBy", () => {
@@ -173,29 +244,47 @@ describe("guardActive", () => {
   })
 
   it("returns AlreadyCompleted for a Served ticket", () => {
-    const c = applyCallNext(issued(), at("2026-05-08T09:05:00Z"), newTicketEventId())
-      .ticket as Called
+    const c = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    }).ticket as Called
     const { ticket } = applyMarkServed(c, at("2026-05-08T09:10:00Z"), newTicketEventId())
     expect(guardActive(ticket)?._tag).toBe("AlreadyCompleted")
   })
 
   it("returns AlreadyNoShow for a NoShow ticket", () => {
-    const c = applyCallNext(issued(), at("2026-05-08T09:05:00Z"), newTicketEventId())
-      .ticket as Called
+    const c = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    }).ticket as Called
     const { ticket } = applyMarkNoShow(c, at("2026-05-08T09:10:00Z"), newTicketEventId())
     expect(guardActive(ticket)?._tag).toBe("AlreadyNoShow")
   })
 
   it("returns null for Called", () => {
-    const c = applyCallNext(issued(), at("2026-05-08T09:05:00Z"), newTicketEventId())
-      .ticket as Called
+    const c = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    }).ticket as Called
     expect(guardActive(c)).toBeNull()
+  })
+
+  it("returns null for Serving (active per ADR-0063)", () => {
+    const c = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    }).ticket as Called
+    const { ticket: serving } = applyStartServing(c, at("2026-05-08T09:07:00Z"), newTicketEventId())
+    expect(guardActive(serving)).toBeNull()
   })
 })
 
 describe("applyRecall", () => {
   const called = (): Called => {
-    const { ticket } = applyCallNext(issued(), at("2026-05-08T09:05:00Z"), newTicketEventId())
+    const { ticket } = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
     return ticket as Called
   }
 
@@ -205,10 +294,12 @@ describe("applyRecall", () => {
     expect(event.type).toBe("Recalled")
   })
 
-  it("preserves the original seq so the ticket returns to the head", () => {
+  it("preserves the original seq + displaySeq + lane so the ticket returns to its lane head", () => {
     const c = called()
     const { ticket } = applyRecall(c, at("2026-05-08T09:06:00Z"), newTicketEventId())
     expect(ticket.seq).toBe(c.seq)
+    expect(ticket.displaySeq).toBe(c.displaySeq)
+    expect(ticket.lane).toBe(c.lane)
   })
 
   it("drops calledAt / calledBy from the resulting Waiting variant", () => {
@@ -226,6 +317,45 @@ describe("applyRecall", () => {
   })
 })
 
+describe("applyReorder", () => {
+  it("emits a Reordered event with afterTicketId", () => {
+    const a = issued()
+    const otherId = newTicketId()
+    const { ticket, event } = applyReorder(a, {
+      afterTicketId: otherId,
+      at: at("2026-05-08T09:02:00Z"),
+      eventId: newTicketEventId(),
+    })
+    expect(ticket.state).toBe("Waiting")
+    expect(event.type).toBe("Reordered")
+    if (event.type === "Reordered") {
+      expect(event.afterTicketId).toBe(otherId)
+      expect(event.reorderedBy).toBe("staff")
+    }
+  })
+
+  it("emits a Reordered event with afterTicketId === null for lane-head insertion", () => {
+    const { event } = applyReorder(issued(), {
+      afterTicketId: null,
+      at: at("2026-05-08T09:02:00Z"),
+      eventId: newTicketEventId(),
+    })
+    if (event.type === "Reordered") {
+      expect(event.afterTicketId).toBeNull()
+    }
+  })
+
+  it("respects an explicit reorderedBy actor", () => {
+    const { event } = applyReorder(issued(), {
+      afterTicketId: null,
+      at: at("2026-05-08T09:02:00Z"),
+      eventId: newTicketEventId(),
+      reorderedBy: "system",
+    })
+    if (event.type === "Reordered") expect(event.reorderedBy).toBe("system")
+  })
+})
+
 describe("invalidTransition", () => {
   it("synthesises an InvalidStateTransition error with the offending row", () => {
     const err = invalidTransition("Waiting", "MarkServed")
@@ -237,5 +367,12 @@ describe("invalidTransition", () => {
   it("accepts Recall as a command name", () => {
     const err = invalidTransition("Waiting", "Recall")
     expect(err.command).toBe("Recall")
+  })
+
+  it("accepts the new ADR-0065 command names", () => {
+    expect(invalidTransition("Served", "CallSpecific").command).toBe("CallSpecific")
+    expect(invalidTransition("Cancelled", "CallBatch").command).toBe("CallBatch")
+    expect(invalidTransition("Waiting", "StartServing").command).toBe("StartServing")
+    expect(invalidTransition("Called", "Reorder").command).toBe("Reorder")
   })
 })

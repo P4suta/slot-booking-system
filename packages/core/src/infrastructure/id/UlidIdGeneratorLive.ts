@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect"
 import { IdGenerator } from "../../application/ports/IdGenerator.js"
 import {
   newAuditLogId,
+  newBatchId,
   newIdempotencyKeyId,
   newStaffId,
   newTicketEventId,
@@ -19,4 +20,5 @@ export const UlidIdGeneratorLive = Layer.succeed(IdGenerator, {
   newStaffId: Effect.sync(newStaffId),
   newAuditLogId: Effect.sync(newAuditLogId),
   newIdempotencyKeyId: Effect.sync(newIdempotencyKeyId),
+  newBatchId: Effect.sync(newBatchId),
 })

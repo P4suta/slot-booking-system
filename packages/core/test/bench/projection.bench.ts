@@ -25,6 +25,8 @@ const buildSnapshot = (waitingCount: number): { tickets: Map<TicketId, Ticket> }
     tickets.set(id, {
       id,
       seq: i + 1,
+      lane: "walkIn",
+      displaySeq: i + 1,
       state: "Waiting",
       nameKana: kana,
       phoneLast4: phone,

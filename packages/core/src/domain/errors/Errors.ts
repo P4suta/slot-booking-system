@@ -222,6 +222,24 @@ export class InsufficientCapabilityError extends Schema.TaggedErrorClass<Insuffi
   static readonly severity: ErrorSeverity = "domain"
 }
 
+/**
+ * A `Reorder` command targets two tickets whose lanes differ. Per
+ * ADR-0065, reorder is restricted to within a single lane — moving
+ * a ticket across lanes is a `Lane` mutation, not a reorder, and is
+ * not currently exposed (an explicit operator action would be a
+ * separate ADR).
+ */
+export class LaneMismatchError extends Schema.TaggedErrorClass<LaneMismatchError>()(
+  "LaneMismatch",
+  {
+    ticketLane: Schema.String,
+    targetLane: Schema.String,
+  },
+) {
+  static readonly code = "E_DOM_LANE_MISMATCH"
+  static readonly severity: ErrorSeverity = "domain"
+}
+
 /* -------------------------------------------------------------------------- */
 /* Infrastructure errors — storage / concurrency failures surfaced by ports.   */
 /* -------------------------------------------------------------------------- */
@@ -292,6 +310,7 @@ export type DomainRuleError =
   | AlreadyNoShowError
   | InvalidStateTransitionError
   | InsufficientCapabilityError
+  | LaneMismatchError
 
 export type InfrastructureError = AggregateNotFoundError | ConcurrencyError | StorageError
 
@@ -402,6 +421,7 @@ export const errorClassRegistry = [
   AlreadyNoShowError,
   InvalidStateTransitionError,
   InsufficientCapabilityError,
+  LaneMismatchError,
   AggregateNotFoundError,
   ConcurrencyError,
   StorageError,

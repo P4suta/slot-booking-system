@@ -132,7 +132,9 @@ describe("queue lifecycle state-machine invariants (property)", () => {
         // queue-shape contract.
         const states = final.map((t) => t.state)
         expect(
-          states.every((s) => ["Waiting", "Called", "Served", "NoShow", "Cancelled"].includes(s)),
+          states.every((s) =>
+            ["Waiting", "Called", "Serving", "Served", "NoShow", "Cancelled"].includes(s),
+          ),
         ).toBe(true)
       }),
       { numRuns: numRuns(80, 200), verbose: false },

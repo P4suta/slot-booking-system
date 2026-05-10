@@ -19,6 +19,7 @@ const ENTITY_KIND_TAG = {
   staf: "StaffId",
   audt: "AuditLogId",
   idem: "IdempotencyKeyId",
+  bch: "BatchId",
 } as const satisfies Record<string, string>
 
 /** Stable union of every TypeID prefix the system mints. */
@@ -40,6 +41,7 @@ export const ALL_ENTITY_KINDS = [
   "staf",
   "audt",
   "idem",
+  "bch",
 ] as const satisfies readonly EntityKind[]
 
 /* -------------------------------------------------------------------------- */
@@ -105,3 +107,8 @@ export const IdempotencyKeyIdSchema = idSchema("idem")
 export type IdempotencyKeyId = Schema.Schema.Type<typeof IdempotencyKeyIdSchema>
 export const parseIdempotencyKeyId = parseId("idem")
 export const newIdempotencyKeyId = newId("idem")
+
+export const BatchIdSchema = idSchema("bch")
+export type BatchId = Schema.Schema.Type<typeof BatchIdSchema>
+export const parseBatchId = parseId("bch")
+export const newBatchId = newId("bch")

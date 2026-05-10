@@ -345,6 +345,8 @@ describe("queue lifecycle round-trip", () => {
     const ghost = applyIssue({
       id: newTicketId(),
       seq: 1,
+      lane: "walkIn",
+      displaySeq: 1,
       nameKana: handle("ヤマダ タロウ", "1234").nameKana,
       phoneLast4: handle("ヤマダ タロウ", "1234").phoneLast4,
       freeText: null,
@@ -358,6 +360,7 @@ describe("queue lifecycle round-trip", () => {
         load: () => Effect.fail(new AggregateNotFoundError({})),
         save: () => Effect.void,
         issue: () => Effect.void,
+        saveBatch: () => Effect.void,
         nextSeq: () => Effect.succeed(1),
       }),
     )

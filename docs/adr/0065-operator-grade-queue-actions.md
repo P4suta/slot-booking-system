@@ -55,9 +55,9 @@ restricted to `Called`. Three operator workflows remain unmodelled:
 
 Each is a *named operator intent* the audit log should record by
 name, not as a polymorphic `QueueOp { kind: "..." }` payload —
-the action surface stays small (8 actions total: Issue + CallNext
-+ CallSpecific + CallBatch + StartServing + MarkServed +
-MarkNoShow + Recall + Cancel + Reorder).
+the action surface stays small (10 actions total: Issue, CallNext,
+CallSpecific, CallBatch, StartServing, MarkServed, MarkNoShow,
+Recall, Cancel, Reorder).
 
 ## Trade-offs
 

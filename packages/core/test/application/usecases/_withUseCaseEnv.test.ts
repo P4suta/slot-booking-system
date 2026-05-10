@@ -7,11 +7,7 @@ import {
   useCaseEnv,
 } from "../../../src/application/usecases/_withUseCaseEnv.js"
 import type { Called, Waiting } from "../../../src/domain/queue/Ticket.js"
-import {
-  applyCallNext,
-  applyIssue,
-  applyMarkServed,
-} from "../../../src/domain/queue/transitions.js"
+import { applyCall, applyIssue, applyMarkServed } from "../../../src/domain/queue/transitions.js"
 import type { NameKana } from "../../../src/domain/value-objects/NameKana.js"
 import type { PhoneLast4 } from "../../../src/domain/value-objects/PhoneLast4.js"
 import { SystemClockLive } from "../../../src/infrastructure/clock/SystemClockLive.js"
@@ -59,6 +55,8 @@ describe("issueAndPersist", () => {
           applyIssue({
             id,
             seq,
+            lane: "walkIn",
+            displaySeq: seq,
             nameKana: KANA,
             phoneLast4: PHONE,
             freeText: null,
@@ -98,10 +96,12 @@ describe("issueAndPersist", () => {
       handle.layer,
     )
     const program = Effect.gen(function* () {
-      const apply = (id: never, eventId: never, at: never, seq: never) =>
+      const apply = (id: never, eventId: never, at: never, seq: number) =>
         applyIssue({
           id: id,
           seq: seq,
+          lane: "walkIn",
+          displaySeq: seq,
           nameKana: KANA,
           phoneLast4: PHONE,
           freeText: null,
@@ -139,6 +139,8 @@ describe("applyAndPersist", () => {
           applyIssue({
             id,
             seq,
+            lane: "walkIn",
+            displaySeq: seq,
             nameKana: KANA,
             phoneLast4: PHONE,
             freeText: null,
@@ -156,7 +158,7 @@ describe("applyAndPersist", () => {
       const waiting = loadedWaiting.state as Waiting
       const called = yield* applyAndPersist({
         loaded: loadedWaiting,
-        apply: (at, eventId) => applyCallNext(waiting, at, eventId, "staff"),
+        apply: (at, eventId) => applyCall(waiting, { at, eventId, calledBy: "staff" }),
         log: {
           tag: "CallNext",
           code: "I_USECASE_CALL_NEXT",
@@ -205,6 +207,8 @@ describe("applyAndPersist", () => {
           applyIssue({
             id,
             seq,
+            lane: "walkIn",
+            displaySeq: seq,
             nameKana: KANA,
             phoneLast4: PHONE,
             freeText: null,
@@ -224,7 +228,7 @@ describe("applyAndPersist", () => {
       // revision is stale.
       yield* applyAndPersist({
         loaded,
-        apply: (at, eventId) => applyCallNext(waiting, at, eventId, "staff"),
+        apply: (at, eventId) => applyCall(waiting, { at, eventId, calledBy: "staff" }),
         log: {
           tag: "CallNext",
           code: "I_USECASE_CALL_NEXT",
@@ -235,7 +239,7 @@ describe("applyAndPersist", () => {
       // aggregate has moved on must surface the optimistic-lock failure.
       return yield* applyAndPersist({
         loaded,
-        apply: (at, eventId) => applyCallNext(waiting, at, eventId, "staff"),
+        apply: (at, eventId) => applyCall(waiting, { at, eventId, calledBy: "staff" }),
         log: {
           tag: "CallNext",
           code: "I_USECASE_CALL_NEXT",

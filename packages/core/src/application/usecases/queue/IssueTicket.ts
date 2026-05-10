@@ -1,11 +1,14 @@
-import type { Effect } from "effect"
+import { Effect } from "effect"
 import type { ConcurrencyError, StorageError } from "../../../domain/errors/Errors.js"
+import type { Lane } from "../../../domain/queue/Lane.js"
+import { nextDisplaySeqInLane, type QueueSnapshot } from "../../../domain/queue/projection.js"
 import type { Ticket } from "../../../domain/queue/Ticket.js"
 import { applyIssue } from "../../../domain/queue/transitions.js"
+import type { TicketId } from "../../../domain/types/EntityId.js"
 import type { CustomerHandle } from "../../../domain/value-objects/CustomerHandle.js"
 import type { FreeText } from "../../../domain/value-objects/FreeText.js"
 import type { Clock } from "../../ports/Clock.js"
-import type { TicketRepository } from "../../ports/EventSourcedRepository.js"
+import { TicketRepository } from "../../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../../ports/IdGenerator.js"
 import type { Logger } from "../../ports/Logger.js"
 import { issueAndPersist } from "../_withUseCaseEnv.js"
@@ -13,17 +16,24 @@ import { issueAndPersist } from "../_withUseCaseEnv.js"
 export type IssueTicketInput = {
   readonly handle: CustomerHandle
   readonly freeText: FreeText | null
+  readonly lane?: Lane
 }
 
 /**
  * IssueTicket — the FIFO queue's only constructor. Mints a fresh
  * `TicketId`, draws the next monotonic `seq` from the repository,
- * applies the `Issued` transition (Waiting), and persists the
- * aggregate + event in a single transaction (`repo.issue`).
+ * computes the next per-lane `displaySeq` from the current
+ * projection (ADR-0065), applies the `Issued` transition (Waiting),
+ * and persists the aggregate + event in a single transaction
+ * (`repo.issue`).
  *
  * The handle (`nameKana`, `phoneLast4`) is the customer's anonymous
  * credential (ADR-0054); no session, no cookie. The customer keeps
  * the returned `TicketId` to query position and cancel.
+ *
+ * `lane` defaults to `"walkIn"` when omitted — operators expose the
+ * lane choice only on the staff-side issue flow; the customer-facing
+ * `/issue` form leaves it blank (ADR-0062).
  */
 export const IssueTicket = (
   input: IssueTicketInput,
@@ -32,20 +42,31 @@ export const IssueTicket = (
   ConcurrencyError | StorageError,
   Clock | IdGenerator | TicketRepository | Logger
 > =>
-  issueAndPersist({
-    apply: (id, eventId, at, seq) =>
-      applyIssue({
-        id,
-        seq,
-        nameKana: input.handle.nameKana,
-        phoneLast4: input.handle.phoneLast4,
-        freeText: input.freeText,
-        at,
-        eventId,
+  Effect.gen(function* () {
+    const repo = yield* TicketRepository
+    const lane: Lane = input.lane ?? "walkIn"
+    const all = yield* repo.listAll()
+    const tickets = new Map<TicketId, Ticket>()
+    for (const t of all) tickets.set(t.id, t)
+    const snap: QueueSnapshot = { tickets }
+    const displaySeq = nextDisplaySeqInLane(snap, lane)
+    return yield* issueAndPersist({
+      apply: (id, eventId, at, seq) =>
+        applyIssue({
+          id,
+          seq,
+          lane,
+          displaySeq,
+          nameKana: input.handle.nameKana,
+          phoneLast4: input.handle.phoneLast4,
+          freeText: input.freeText,
+          at,
+          eventId,
+        }),
+      log: ({ id, seq }) => ({
+        tag: "IssueTicket",
+        code: "I_USECASE_ISSUE_TICKET",
+        data: { ticketId: id, seq, lane, displaySeq },
       }),
-    log: ({ id, seq }) => ({
-      tag: "IssueTicket",
-      code: "I_USECASE_ISSUE_TICKET",
-      data: { ticketId: id, seq },
-    }),
+    })
   })

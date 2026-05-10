@@ -31,6 +31,7 @@ const status = Match.type<DomainError["_tag"]>().pipe(
   Match.when("AlreadyCompleted", () => 409),
   Match.when("AlreadyNoShow", () => 409),
   Match.when("InvalidStateTransition", () => 409),
+  Match.when("LaneMismatch", () => 409),
   Match.when("Concurrency", () => 409),
   Match.when("InvalidPhoneLast4", () => 422),
   Match.when("InvalidNameKana", () => 422),

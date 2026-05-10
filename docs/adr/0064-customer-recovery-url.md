@@ -9,7 +9,7 @@
 The customer's ticket page has a **canonical recovery URL** of the
 form
 
-```
+```text
 /ticket?id={ticketId}&k={nameKana}&p={phoneLast4}
 ```
 

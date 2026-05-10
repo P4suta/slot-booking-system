@@ -23,6 +23,20 @@ export type LoadedAggregate<A> = {
 export type NonEmptyReadonlyArray<T> = readonly [T, ...T[]]
 
 /**
+ * Single per-aggregate update bundle consumed by `saveBatch`. The
+ * tuple `(id, expected, events, next)` mirrors the `save` arguments
+ * so an adapter that understands `save` understands `saveBatch` as
+ * the same contract repeated, **inside a single storage
+ * transaction** so all updates land or none do (ADR-0065).
+ */
+export type BatchedSave = {
+  readonly id: TicketId
+  readonly expected: number
+  readonly events: NonEmptyReadonlyArray<TicketEvent>
+  readonly next: Ticket
+}
+
+/**
  * Event-sourced repository specialised at the queue's single aggregate
  * (ADR-0051). `Ticket` is the aggregate, `TicketId` the identifier,
  * `TicketEvent` the event variant.
@@ -44,6 +58,12 @@ export type NonEmptyReadonlyArray<T> = readonly [T, ...T[]]
  *      where there is no prior aggregate; the adapter treats it as
  *      `save(id, 0, events, next)` with extra integrity checks
  *      (e.g. monotonic seq + unique id).
+ *   5. `saveBatch(updates)` is the multi-aggregate atomic save used
+ *      by `CallBatch` (ADR-0065). The whole `updates` array is
+ *      committed in one transaction; if any member's revision check
+ *      fails (or any append fails) the entire batch is rolled back
+ *      and `ConcurrencyError` carries the offending member's
+ *      `(expected, actual)` pair.
  */
 export class TicketRepository extends Context.Service<
   TicketRepository,
@@ -61,6 +81,9 @@ export class TicketRepository extends Context.Service<
       id: TicketId,
       events: NonEmptyReadonlyArray<TicketEvent>,
       next: Ticket,
+    ) => Effect.Effect<void, ConcurrencyError | StorageError>
+    readonly saveBatch: (
+      updates: NonEmptyReadonlyArray<BatchedSave>,
     ) => Effect.Effect<void, ConcurrencyError | StorageError>
     readonly nextSeq: () => Effect.Effect<number, StorageError>
     readonly listAll: () => Effect.Effect<readonly Ticket[], StorageError>

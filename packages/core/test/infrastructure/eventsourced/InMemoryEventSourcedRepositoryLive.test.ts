@@ -4,11 +4,7 @@ import { describe, expect, it } from "vitest"
 import { TicketRepository } from "../../../src/application/ports/EventSourcedRepository.js"
 import { ConcurrencyError } from "../../../src/domain/errors/Errors.js"
 import type { Waiting } from "../../../src/domain/queue/Ticket.js"
-import {
-  type ApplyResult,
-  applyCallNext,
-  applyIssue,
-} from "../../../src/domain/queue/transitions.js"
+import { type ApplyResult, applyCall, applyIssue } from "../../../src/domain/queue/transitions.js"
 import { newTicketEventId, newTicketId } from "../../../src/domain/types/EntityId.js"
 import { NameKanaSchema } from "../../../src/domain/value-objects/NameKana.js"
 import { PhoneLast4Schema } from "../../../src/domain/value-objects/PhoneLast4.js"
@@ -22,6 +18,8 @@ const issueOne = (): ApplyResult =>
   applyIssue({
     id: newTicketId(),
     seq: 1,
+    lane: "walkIn",
+    displaySeq: 1,
     nameKana: kana,
     phoneLast4: phone,
     freeText: null,
@@ -93,11 +91,10 @@ describe("InMemoryTicketRepositoryLive", () => {
         const repo = yield* TicketRepository
         const { ticket, event } = issueOne()
         yield* repo.issue(ticket.id, [event], ticket)
-        const next = applyCallNext(
-          ticket as Waiting,
-          at("2026-05-08T09:05:00Z"),
-          newTicketEventId(),
-        )
+        const next = applyCall(ticket as Waiting, {
+          at: at("2026-05-08T09:05:00Z"),
+          eventId: newTicketEventId(),
+        })
         // Issue brought revision to 1; saving with `expected = 0` is
         // a stale-read race.
         const r = yield* eitherEffect(repo.save(ticket.id, 0, [next.event], next.ticket))

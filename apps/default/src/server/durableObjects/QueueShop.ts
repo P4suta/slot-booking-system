@@ -97,7 +97,7 @@ export class QueueShop extends DurableObject<Env> {
             freeText: action.freeText as Ticket["freeText"],
           })
         case "CallNext":
-          return CallNext(action.actor)
+          return CallNext(undefined, action.actor)
         case "MarkServed":
           return MarkServed(action.ticketId)
         case "MarkNoShow":
