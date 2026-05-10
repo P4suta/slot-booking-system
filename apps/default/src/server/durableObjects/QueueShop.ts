@@ -11,6 +11,7 @@ import {
   codeOf,
   type DomainError,
   type IdGenerator,
+  InstantSchema,
   IssueTicket,
   type Lane,
   type Logger,
@@ -56,7 +57,11 @@ export type QueueAction =
       handle: CustomerHandle
       freeText: string | null
       lane?: Lane
-      appointmentAt?: NonNullable<Ticket["appointmentAt"]>
+      // ISO-8601 instant string. The DO RPC boundary serialises every
+      // arg through structuredClone, which rejects Temporal.Instant —
+      // the conversion to/from `Temporal.Instant` happens inside the
+      // dispatch closure so the wire stays JSON-safe.
+      appointmentAt?: string
     }
   | { type: "CallNext"; actor: "staff" | "system"; lane?: Lane }
   | { type: "CallSpecific"; ticketId: TicketId; actor: "staff" | "system" }
@@ -137,14 +142,19 @@ export class QueueShop extends DurableObject<Env> {
     type DispatchDeps = Clock | IdGenerator | TicketRepository | Logger
     let eff: Effect.Effect<DispatchOk, DispatchErr, DispatchDeps>
     switch (action.type) {
-      case "IssueTicket":
+      case "IssueTicket": {
+        const appointmentAt =
+          action.appointmentAt !== undefined
+            ? Schema.decodeUnknownSync(InstantSchema)(action.appointmentAt)
+            : undefined
         eff = IssueTicket({
           handle: action.handle,
           freeText: action.freeText as Ticket["freeText"],
           ...(action.lane !== undefined ? { lane: action.lane } : {}),
-          ...(action.appointmentAt !== undefined ? { appointmentAt: action.appointmentAt } : {}),
+          ...(appointmentAt !== undefined ? { appointmentAt } : {}),
         })
         break
+      }
       case "CallNext":
         eff = CallNext(action.lane, action.actor)
         break

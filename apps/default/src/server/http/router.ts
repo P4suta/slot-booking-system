@@ -194,8 +194,12 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       },
       freeText: decoded.success.freeText,
       ...(decoded.success.lane !== undefined ? { lane: decoded.success.lane } : {}),
+      // String-encode at the wire — the DO RPC boundary serialises
+      // every arg through structuredClone, which rejects
+      // Temporal.Instant. The DO dispatch decodes via core's
+      // InstantSchema before handing off to the use case.
       ...(decoded.success.appointmentAt !== undefined
-        ? { appointmentAt: decoded.success.appointmentAt }
+        ? { appointmentAt: String(decoded.success.appointmentAt) }
         : {}),
     }
     return dispatchEnvelope(await stub(c.env).dispatch(action), 201)
