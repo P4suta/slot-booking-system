@@ -1,5 +1,8 @@
+import { Temporal } from "@js-temporal/polyfill"
 import type { TicketId } from "../types/EntityId.js"
+import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import { type Lane, PREFERRED_LANE_CHAIN } from "./Lane.js"
+import { intervalOf, type Slot } from "./Slot.js"
 import type { Called, Serving, Ticket, Waiting } from "./Ticket.js"
 import type { TicketEvent } from "./TicketEvent.js"
 
@@ -276,12 +279,91 @@ export const headOfLane = (snap: QueueSnapshot, lane: Lane): Waiting | null => {
  * The first lane along {@link PREFERRED_LANE_CHAIN} that has a
  * Waiting ticket, or `null` when every lane is empty. The chain is
  * `priority > walkIn > reservation` (ADR-0062).
+ *
+ * Legacy alias retained for callers that pre-date ADR-0067; new
+ * call sites should use {@link firstLaneWithCallable} which adds
+ * the time-aware EDF rule for the reservation lane head.
  */
 export const firstLaneWithWaiting = (snap: QueueSnapshot): Lane | null => {
   for (const lane of PREFERRED_LANE_CHAIN) {
     if (headOfLane(snap, lane) !== null) return lane
   }
   return null
+}
+
+/**
+ * Reservation-lane Waiting tickets, sorted by `appointmentAt` asc.
+ * Tickets whose `appointmentAt` is null (defensive: should not
+ * occur given ADR-0066's `lane === "reservation" ⇔ appointmentAt
+ * !== null` invariant) are dropped; the EDF check has nothing to
+ * do with them anyway.
+ *
+ * Used by {@link firstLaneWithCallable} to identify the next
+ * deadline candidate, and by the staff Kanban (ADR-0068) to render
+ * the per-card slot-time chip in slot order.
+ */
+export const reservationsByDeadline = (snap: QueueSnapshot): readonly Waiting[] => {
+  const candidates: { readonly ticket: Waiting; readonly apptAt: Temporal.Instant }[] = []
+  for (const t of snap.tickets.values()) {
+    if (!isWaiting(t)) continue
+    if (t.lane !== "reservation") continue
+    if (t.appointmentAt === null) continue
+    candidates.push({ ticket: t, apptAt: t.appointmentAt })
+  }
+  candidates.sort((a, b) => Temporal.Instant.compare(a.apptAt, b.apptAt))
+  return candidates.map((c) => c.ticket)
+}
+
+/**
+ * ADR-0067 — time-aware lane chain.
+ *
+ * Returns the first lane whose head is *callable* now: the
+ * reservation-lane head with `appointmentAt ≤ now + grace` wins
+ * over the static priority chain; otherwise falls through to
+ * `priority > walkIn > reservation`. Returns `null` only when the
+ * snapshot has no Waiting ticket at all.
+ *
+ * `grace = 0` and reservation tickets without `appointmentAt`
+ * degenerate to {@link firstLaneWithWaiting}.
+ */
+export const firstLaneWithCallable = (
+  snap: QueueSnapshot,
+  now: Temporal.Instant,
+  grace: Temporal.Duration,
+): Lane | null => {
+  const reservationHead = reservationsByDeadline(snap)[0]
+  if (reservationHead !== undefined && reservationHead.appointmentAt !== null) {
+    const cutoff = now.add(grace)
+    if (Temporal.Instant.compare(reservationHead.appointmentAt, cutoff) <= 0) {
+      return "reservation"
+    }
+  }
+  return firstLaneWithWaiting(snap)
+}
+
+/**
+ * ADR-0066 — slot capacity bookkeeping.
+ *
+ * Counts the Waiting / Called / Serving tickets whose
+ * `appointmentAt` equals the slot's `startAt` (the canonical
+ * bucket boundary in the business time zone). Used by the
+ * IssueTicket usecase as the capacity guard before applying the
+ * Issued transition: `slotOccupancy(snap, slot, tz) >= slot.capacity`
+ * rejects with `SlotFullError`.
+ *
+ * Cancelled / NoShow / Served / Marked tickets are not counted —
+ * those states release the slot.
+ */
+export const slotOccupancy = (snap: QueueSnapshot, slot: Slot, tz: BusinessTimeZone): number => {
+  const { startAt } = intervalOf(slot, tz)
+  let n = 0
+  for (const t of snap.tickets.values()) {
+    if (t.lane !== "reservation") continue
+    if (t.appointmentAt === null) continue
+    if (t.state !== "Waiting" && t.state !== "Called" && t.state !== "Serving") continue
+    if (Temporal.Instant.compare(t.appointmentAt, startAt) === 0) n += 1
+  }
+  return n
 }
 
 /**
