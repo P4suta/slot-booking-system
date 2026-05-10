@@ -49,6 +49,12 @@ let passed = 0
 let failed = 0
 const runnerErr = 0
 let progressTicks = 0
+let lastProgressMs = Date.now()
+// vitest-pool-workers spends up to ~10 s booting Miniflare between
+// test files; the watchdog must outlast that gap or we cut off the
+// next file before it starts. 30 s is comfortably above any
+// observed boot pause and well below the deadline.
+const IDLE_THRESHOLD_MS = 30_000
 
 // ---------------------------------------------------------------------------
 // Spawn vitest
@@ -96,6 +102,12 @@ rl.on("line", (line: string) => {
     default:
       progressTicks += 1
   }
+  // vitest-pool-workers 0.16 keeps Miniflare DO connections alive
+  // past the last CASE_END, so the runner never hits RUN_END / exits
+  // on its own. We track the wall clock of every progress event;
+  // the idle watchdog below SIGTERMs the child once `inFlight` is
+  // empty and the gap exceeds the idle window.
+  lastProgressMs = Date.now()
 })
 
 child.stderr.pipe(process.stderr)
@@ -119,6 +131,22 @@ const deadlineTimer = setTimeout(() => {
   child.kill("SIGTERM")
 }, deadlineSec * 1000)
 
+// Idle watchdog: when the child stops emitting events (`inFlight`
+// empty for ≥ IDLE_THRESHOLD_MS after at least one CASE_END), the
+// vitest-pool-workers hang has begun. Send SIGTERM early so the
+// runner does not waste the rest of the deadline window.
+const idleWatchdog = setInterval(() => {
+  if (progressTicks === 0 || inFlight.size > 0) return
+  if (Date.now() - lastProgressMs < IDLE_THRESHOLD_MS) return
+  process.stderr.write(
+    `[test-runner] ${filter}: idle ${String(IDLE_THRESHOLD_MS / 1000)}s after last event (passed=${String(
+      passed,
+    )}, failed=${String(failed)}); early SIGTERM\n`,
+  )
+  child.kill("SIGTERM")
+  clearInterval(idleWatchdog)
+}, 2_000)
+
 const hardKillTimer = setTimeout(
   () => {
     if (child.exitCode === null) {
@@ -138,6 +166,7 @@ const hardKillTimer = setTimeout(
 child.on("exit", (code, signal) => {
   clearTimeout(deadlineTimer)
   clearTimeout(hardKillTimer)
+  clearInterval(idleWatchdog)
   heartbeat.stop()
 
   const decision = classifyExit({

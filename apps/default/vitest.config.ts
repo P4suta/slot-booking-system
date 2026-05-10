@@ -24,6 +24,12 @@ export default defineConfig({
     // heartbeat consumer. Defined at the workspace root so both
     // projects (node + workers) share the same emit channel.
     reporters: ["verbose", "../../scripts/test/streamReporter.ts"],
+    // vitest-pool-workers 0.16 leaks Miniflare-side timers /
+    // sockets past `afterAll`; the host runner SIGTERMs once
+    // every test reports passed. A short teardownTimeout
+    // ensures vitest itself does not stall trying to await the
+    // lingering handles before that SIGTERM lands.
+    teardownTimeout: 5000,
     projects: [
       {
         test: {

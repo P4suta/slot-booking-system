@@ -134,7 +134,7 @@ const main = async (): Promise<number> => {
 
   process.stdout.write("[boot] dev-exec warmup ...\n")
   await new Promise<void>((resolve) => {
-    const warmup = spawnGroupLeader("bash", ["scripts/dev-exec.sh", "true"], { stdio: "ignore" })
+    const warmup = spawnGroupLeader("scripts/dev-exec.ts", ["true"], { stdio: "ignore" })
     warmup.on("exit", () => {
       resolve()
     })
