@@ -15,6 +15,7 @@ import {
   IssueTicketBodySchema,
   MyTicketQuerySchema,
   ReorderBodySchema,
+  SlotsQuerySchema,
   StaffCancelBodySchema,
 } from "./boundarySchemas.js"
 import { envelopeLog } from "./envelopeLog.js"
@@ -193,6 +194,9 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       },
       freeText: decoded.success.freeText,
       ...(decoded.success.lane !== undefined ? { lane: decoded.success.lane } : {}),
+      ...(decoded.success.appointmentAt !== undefined
+        ? { appointmentAt: decoded.success.appointmentAt }
+        : {}),
     }
     return dispatchEnvelope(await stub(c.env).dispatch(action), 201)
   })
@@ -218,6 +222,76 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return failResponse(403, "PhoneMismatch", "E_DOM_PHONE_MISMATCH")
     }
     return new Response(JSON.stringify({ ok: true, ticket }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    })
+  })
+
+  // POST /api/v1/tickets/:id/check-in — customer-side arrival audit
+  // for reservation tickets (ADR-0068). The CheckIn use case gates
+  // on Waiting+reservation+within-window; the void return surfaces
+  // as `{ ok: true }` (no `ticket` field) on the wire.
+  app.post("/api/v1/tickets/:id/check-in", async (c) => {
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    return dispatchEnvelope(await stub(c.env).dispatch({ type: "CheckIn", ticketId: idR.success }))
+  })
+
+  // GET /api/v1/slots — bucket-grid availability for the customer's
+  // /book picker (ADR-0066 / ADR-0068). Returns one row per bucket
+  // in the [from, to] window, with `taken` derived from the live
+  // reservation lane count and `capacity` from
+  // SLOT_DEFAULT_CAPACITY env (default 2). Does NOT consult the
+  // (optional) per-bucket `slots` override table — adding that lookup
+  // is a follow-on for shops that need per-bucket overrides.
+  app.get("/api/v1/slots", async (c) => {
+    const decoded = Schema.decodeUnknownResult(SlotsQuerySchema)({
+      from: c.req.query("from"),
+      to: c.req.query("to"),
+      granularity: Number(c.req.query("granularity")),
+    })
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const { from, to, granularity } = decoded.success
+    const capacity = Number(c.env.SLOT_DEFAULT_CAPACITY ?? 2)
+    const all = await stub(c.env).listTickets()
+    const reservations = all.filter(
+      (t) =>
+        t.lane === "reservation" &&
+        t.appointmentAt !== null &&
+        (t.state === "Waiting" || t.state === "Called" || t.state === "Serving"),
+    )
+    const granMs = granularity * 60 * 1000
+    const result: {
+      readonly date: string
+      readonly bucketId: number
+      readonly granularity: number
+      readonly capacity: number
+      readonly taken: number
+      readonly available: number
+    }[] = []
+    let cursor = from
+    while (cursor.toString() <= to.toString()) {
+      const dayStartMs = Date.UTC(cursor.year, cursor.month - 1, cursor.day)
+      for (let b = 0; b * granularity < 24 * 60; b += 1) {
+        const slotMs = dayStartMs + b * granMs
+        const taken = reservations.filter(
+          (t) => t.appointmentAt !== null && Date.parse(t.appointmentAt) === slotMs,
+        ).length
+        result.push({
+          date: cursor.toString(),
+          bucketId: b,
+          granularity,
+          capacity,
+          taken,
+          available: Math.max(0, capacity - taken),
+        })
+      }
+      cursor = cursor.add({ days: 1 })
+    }
+    return new Response(JSON.stringify({ ok: true, slots: result }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     })

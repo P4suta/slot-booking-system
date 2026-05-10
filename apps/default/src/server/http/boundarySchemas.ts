@@ -1,8 +1,11 @@
 import {
   firstFailedFieldKey,
+  InstantSchema,
   LaneSchema,
   NameKanaSchema,
   PhoneLast4Schema,
+  PlainDateSchema,
+  SlotGranularitySchema,
   TicketIdSchema,
 } from "@booking/core"
 import { Schema, type SchemaIssue } from "effect"
@@ -47,6 +50,12 @@ export const IssueTicketBodySchema = Schema.Struct({
   phoneLast4: PhoneLast4Schema,
   freeText: FreeTextOrNull,
   lane: Schema.optional(LaneSchema),
+  // ADR-0066. The HTTP boundary enforces the round-trip invariant
+  // `lane === "reservation" ⇔ appointmentAt !== null` at the use-
+  // case (AppointmentRequiredForReservationLaneError); the Schema
+  // takes both fields independently so the mismatch surfaces as a
+  // 422 boundary error rather than a generic InvalidPayload.
+  appointmentAt: Schema.optional(InstantSchema),
 })
 
 /**
@@ -104,6 +113,17 @@ export const StaffCancelBodySchema = Schema.Struct({
 })
 
 /**
+ * `GET /api/v1/slots?from=YYYY-MM-DD&to=YYYY-MM-DD&granularity=30`
+ * (ADR-0066 / ADR-0068). Returns `[ { slot, capacity, taken,
+ * available }, … ]` for the requested calendar range.
+ */
+export const SlotsQuerySchema = Schema.Struct({
+  from: PlainDateSchema,
+  to: PlainDateSchema,
+  granularity: SlotGranularitySchema,
+})
+
+/**
  * Decode-failure → response envelope. The boundary returns
  * `{ status, tag, code }` derived from the *first failed top-level
  * key* in the SchemaIssue tree.
@@ -131,6 +151,10 @@ const FIELD_FAILURE_MAP = {
   phoneLast4: { status: 422, tag: "InvalidPhoneLast4", code: "E_VAL_PHONE_LAST4" },
   freeText: { status: 422, tag: "InvalidFreeText", code: "E_VAL_FREE_TEXT" },
   lane: { status: 422, tag: "InvalidLane", code: "E_VAL_LANE" },
+  appointmentAt: { status: 422, tag: "InvalidPayload", code: "E_VAL_PAYLOAD" },
+  from: { status: 422, tag: "InvalidPayload", code: "E_VAL_PAYLOAD" },
+  to: { status: 422, tag: "InvalidPayload", code: "E_VAL_PAYLOAD" },
+  granularity: { status: 422, tag: "InvalidPayload", code: "E_VAL_PAYLOAD" },
 } as const satisfies Record<string, DecodeFailureEnvelope>
 
 const ROOT_FAILURE: DecodeFailureEnvelope = {

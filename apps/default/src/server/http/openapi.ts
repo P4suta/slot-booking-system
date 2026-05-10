@@ -56,6 +56,8 @@ const TICKET_SCHEMA = {
     servedAt: { type: "string", format: "date-time" },
     cancelledAt: { type: "string", format: "date-time" },
     markedAt: { type: "string", format: "date-time" },
+    appointmentAt: { type: ["string", "null"], format: "date-time" },
+    checkedInAt: { type: ["string", "null"], format: "date-time" },
   },
   additionalProperties: true,
 } as const
@@ -93,7 +95,7 @@ export const openApiDocument = {
     "/tickets": {
       post: {
         tags: ["customer"],
-        summary: "Issue a new ticket",
+        summary: "Issue a new ticket (walk-in or reservation, ADR-0066/0068)",
         requestBody: {
           required: true,
           content: {
@@ -105,12 +107,93 @@ export const openApiDocument = {
                   nameKana: { type: "string" },
                   phoneLast4: { type: "string", pattern: "^[0-9]{4}$" },
                   freeText: { type: ["string", "null"] },
+                  lane: { type: "string", enum: ["walkIn", "priority", "reservation"] },
+                  appointmentAt: { type: "string", format: "date-time" },
                 },
               },
             },
           },
         },
         responses: { "201": TICKET_ENVELOPE, "422": ERROR_RESPONSE, "429": ERROR_RESPONSE },
+      },
+    },
+    "/tickets/{id}/check-in": {
+      post: {
+        tags: ["customer"],
+        summary: "Customer-side arrival audit (reservation only, ADR-0068)",
+        parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": {
+            description: "CheckedIn event recorded",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["ok"],
+                  properties: { ok: { const: true } },
+                },
+              },
+            },
+          },
+          "404": ERROR_RESPONSE,
+          "409": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+        },
+      },
+    },
+    "/slots": {
+      get: {
+        tags: ["customer"],
+        summary: "Slot grid availability for the customer's booking picker (ADR-0066/0068)",
+        parameters: [
+          { in: "query", name: "from", required: true, schema: { type: "string", format: "date" } },
+          { in: "query", name: "to", required: true, schema: { type: "string", format: "date" } },
+          {
+            in: "query",
+            name: "granularity",
+            required: true,
+            schema: { type: "integer", enum: [15, 30, 60] },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Bucket grid with capacity / taken / available",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["ok", "slots"],
+                  properties: {
+                    ok: { const: true },
+                    slots: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        required: [
+                          "date",
+                          "bucketId",
+                          "granularity",
+                          "capacity",
+                          "taken",
+                          "available",
+                        ],
+                        properties: {
+                          date: { type: "string", format: "date" },
+                          bucketId: { type: "integer", minimum: 0 },
+                          granularity: { type: "integer", enum: [15, 30, 60] },
+                          capacity: { type: "integer", minimum: 0 },
+                          taken: { type: "integer", minimum: 0 },
+                          available: { type: "integer", minimum: 0 },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "422": ERROR_RESPONSE,
+        },
       },
     },
     "/tickets/me": {
