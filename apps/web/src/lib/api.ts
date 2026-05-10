@@ -190,6 +190,16 @@ export const listSlots = async (input: {
   return fetchJson(`${baseUrl()}/api/v1/slots?${params.toString()}`)
 }
 
+/**
+ * Customer-side arrival audit for reservation tickets (ADR-0068).
+ * Server returns `{ ok: true }` with no `ticket` field; the caller
+ * triggers a `myTicket` refresh to read the post-check-in state.
+ */
+export const checkIn = async (ticketId: string): Promise<ApiResult<Record<string, never>>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/check-in`, {
+    method: "POST",
+  })
+
 export const myTicket = async (input: {
   ticketId: string
   nameKana: string

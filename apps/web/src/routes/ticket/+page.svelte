@@ -3,6 +3,7 @@
   import { onDestroy, onMount } from "svelte"
   import {
     cancelTicket,
+    checkIn,
     connectQueueFeed,
     myTicket,
     type ProjectionEntry,
@@ -31,6 +32,51 @@
   let cancelBusy = $state(false)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
+  let now = $state(Date.now())
+  let checkInBusy = $state(false)
+  let countdownTick: ReturnType<typeof setInterval> | undefined
+
+  // ADR-0068: customer can hit 「到着しました」 once `now ≥ appointmentAt - 10min`.
+  const CHECK_IN_WINDOW_MS = 10 * 60 * 1000
+
+  const isReservation = $derived(
+    ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined,
+  )
+  const appointmentMs = $derived(
+    ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined
+      ? Date.parse(ticket.appointmentAt)
+      : null,
+  )
+  const minutesUntilAppointment = $derived(
+    appointmentMs !== null ? Math.round((appointmentMs - now) / 60000) : null,
+  )
+  const checkInAvailable = $derived(
+    appointmentMs !== null &&
+      ticket?.state === "Waiting" &&
+      ticket.checkedInAt === null &&
+      now >= appointmentMs - CHECK_IN_WINDOW_MS,
+  )
+  const alreadyCheckedIn = $derived(ticket?.checkedInAt !== null && ticket?.checkedInAt !== undefined)
+
+  const onCheckIn = async (): Promise<void> => {
+    if (stored === null || ticket === null) return
+    checkInBusy = true
+    try {
+      const r = await checkIn(stored.ticketId)
+      if (!r.ok) {
+        error = {
+          tag: r.error._tag,
+          code: r.error.code,
+          message: messageOf(r.error._tag),
+        }
+        return
+      }
+      // Refresh to read the new checkedInAt.
+      await refresh(stored)
+    } finally {
+      checkInBusy = false
+    }
+  }
 
   // ADR-0064: canonical URL `/ticket?id&k&p` is the source of truth;
   // sessionStorage is a cache. Read URL first, fall back only when
@@ -136,6 +182,10 @@
         return "番号が見つかりません。 名前 / 末尾 4 桁を確認してください"
       case "PhoneMismatch":
         return "名前または電話番号末尾が一致しません"
+      case "CheckInTooEarly":
+        return "受付開始時刻まで少々お待ちください"
+      case "AppointmentRequiredForReservationLane":
+        return "この操作は予約のチケットでのみ可能です"
       default:
         return "情報を取得できませんでした"
     }
@@ -186,9 +236,17 @@
         feedState = next
       },
     })
+    // 1Hz countdown tick — only mounts client-side via onMount, so
+    // SSR never spawns a setInterval that would never clear.
+    countdownTick = setInterval(() => {
+      now = Date.now()
+    }, 1000)
   })
 
-  onDestroy(() => feed?.close())
+  onDestroy(() => {
+    feed?.close()
+    if (countdownTick !== undefined) clearInterval(countdownTick)
+  })
 </script>
 
 <svelte:head>
@@ -220,7 +278,33 @@
       </span>
     </div>
 
-    {#if ticket.state === "Waiting" && positionInfo !== null}
+    {#if isReservation && minutesUntilAppointment !== null}
+      <Card>
+        <div class="appointment">
+          <span class="appointment-label">予約時刻</span>
+          <span class="appointment-time">{ticket.appointmentAt?.slice(11, 16) ?? ""}</span>
+          {#if alreadyCheckedIn}
+            <span class="appointment-badge badge-arrived">到着済み</span>
+          {:else if minutesUntilAppointment > 0}
+            <span class="appointment-countdown">
+              あと {minutesUntilAppointment} 分
+            </span>
+          {:else}
+            <span class="appointment-countdown overdue">時間です</span>
+          {/if}
+          {#if checkInAvailable && !alreadyCheckedIn}
+            <Button
+              size="md"
+              fullWidth
+              disabled={checkInBusy}
+              onclick={onCheckIn}
+            >
+              {checkInBusy ? "送信中…" : "到着しました"}
+            </Button>
+          {/if}
+        </div>
+      </Card>
+    {:else if ticket.state === "Waiting" && positionInfo !== null}
       <Card>
         <p class="position">
           あなたの前に <strong>{positionInfo}</strong> 人
@@ -362,6 +446,39 @@
     padding: var(--space-3) var(--space-4);
     margin: 0;
     text-align: center;
+  }
+  .appointment {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    align-items: center;
+    text-align: center;
+  }
+  .appointment-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+  }
+  .appointment-time {
+    font: var(--text-numeral-sm);
+    color: var(--color-fg-primary);
+  }
+  .appointment-countdown {
+    font: var(--text-body-md);
+    color: var(--color-fg-secondary);
+  }
+  .appointment-countdown.overdue {
+    color: var(--color-state-called);
+    font-weight: 600;
+  }
+  .appointment-badge {
+    display: inline-block;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    font: var(--text-label-sm);
+  }
+  .badge-arrived {
+    background: oklch(95% 0.07 145);
+    color: oklch(35% 0.13 145);
   }
   textarea {
     width: 100%;
