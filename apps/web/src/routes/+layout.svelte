@@ -116,6 +116,24 @@
   {@render children()}
 </main>
 
+{#if ws.tone === "error"}
+  <!--
+    Server connection lost. The chip in the header turns red but
+    that alone is easy to miss when the page renders other
+    content. A centered, floating banner makes the loss
+    unmissable so the customer knows their countdown / staff
+    knows the queue might be stale, without us blocking
+    interaction (they can still cancel, navigate, etc.).
+  -->
+  <div class="ws-alert" role="alert" aria-live="assertive">
+    <span class="ws-alert-icon" aria-hidden="true">!</span>
+    <div class="ws-alert-body">
+      <strong>{m.ws_status_closed()}</strong>
+      <span>表示が古い可能性があります。 復旧をお待ちください。</span>
+    </div>
+  </div>
+{/if}
+
 <style>
   header {
     background: var(--color-bg-subtle);
@@ -180,6 +198,45 @@
     .ws-label {
       display: none;
     }
+  }
+  .ws-alert {
+    position: fixed;
+    bottom: var(--space-6);
+    left: 50%;
+    transform: translateX(-50%);
+    background: oklch(95% 0.07 25);
+    color: oklch(35% 0.18 25);
+    border: 1px solid var(--color-state-danger);
+    border-radius: var(--radius-md);
+    padding: var(--space-4) var(--space-6);
+    box-shadow: var(--shadow-lg);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    max-width: min(36rem, calc(100vw - var(--space-8)));
+  }
+  .ws-alert-icon {
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-state-danger);
+    color: var(--color-bg-surface);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.25rem;
+    flex-shrink: 0;
+  }
+  .ws-alert-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    font: var(--text-body-sm);
+  }
+  .ws-alert-body strong {
+    font: var(--text-label-md);
   }
   .theme-toggle {
     background: transparent;

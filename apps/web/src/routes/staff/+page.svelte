@@ -44,13 +44,16 @@
   let prevWaitingCount: number | null = null
   let laneFilter: LaneFilter = $state("all")
   let search = $state("")
-  let batchN = $state(1)
   let selected: Set<string> = $state(new Set())
   let expanded: Set<string> = $state(new Set())
   let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
-  let audioCue = $state(
-    typeof window === "undefined" ? false : localStorage.getItem("queue.audioCue") === "1",
-  )
+  // Batch-call confirmation dialog. The previous design was a free
+  // number input + "先頭から呼ぶ" button on the topbar; a single
+  // mistyped digit could call 11 customers at once. The dialog
+  // restricts the choice to a preset (2 / 3 / 5) and requires an
+  // explicit confirmation step.
+  let batchDialogOpen = $state(false)
+  let batchDialogN: number = $state(2)
   let now = $state(Date.now())
   let slotChipTick: ReturnType<typeof setInterval> | undefined
 
@@ -110,27 +113,9 @@
     }
   }
 
-  /* ---------- desktop / audio cue ---------- */
+  /* ---------- desktop notification on new arrival ---------- */
   const notifyArrival = (delta: number): void => {
     const body = delta === 1 ? "新しい順番待ちが追加されました" : `${delta}件の新規順番待ち`
-    if (audioCue && typeof window !== "undefined") {
-      try {
-        const ctx = new AudioContext()
-        const o = ctx.createOscillator()
-        const g = ctx.createGain()
-        o.connect(g)
-        g.connect(ctx.destination)
-        o.frequency.value = 880
-        g.gain.value = 0.05
-        o.start()
-        setTimeout(() => {
-          o.stop()
-          void ctx.close()
-        }, 120)
-      } catch {
-        // AudioContext 不可 (insecure context, autoplay policy) — silent
-      }
-    }
     if (typeof Notification === "undefined") return
     if (Notification.permission !== "granted") return
     if (typeof document !== "undefined" && !document.hidden) return
@@ -257,13 +242,34 @@
     )
   }
 
-  const onCallNextBatch = () => {
-    const ids = filteredWaiting.slice(0, batchN).map((t) => t.id)
-    if (ids.length === 0) return
-    void runAction(
+  /**
+   * The primary action surfaced on the topbar — call the single
+   * next customer in line. Reuses `onCallNext` (no lane filter
+   * argument, so the preferred-lane chain in ADR-0062 decides
+   * which lane to pull from).
+   */
+  const onCallNextOne = (): Promise<void> => onCallNext()
+
+  /**
+   * Confirmed multi-customer call from the batch dialog. Pulls
+   * `batchDialogN` ticket ids from the head of `filteredWaiting`
+   * and fires `callBatch`. The dialog closes on success; on
+   * failure the dialog stays open so the operator sees the inline
+   * error before retrying.
+   */
+  const onCallBatchConfirm = async (): Promise<void> => {
+    const ids = filteredWaiting.slice(0, batchDialogN).map((t) => t.id)
+    if (ids.length === 0) {
+      batchDialogOpen = false
+      return
+    }
+    await runAction(
       "call-next-batch",
       () => callBatch(token, ids),
-      () => showToast(`${ids.length} 件を順次呼び出しました`, "info"),
+      () => {
+        showToast(`${ids.length} 件を順次呼び出しました`, "info")
+        batchDialogOpen = false
+      },
     )
   }
 
@@ -309,11 +315,6 @@
     if (next.has(id)) next.delete(id)
     else next.add(id)
     expanded = next
-  }
-
-  const onAudioToggle = () => {
-    audioCue = !audioCue
-    localStorage.setItem("queue.audioCue", audioCue ? "1" : "0")
   }
 
   /* ---------- lifecycle ---------- */
@@ -364,19 +365,6 @@
   <div class="staff">
     <!-- top bar -->
     <header class="topbar">
-      <div class="lane-chips" role="tablist" aria-label="レーン絞り込み">
-        {#each ["all", "walkIn", "priority", "reservation"] as filter}
-          <button
-            type="button"
-            role="tab"
-            class="chip"
-            data-active={laneFilter === filter ? "true" : undefined}
-            onclick={() => (laneFilter = filter as LaneFilter)}
-          >
-            {filter === "all" ? "全部" : filter === "priority" ? "優先" : filter === "reservation" ? "予約" : "通常"}
-          </button>
-        {/each}
-      </div>
       <input
         type="search"
         bind:value={search}
@@ -384,49 +372,20 @@
         aria-label="待機客を検索"
         class="search"
       />
-      <div class="batch">
-        <label class="batch-label">
-          <span class="batch-caption">順番に呼ぶ人数</span>
-          <input
-            type="number"
-            bind:value={batchN}
-            min="1"
-            max="20"
-            aria-label="順番に呼ぶ人数"
-          />
-        </label>
-        <Button variant="secondary" size="md" onclick={onCallNextBatch}>
-          先頭から呼ぶ
+      <div class="primary-action">
+        <Button variant="primary" size="md" onclick={onCallNextOne} disabled={busy}>
+          {m.call_next_one_button()}
         </Button>
+        <button
+          type="button"
+          class="batch-link"
+          onclick={() => (batchDialogOpen = true)}
+          disabled={busy}
+        >
+          {m.call_next_batch_link()}
+        </button>
       </div>
       <div class="meta">
-        <span
-          class="dot"
-          data-state={feedState}
-          title={feedState === "open"
-            ? "通信は正常です"
-            : feedState === "reconnecting"
-              ? "サーバに再接続しています"
-              : feedState === "connecting"
-                ? "サーバに接続中です"
-                : "通信が切断されています"}
-          aria-label={feedState === "open"
-            ? "通信状態: 正常"
-            : feedState === "reconnecting"
-              ? "通信状態: 再接続中"
-              : feedState === "connecting"
-                ? "通信状態: 接続中"
-                : "通信状態: 切断"}
-        ></span>
-        <Button
-          variant="ghost"
-          size="md"
-          onclick={onAudioToggle}
-          title={audioCue ? "呼び出し時の音を鳴らさないようにする" : "呼び出し時に音を鳴らす"}
-          aria-label={audioCue ? "呼出音をオフにする" : "呼出音をオンにする"}
-        >
-          {audioCue ? "🔔" : "🔕"}
-        </Button>
         <Button variant="ghost" size="md" onclick={onLogout}>ログアウト</Button>
       </div>
     </header>
@@ -438,7 +397,30 @@
     <!-- 4-column kanban -->
     <div class="kanban">
       <section class="col">
-        <header><h2>待機 ({filteredWaiting.length} / {waitingCount})</h2></header>
+        <header class="col-header">
+          <h2>待機 ({filteredWaiting.length} / {waitingCount})</h2>
+          <div class="lane-filter" role="radiogroup" aria-label="待機列の種別絞り込み">
+            <span class="filter-label">{m.filter_label()}</span>
+            {#each ["all", "walkIn", "priority", "reservation"] as filter}
+              <button
+                type="button"
+                role="radio"
+                class="chip"
+                aria-checked={laneFilter === filter}
+                data-active={laneFilter === filter ? "true" : undefined}
+                onclick={() => (laneFilter = filter as LaneFilter)}
+              >
+                {filter === "all"
+                  ? "全部"
+                  : filter === "priority"
+                    ? "優先"
+                    : filter === "reservation"
+                      ? "予約"
+                      : "通常"}
+              </button>
+            {/each}
+          </div>
+        </header>
         <div class="cards">
           {#each filteredWaiting as t (t.id)}
             <Card interactive>
@@ -661,6 +643,45 @@
       </footer>
     {/if}
 
+    <!-- batch confirmation dialog -->
+    <Dialog
+      bind:open={batchDialogOpen}
+      title={m.call_batch_dialog_title()}
+      onClose={() => (batchDialogOpen = false)}
+    >
+      <p>{m.call_batch_dialog_intro()}</p>
+      <div class="batch-preset" role="radiogroup" aria-label="呼ぶ人数">
+        {#each [2, 3, 5] as preset}
+          <button
+            type="button"
+            role="radio"
+            class="chip preset-chip"
+            aria-checked={batchDialogN === preset}
+            data-active={batchDialogN === preset ? "true" : undefined}
+            onclick={() => (batchDialogN = preset)}
+          >
+            {preset} 人
+          </button>
+        {/each}
+      </div>
+      <p class="batch-note">
+        待機列の先頭から {batchDialogN} 人を順番に呼び出します。
+        現在の待機列は {filteredWaiting.length} 人です。
+      </p>
+      {#snippet actions()}
+        <Button variant="ghost" onclick={() => (batchDialogOpen = false)} disabled={busy}>
+          {m.call_batch_dialog_cancel()}
+        </Button>
+        <Button
+          variant="primary"
+          onclick={onCallBatchConfirm}
+          disabled={busy || filteredWaiting.length === 0}
+        >
+          {m.call_batch_dialog_confirm({ count: String(batchDialogN) })}
+        </Button>
+      {/snippet}
+    </Dialog>
+
     <!-- toast -->
     {#if toast !== null}
       <div class="toast-host">
@@ -727,10 +748,6 @@
     margin-bottom: var(--space-4);
     flex-shrink: 0;
   }
-  .lane-chips {
-    display: flex;
-    gap: var(--space-2);
-  }
   .chip {
     background: transparent;
     color: var(--color-fg-secondary);
@@ -738,6 +755,7 @@
     border-radius: var(--radius-pill);
     padding: var(--space-2) var(--space-4);
     font: var(--text-label-sm);
+    cursor: pointer;
   }
   .chip[data-active="true"] {
     background: var(--color-fg-primary);
@@ -748,23 +766,29 @@
     flex: 1;
     min-width: 12rem;
   }
-  .batch {
-    display: flex;
-    gap: var(--space-2);
-    align-items: flex-end;
-  }
-  .batch-label {
+  .primary-action {
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     gap: var(--space-1);
   }
-  .batch-caption {
-    font: var(--text-label-sm);
+  .batch-link {
+    background: transparent;
+    border: 0;
+    padding: 0;
     color: var(--color-fg-secondary);
+    font: var(--text-body-sm);
+    text-decoration: underline;
+    cursor: pointer;
+    text-align: center;
   }
-  .batch input {
-    width: 4rem;
-    padding: var(--space-2);
+  .batch-link:hover:not(:disabled),
+  .batch-link:focus-visible {
+    color: var(--color-fg-primary);
+  }
+  .batch-link:disabled {
+    color: var(--color-fg-muted);
+    cursor: not-allowed;
   }
   .meta {
     display: flex;
@@ -772,20 +796,35 @@
     align-items: center;
     margin-left: auto;
   }
-  .dot {
-    width: 0.75rem;
-    height: 0.75rem;
-    border-radius: var(--radius-pill);
-    background: var(--color-fg-muted);
+  .col-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
-  .dot[data-state="open"] {
-    background: var(--color-state-serving);
+  .lane-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
   }
-  .dot[data-state="reconnecting"] {
-    background: var(--color-state-called);
+  .filter-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
   }
-  .dot[data-state="closed"] {
-    background: var(--color-state-danger);
+  .batch-preset {
+    display: flex;
+    gap: var(--space-2);
+    margin: var(--space-3) 0;
+  }
+  .preset-chip {
+    flex: 1;
+    padding: var(--space-3) var(--space-4);
+    font: var(--text-body-md);
+  }
+  .batch-note {
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
+    margin: 0;
   }
   .error {
     background: oklch(95% 0.05 25);
