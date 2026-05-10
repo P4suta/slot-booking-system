@@ -34,6 +34,24 @@
     inputs[idx]?.select()
   }
 
+  /**
+   * Reject the character before it lands in the input. `onbeforeinput`
+   * fires synchronously with `event.data` set to the to-be-inserted
+   * string; calling `preventDefault()` cancels the insertion. On
+   * desktop the user never sees a non-digit flicker; on mobile the
+   * numeric keypad is doing its own filtering already.
+   *
+   * `inputType === "insertFromPaste"` is allowed through — paste is
+   * handled in `onPaste` (multi-char distribution). Composition events
+   * (IME) for digit input are equally allowed through.
+   */
+  const onBeforeInput = (event: InputEvent): void => {
+    if (event.inputType === "insertFromPaste") return
+    if (event.data === null || event.data === "") return
+    if (/^\d+$/.test(event.data)) return
+    event.preventDefault()
+  }
+
   const onInput = (idx: number, event: Event): void => {
     const el = event.currentTarget as HTMLInputElement
     const raw = el.value.replace(/\D/g, "")
@@ -115,6 +133,7 @@
         maxlength="1"
         autocomplete={i === 0 ? autocomplete : "off"}
         value={digit}
+        onbeforeinput={onBeforeInput}
         oninput={(e) => onInput(i, e)}
         onkeydown={(e) => onKeydown(i, e)}
         onpaste={(e) => onPaste(i, e)}

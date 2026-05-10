@@ -1,3 +1,4 @@
+import type { Temporal } from "@js-temporal/polyfill"
 import { Effect } from "effect"
 import type { ConcurrencyError, StorageError } from "../../../domain/errors/Errors.js"
 import type { Lane } from "../../../domain/queue/Lane.js"
@@ -17,6 +18,7 @@ export type IssueTicketInput = {
   readonly handle: CustomerHandle
   readonly freeText: FreeText | null
   readonly lane?: Lane
+  readonly appointmentAt?: Temporal.Instant | null
 }
 
 /**
@@ -34,6 +36,13 @@ export type IssueTicketInput = {
  * `lane` defaults to `"walkIn"` when omitted — operators expose the
  * lane choice only on the staff-side issue flow; the customer-facing
  * `/issue` form leaves it blank (ADR-0062).
+ *
+ * `appointmentAt` defaults to `null` for walk-in / priority tickets;
+ * the reservation flow (ADR-0066 / ADR-0068) sets it to the booked
+ * slot start instant. The invariant
+ * `lane === "reservation" ⇔ appointmentAt !== null` is enforced at
+ * the HTTP boundary and pinned by domain property test; this use
+ * case forwards whatever the caller supplied.
  */
 export const IssueTicket = (
   input: IssueTicketInput,
@@ -44,7 +53,18 @@ export const IssueTicket = (
 > =>
   Effect.gen(function* () {
     const repo = yield* TicketRepository
+    // ADR-0069: handle is the active-set primary key. A second issue
+    // with the same `(nameKana, phoneLast4)` while a prior ticket is
+    // still active short-circuits to the existing ticket — the
+    // customer recovery flow and the "double issue" guard collapse
+    // into the same primitive. Lane / appointmentAt / freeText
+    // supplied to the merged call are deliberately ignored; the
+    // first issue's intent is authoritative until the ticket leaves
+    // the active set (Served / Cancelled / NoShow).
+    const existing = yield* repo.findActiveByHandle(input.handle)
+    if (existing !== null) return existing
     const lane: Lane = input.lane ?? "walkIn"
+    const appointmentAt = input.appointmentAt ?? null
     const all = yield* repo.listAll()
     const tickets = new Map<TicketId, Ticket>()
     for (const t of all) tickets.set(t.id, t)
@@ -60,6 +80,7 @@ export const IssueTicket = (
           nameKana: input.handle.nameKana,
           phoneLast4: input.handle.phoneLast4,
           freeText: input.freeText,
+          appointmentAt,
           at,
           eventId,
         }),

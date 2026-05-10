@@ -1,3 +1,11 @@
+import {
+  BusinessTimeZoneSchema,
+  constantTimeStringEqual,
+  intervalOf,
+  reservationsByDeadline,
+  type Slot,
+  TicketSchema,
+} from "@booking/core"
 import { Result, Schema } from "effect"
 import { Hono } from "hono"
 import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
@@ -6,6 +14,7 @@ import { readSessionCookie, verifySession } from "../security/session.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
 import { handleStaffLogin } from "./auth/login.js"
 import {
+  ByHandleQuerySchema,
   CallBatchBodySchema,
   CallNextBodySchema,
   CallSpecificBodySchema,
@@ -15,6 +24,8 @@ import {
   IssueTicketBodySchema,
   MyTicketQuerySchema,
   ReorderBodySchema,
+  RescheduleBodySchema,
+  SlotsQuerySchema,
   StaffCancelBodySchema,
 } from "./boundarySchemas.js"
 import { envelopeLog } from "./envelopeLog.js"
@@ -59,7 +70,13 @@ const dispatchEnvelope = (result: QueueResult, status = 200): Response => {
     const body =
       "tickets" in result
         ? { ok: true, tickets: result.tickets }
-        : { ok: true, ticket: result.ticket }
+        : "ticket" in result
+          ? {
+              ok: true,
+              ticket: result.ticket,
+              ...(result.merged === true ? { merged: true } : {}),
+            }
+          : { ok: true }
     return new Response(JSON.stringify(body), {
       status,
       headers: { "content-type": "application/json; charset=utf-8" },
@@ -191,12 +208,27 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       },
       freeText: decoded.success.freeText,
       ...(decoded.success.lane !== undefined ? { lane: decoded.success.lane } : {}),
+      // String-encode at the wire — the DO RPC boundary serialises
+      // every arg through structuredClone, which rejects
+      // Temporal.Instant. The DO dispatch decodes via core's
+      // InstantSchema before handing off to the use case.
+      ...(decoded.success.appointmentAt !== undefined
+        ? { appointmentAt: String(decoded.success.appointmentAt) }
+        : {}),
     }
-    return dispatchEnvelope(await stub(c.env).dispatch(action), 201)
+    // ADR-0069: idempotent merge surfaces as 200 OK; a fresh issue
+    // remains 201 Created. The body carries `merged: true` on the
+    // merged variant so the web client can show "this is your
+    // existing ticket" rather than a fresh-issue label.
+    const result = await stub(c.env).dispatch(action)
+    const merged = result.ok && "ticket" in result && result.merged === true
+    return dispatchEnvelope(result, merged ? 200 : 201)
   })
 
-  // GET /api/v1/tickets/me — customer self-fetch (handle in querystring)
-  app.get("/api/v1/tickets/me", async (c) => {
+  // GET /api/v1/tickets/me — customer self-fetch (handle in querystring).
+  // Rate-limited per CF-Connecting-IP (RL_VERIFY, 30 / min) to slow
+  // (kana, last4) brute force on a known ticketId — see ADR-0058.
+  app.get("/api/v1/tickets/me", rateLimitMiddleware("RL_VERIFY"), async (c) => {
     const decoded = Schema.decodeUnknownResult(MyTicketQuerySchema)({
       ticketId: c.req.query("ticketId"),
       nameKana: c.req.query("nameKana"),
@@ -206,16 +238,190 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       const fail = dispatchDecodeFailure(decoded.failure)
       return failResponse(fail.status, fail.tag, fail.code)
     }
-    const all = await stub(c.env).listTickets()
-    const ticket = all.find((t) => t.id === decoded.success.ticketId)
-    if (ticket === undefined) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    if (
-      ticket.nameKana !== decoded.success.nameKana ||
-      ticket.phoneLast4 !== decoded.success.phoneLast4
-    ) {
+    // Direct primary-key lookup (O(log N) on the SQLite btree)
+    // — the previous `listTickets()` + `Array.find` was O(N) JSON-
+    // decode per request, which doubled as a DoS lever for an
+    // attacker probing /tickets/me at the RL_VERIFY ceiling.
+    const ticket = await stub(c.env).getTicketById(decoded.success.ticketId)
+    if (ticket === null) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    // Constant-time compare on both components (CWE-208). Without
+    // this an attacker who knows the ticketId can narrow the
+    // (kana, last4) pair via response-timing differential between
+    // "kana wrong" (short-circuit on first byte) and "kana right +
+    // last4 wrong" (full kana scan + last4 check). Both checks
+    // always run before the post-evaluation `||` so the response-
+    // time signal does not distinguish which component failed.
+    const kanaOK = constantTimeStringEqual(ticket.nameKana, decoded.success.nameKana)
+    const phoneOK = constantTimeStringEqual(ticket.phoneLast4, decoded.success.phoneLast4)
+    if (!kanaOK || !phoneOK) {
       return failResponse(403, "PhoneMismatch", "E_DOM_PHONE_MISMATCH")
     }
     return new Response(JSON.stringify({ ok: true, ticket }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    })
+  })
+
+  // GET /api/v1/tickets/by-handle?k&p — customer recovery primitive
+  // (ADR-0069). The handle is the active-set primary key, so a 200
+  // response carries the single active ticket for the supplied
+  // (nameKana, phoneLast4); 404 means "no active ticket". Same
+  // RL_VERIFY ceiling as /tickets/me, mitigating the (kana × last4)
+  // enumeration oracle.
+  app.get("/api/v1/tickets/by-handle", rateLimitMiddleware("RL_VERIFY"), async (c) => {
+    const decoded = Schema.decodeUnknownResult(ByHandleQuerySchema)({
+      nameKana: c.req.query("nameKana"),
+      phoneLast4: c.req.query("phoneLast4"),
+    })
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const ticket = await stub(c.env).getByHandle(decoded.success)
+    if (ticket === null) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    return new Response(JSON.stringify({ ok: true, ticket }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    })
+  })
+
+  // POST /api/v1/tickets/:id/check-in — customer-side arrival audit
+  // for reservation tickets (ADR-0068). The CheckIn use case gates
+  // on Waiting+reservation+within-window; the void return surfaces
+  // as `{ ok: true }` (no `ticket` field) on the wire.
+  app.post("/api/v1/tickets/:id/check-in", rateLimitMiddleware("RL_VERIFY"), async (c) => {
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    return dispatchEnvelope(await stub(c.env).dispatch({ type: "CheckIn", ticketId: idR.success }))
+  })
+
+  // POST /api/v1/tickets/:id/reschedule — atomic appointmentAt swap
+  // (ADR-0070). Customer path (handle in body) or staff path (token
+  // via x-staff-token). The new slot's capacity is checked excluding
+  // the ticket itself so a same-slot reschedule is a no-op success.
+  app.post("/api/v1/tickets/:id/reschedule", rateLimitMiddleware("RL_VERIFY"), async (c) => {
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok)
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    const decoded = Schema.decodeUnknownResult(RescheduleBodySchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const isStaff =
+      c.env.STAFF_SESSION_SECRET !== undefined &&
+      c.req.header("x-staff-token") === c.env.STAFF_SESSION_SECRET
+    // NaN-safe coercion: `Number("")` and `Number("abc")` both yield
+    // NaN. Without the `|| <default>` arm a NaN capacity would slip
+    // past every comparison and accept every booking, and a NaN
+    // granularity would corrupt `bucketOf`.
+    const granularity = (Number(c.env.SLOT_DEFAULT_GRANULARITY) || 30) as 15 | 30 | 60
+    // Defensive default: the wrangler binding ships "Asia/Tokyo" by
+    // default; this fallback covers the (unlikely) misconfigured
+    // deploy that strips the binding. Without the fallback the
+    // reschedule path would crash on the slot computation; with it
+    // the customer's clock continues to make sense.
+    const tz = c.env.DEPLOYMENT_TIMEZONE ?? "Asia/Tokyo"
+    const capacity = Number(c.env.SLOT_DEFAULT_CAPACITY) || 2
+    const handle =
+      !isStaff && decoded.success.nameKana !== undefined && decoded.success.phoneLast4 !== undefined
+        ? {
+            nameKana: decoded.success.nameKana,
+            phoneLast4: decoded.success.phoneLast4,
+          }
+        : undefined
+    if (!isStaff && handle === undefined) {
+      return failResponse(422, "InvalidBody", "E_VAL_BODY")
+    }
+    return dispatchEnvelope(
+      await stub(c.env).dispatch({
+        type: "RescheduleTicket",
+        ticketId: idR.success,
+        newAppointmentAt: decoded.success.newAppointmentAt,
+        granularity,
+        tz,
+        capacity,
+        actor: isStaff ? "staff" : "customer",
+        ...(handle !== undefined ? { handle } : {}),
+      }),
+    )
+  })
+
+  // GET /api/v1/slots — bucket-grid availability for the customer's
+  // /book picker (ADR-0066 / ADR-0068). Returns one row per bucket
+  // in the [from, to] window, with `taken` derived from the live
+  // reservation lane count and `capacity` from
+  // SLOT_DEFAULT_CAPACITY env (default 2). Does NOT consult the
+  // (optional) per-bucket `slots` override table — adding that lookup
+  // is a follow-on for shops that need per-bucket overrides.
+  app.get("/api/v1/slots", async (c) => {
+    const decoded = Schema.decodeUnknownResult(SlotsQuerySchema)({
+      from: c.req.query("from"),
+      to: c.req.query("to"),
+      granularity: Number(c.req.query("granularity")),
+    })
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const { from, to, granularity } = decoded.success
+    // NaN-safe — empty string or non-numeric env value falls back
+    // to the canonical default (2 per shop bucket).
+    const capacity = Number(c.env.SLOT_DEFAULT_CAPACITY) || 2
+    // The bucket→instant projection lives in the business time zone
+    // (ADR-0066 §morphism); a JST deployment computes 09:00 buckets
+    // at JST 09:00 = 00:00 UTC, not 09:00 UTC. `intervalOf` is the
+    // canonical morphism — using it here means the slot endpoint
+    // matches `slotOccupancy`'s aggregation path inside the DO.
+    const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)(
+      c.env.DEPLOYMENT_TIMEZONE ?? "Asia/Tokyo",
+    )
+    const all = await stub(c.env).listTickets()
+    const reservations = all.filter(
+      (t) =>
+        t.lane === "reservation" &&
+        t.appointmentAt !== null &&
+        (t.state === "Waiting" || t.state === "Called" || t.state === "Serving"),
+    )
+    const reservationStartMs = reservations.map((t) =>
+      t.appointmentAt !== null ? Date.parse(t.appointmentAt) : Number.NaN,
+    )
+    const result: {
+      readonly date: string
+      readonly bucketId: number
+      readonly granularity: number
+      readonly capacity: number
+      readonly taken: number
+      readonly available: number
+    }[] = []
+    let cursor = from
+    while (cursor.toString() <= to.toString()) {
+      for (let b = 0; b * granularity < 24 * 60; b += 1) {
+        const slot: Slot = {
+          date: cursor,
+          bucketId: b as never,
+          granularity,
+          capacity,
+        }
+        const slotStartMs = intervalOf(slot, tz).startAt.epochMilliseconds
+        let taken = 0
+        for (const ms of reservationStartMs) {
+          if (ms === slotStartMs) taken += 1
+        }
+        result.push({
+          date: cursor.toString(),
+          bucketId: b,
+          granularity,
+          capacity,
+          taken,
+          available: Math.max(0, capacity - taken),
+        })
+      }
+      cursor = cursor.add({ days: 1 })
+    }
+    return new Response(JSON.stringify({ ok: true, slots: result }), {
       status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
     })
@@ -225,7 +431,10 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   // must run **before** the path-param TicketId decode so a
   // malformed body surfaces as a distinct 400 InvalidPayload (C7);
   // id-shape failures fall through to the standard 404 TicketNotFound.
-  app.post("/api/v1/tickets/:id/cancel", async (c) => {
+  // Rate-limited per IP for the customer path (the staff cookie / JWT
+  // route falls back to RL_OPERATE — applied below after the actor
+  // is identified).
+  app.post("/api/v1/tickets/:id/cancel", rateLimitMiddleware("RL_VERIFY"), async (c) => {
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
       return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
@@ -270,10 +479,12 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     )
   })
 
-  // GET /api/v1/queue — shop projection v2 (ADR-0062 / 0063 / 0065).
-  // Anonymous payload exposes lane / displaySeq + calling[] +
-  // serving[] arrays; staff payload carries the full ticket rows
-  // (PII inclusive).
+  // GET /api/v1/queue — shop projection v3 (ADR-0062 / 0063 /
+  // 0065 / 0066 / 0067). Anonymous payload exposes lane /
+  // displaySeq / appointmentAt + calling[] + serving[] arrays;
+  // staff payload carries the full ticket rows (PII inclusive).
+  // `nextReservationDeadline` mirrors the WS broadcast field so
+  // initial-load and live-update paths converge on the same shape.
   app.get("/api/v1/queue", async (c) => {
     const tickets = await stub(c.env).listTickets()
     const waiting = tickets
@@ -285,14 +496,34 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const serving = tickets
       .filter((t) => t.state === "Serving")
       .sort((a, b) => a.displaySeq - b.displaySeq)
+    // ADR-0069 §Stage 11 — staff 履歴 column needs the recent terminal
+    // tickets so an operator can see what just finished. `seq` is
+    // monotone over the queue's lifetime, so sorting desc + slicing 8
+    // gives a stable "newest first" recency proxy without a time
+    // index. Anonymous projection does not include this slice (no
+    // benefit to the public landing, plus PII via seq position).
+    const terminalRecent = tickets
+      .filter((t) => t.state === "Served" || t.state === "Cancelled" || t.state === "NoShow")
+      .sort((a, b) => b.seq - a.seq)
+      .slice(0, 8)
     const project = (t: (typeof tickets)[number]) => ({
       id: t.id,
       seq: t.seq,
       lane: t.lane,
       displaySeq: t.displaySeq,
+      appointmentAt: t.appointmentAt,
     })
     const laneCount = (lane: "walkIn" | "priority" | "reservation") =>
       waiting.filter((t) => t.lane === lane).length
+    // Compute the EDF next-deadline from the encoded snapshot. The
+    // helper expects decoded Tickets, so we round-trip via Schema.
+    const decodedWaiting = waiting.map((w) => Schema.decodeUnknownSync(TicketSchema)(w))
+    const decodedMap = new Map(decodedWaiting.map((t) => [t.id, t] as const))
+    const ranked = reservationsByDeadline({ tickets: decodedMap })
+    const nextReservationDeadline =
+      ranked[0]?.appointmentAt !== null && ranked[0]?.appointmentAt !== undefined
+        ? String(ranked[0].appointmentAt)
+        : null
     const isStaff =
       c.env.STAFF_SESSION_SECRET !== undefined &&
       c.req.header("x-staff-token") === c.env.STAFF_SESSION_SECRET
@@ -300,7 +531,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return new Response(
         JSON.stringify({
           ok: true,
-          v: 2,
+          v: 3,
           waitingCount: waiting.length,
           laneCounts: {
             walkIn: laneCount("walkIn"),
@@ -310,6 +541,8 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
           calling,
           serving,
           waitingPreview: waiting.slice(0, 20),
+          terminal: terminalRecent,
+          nextReservationDeadline,
         }),
         { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
       )
@@ -317,7 +550,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return new Response(
       JSON.stringify({
         ok: true,
-        v: 2,
+        v: 3,
         waitingCount: waiting.length,
         laneCounts: {
           walkIn: laneCount("walkIn"),
@@ -327,6 +560,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         calling: calling.map(project),
         serving: serving.map(project),
         waitingPreview: waiting.slice(0, 10).map(project),
+        nextReservationDeadline,
       }),
       { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
     )

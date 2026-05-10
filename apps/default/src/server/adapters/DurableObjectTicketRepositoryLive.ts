@@ -36,15 +36,18 @@ ON CONFLICT(ticket_id) DO UPDATE SET
 const TICKET_INSERT_SQL = `INSERT INTO tickets (
   id, seq, state, name_kana, phone_last4, free_text, issued_at,
   called_at, served_at, cancelled_at, marked_at,
+  appointment_at, checked_in_at,
   reason, cancelled_by, called_by, served_by, marked_by,
   payload, revision
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   state = excluded.state,
   called_at = excluded.called_at,
   served_at = excluded.served_at,
   cancelled_at = excluded.cancelled_at,
   marked_at = excluded.marked_at,
+  appointment_at = excluded.appointment_at,
+  checked_in_at = excluded.checked_in_at,
   reason = excluded.reason,
   cancelled_by = excluded.cancelled_by,
   called_by = excluded.called_by,
@@ -70,6 +73,8 @@ const ticketColumns = (
   "servedAt" in next ? String(next.servedAt) : null,
   "cancelledAt" in next ? String(next.cancelledAt) : null,
   "markedAt" in next ? String(next.markedAt) : null,
+  next.appointmentAt !== null ? String(next.appointmentAt) : null,
+  next.checkedInAt !== null ? String(next.checkedInAt) : null,
   "reason" in next ? next.reason : null,
   "cancelledBy" in next ? next.cancelledBy : null,
   "calledBy" in next ? next.calledBy : null,
@@ -329,5 +334,28 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           )
         },
         catch: (e) => new StorageError({ reason: "listAll", cause: e }),
+      }),
+    findActiveByHandle: (handle) =>
+      Effect.try({
+        try: () => {
+          // Active-set lookup (ADR-0069). Filtered SELECT against the
+          // projection table — the partial UNIQUE index defined in
+          // schema.ts (`uq_tickets_handle_active`) makes this O(log N)
+          // for the index lookup, and the WHERE state IN (...) clause
+          // matches the index's partial predicate so the query planner
+          // serves the read directly off the index. Returns null when
+          // the active set holds no ticket with the supplied handle.
+          const rows = sql
+            .exec(
+              "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','Serving') LIMIT 1",
+              handle.nameKana,
+              handle.phoneLast4,
+            )
+            .toArray()
+          const row = rows[0]
+          if (row === undefined) return null
+          return Schema.decodeUnknownSync(TicketSchema)(JSON.parse(row.payload as string))
+        },
+        catch: (e) => new StorageError({ reason: "findActiveByHandle", cause: e }),
       }),
   })

@@ -21,7 +21,7 @@ export type Handle = {
 export type Lane = "walkIn" | "priority" | "reservation"
 
 export const issueTicket = (
-  body: { handle: Handle; freeText: string | null; lane?: Lane },
+  body: { handle: Handle; freeText: string | null; lane?: Lane; appointmentAt?: string },
   init: { readonly headers?: Record<string, string> } = {},
 ) =>
   buildRequest("/api/v1/tickets", {
@@ -32,12 +32,30 @@ export const issueTicket = (
       phoneLast4: body.handle.phoneLast4,
       freeText: body.freeText,
       ...(body.lane !== undefined ? { lane: body.lane } : {}),
+      ...(body.appointmentAt !== undefined ? { appointmentAt: body.appointmentAt } : {}),
     }),
   })
+
+export const checkInTicket = (ticketId: string) =>
+  buildRequest(`/api/v1/tickets/${ticketId}/check-in`, { method: "POST" })
+
+export const listSlots = (query: { from: string; to: string; granularity: 15 | 30 | 60 }) => {
+  const params = new URLSearchParams({
+    from: query.from,
+    to: query.to,
+    granularity: String(query.granularity),
+  })
+  return buildRequest(`/api/v1/slots?${params.toString()}`)
+}
 
 export const myTicket = (query: { ticketId: string; nameKana: string; phoneLast4: string }) => {
   const params = new URLSearchParams(query)
   return buildRequest(`/api/v1/tickets/me?${params.toString()}`)
+}
+
+export const ticketByHandle = (query: { nameKana: string; phoneLast4: string }) => {
+  const params = new URLSearchParams(query)
+  return buildRequest(`/api/v1/tickets/by-handle?${params.toString()}`)
 }
 
 export const cancelTicket = (ticketId: string, body: { handle: Handle; reason: string }) =>

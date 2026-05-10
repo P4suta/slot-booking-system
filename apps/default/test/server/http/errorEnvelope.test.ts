@@ -29,7 +29,7 @@ import {
 const KNOWN_HTTP_STATUSES = [403, 404, 409, 422, 500] as const
 
 // `Schema.TaggedErrorClass` doesn't expose the tag as a class-side
-// static, so we list the registry's 18 tag strings here. The
+// static, so we list the registry's 22 tag strings here. The
 // readonly array literal is checked against `DomainError["_tag"]`
 // at compile time — adding a new error class without updating the
 // matrix fails type-check immediately. The `length === registry`
@@ -51,6 +51,10 @@ const REGISTRY_TAGS: readonly DomainError["_tag"][] = [
   "InvalidStateTransition",
   "InsufficientCapability",
   "LaneMismatch",
+  "SlotFull",
+  "SlotInPast",
+  "AppointmentRequiredForReservationLane",
+  "CheckInTooEarly",
   "AggregateNotFound",
   "Concurrency",
   "Storage",
@@ -69,10 +73,10 @@ afterEach(() => {
   __setEnvelopeLogTap(null)
 })
 
-describe("errorClassRegistry × statusForTag (18/18 matrix)", () => {
-  it("registry has 18 error classes (ADR-0009 + ADR-0065 LaneMismatch)", () => {
-    expect(errorClassRegistry.length).toBe(18)
-    expect(REGISTRY_TAGS.length).toBe(18)
+describe("errorClassRegistry × statusForTag (22/22 matrix)", () => {
+  it("registry has 22 error classes (ADR-0009 + ADR-0065 LaneMismatch + ADR-0066/0068 reservation 4)", () => {
+    expect(errorClassRegistry.length).toBe(22)
+    expect(REGISTRY_TAGS.length).toBe(22)
   })
 
   it("every registry tag maps to a known HTTP status", () => {

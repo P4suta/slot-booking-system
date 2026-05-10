@@ -12,9 +12,12 @@ import { authenticateCustomer, loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * CancelTicket — Waiting | Called → Cancelled. Both customer (with
- * handle) and staff (no handle, capability already verified
- * upstream) call into this use case; the actor field records who.
+ * CancelTicket — Waiting | Called | Serving → Cancelled. Both
+ * customer (with handle) and staff (no handle, capability already
+ * verified upstream) call into this use case; the actor field
+ * records who. Serving is allowed so a mistaken `StartServing`
+ * (= staff misclick) and a customer-initiated mid-service abort
+ * both have a path; the `reason` captures the operational context.
  *
  * Customer path performs handle verification through
  * `authenticateCustomer`; staff path skips it and just loads.
@@ -40,14 +43,19 @@ export const CancelTicket = (
     // here that no input can exercise. Suppress just that artefact.
     /* v8 ignore next */
     if (terminal !== null) return yield* Effect.fail(terminal)
-    // `guardActive` already short-circuits on the three terminal states
-    // (Cancelled / Served / NoShow); the only remaining variants are
-    // Waiting and Called, both of which `applyCancel` accepts. The
-    // `invalidTransition` arm is therefore unreachable through the
-    // current state lattice and exists only as a future-proof guard
-    // should a non-terminal state be added without updating this body.
-    /* v8 ignore next 3 */
-    if (loaded.state.state !== "Waiting" && loaded.state.state !== "Called") {
+    // `guardActive` short-circuits on the three terminal states
+    // (Cancelled / Served / NoShow); the three remaining variants
+    // (Waiting, Called, Serving) are all accepted by `applyCancel`
+    // after ADR-0069's misclick-recovery extension. TypeScript can't
+    // narrow the union from the runtime `guardActive` check alone,
+    // so a defensive state-tag re-check feeds the narrowing required
+    // by `applyCancel`'s `Waiting | Called | Serving` input.
+    /* v8 ignore next 7 */
+    if (
+      loaded.state.state !== "Waiting" &&
+      loaded.state.state !== "Called" &&
+      loaded.state.state !== "Serving"
+    ) {
       return yield* Effect.fail(invalidTransition(loaded.state.state, "Cancel"))
     }
     const cancellable = loaded.state

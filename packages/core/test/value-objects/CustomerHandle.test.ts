@@ -88,4 +88,10 @@ describe("equalsCustomerHandle", () => {
     const b = successOrThrow(parseCustomerHandle("ヤマダ タロウ", "5678"))
     expect(equalsCustomerHandle(a, b)).toBe(false)
   })
+
+  it("differs on different-length kana (constant-time length-mismatch branch)", () => {
+    const a = successOrThrow(parseCustomerHandle("ヤマダ タロウ", "1234"))
+    const b = successOrThrow(parseCustomerHandle("サトウ ハナコ サン", "1234"))
+    expect(equalsCustomerHandle(a, b)).toBe(false)
+  })
 })

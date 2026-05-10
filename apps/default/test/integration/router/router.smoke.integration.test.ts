@@ -134,6 +134,63 @@ describe("router smoke (HTTP shape contract)", () => {
     expect(res.status).toBe(101)
   })
 
+  it("POST /api/v1/tickets — reservation lane with appointmentAt returns 201", async () => {
+    const apptAt = new Date(Date.now() + 30 * 60_000).toISOString()
+    const res = await worker().fetch(
+      req.issueTicket({
+        handle: validHandle,
+        freeText: null,
+        lane: "reservation",
+        appointmentAt: apptAt,
+      }),
+    )
+    expect(res.status).toBe(201)
+    const body = await parseJson<{
+      ok: boolean
+      ticket: { lane: string; appointmentAt: string | null }
+    }>(res)
+    expect(body.ok).toBe(true)
+    expect(body.ticket.lane).toBe("reservation")
+    expect(body.ticket.appointmentAt).toBe(apptAt)
+  })
+
+  it("POST /api/v1/tickets/:id/check-in — unknown id returns 404", async () => {
+    const res = await worker().fetch(req.checkInTicket("tkt_doesnotexist"))
+    expect(res.status).toBe(404)
+  })
+
+  it("POST /api/v1/tickets/:id/check-in — walk-in ticket returns 422 (AppointmentRequired…)", async () => {
+    const issue = await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
+    const issued = await parseJson<{ ticket: { id: string } }>(issue)
+    const res = await worker().fetch(req.checkInTicket(issued.ticket.id))
+    expect(res.status).toBe(422)
+    const body = await parseJson<{ ok: boolean; error: { _tag: string } }>(res)
+    expect(body.ok).toBe(false)
+    expect(body.error._tag).toBe("AppointmentRequiredForReservationLane")
+  })
+
+  it("GET /api/v1/slots — happy path returns the bucket grid", async () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const res = await worker().fetch(req.listSlots({ from: today, to: today, granularity: 30 }))
+    expect(res.status).toBe(200)
+    const body = await parseJson<{
+      ok: boolean
+      slots: readonly { date: string; bucketId: number; capacity: number }[]
+    }>(res)
+    expect(body.ok).toBe(true)
+    expect(body.slots.length).toBe(48) // 24h / 30min
+    expect(body.slots[0]?.date).toBe(today)
+  })
+
+  it("GET /api/v1/slots — invalid granularity returns 422", async () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const res = await worker().fetch(
+      // 7 is not in {15, 30, 60}; the boundary parser rejects.
+      req.listSlots({ from: today, to: today, granularity: 7 as never }),
+    )
+    expect(res.status).toBe(422)
+  })
+
   it("every non-WS response carries an X-Trace-Id header (Crockford ULID)", async () => {
     const auth = await staffHeaders(SECRET)
     const probes = [

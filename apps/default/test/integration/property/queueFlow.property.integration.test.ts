@@ -63,7 +63,7 @@ type ProjectionEntry = {
 
 type Projection = {
   readonly ok: boolean
-  readonly v: 2
+  readonly v: 3
   readonly waitingCount: number
   readonly laneCounts: {
     readonly walkIn: number
@@ -138,7 +138,7 @@ describe("HTTP queue flow (property, integration)", () => {
         const final = await parseJson<Projection>(finalRes)
 
         expect(final.ok).toBe(true)
-        expect(final.v).toBe(2)
+        expect(final.v).toBe(3)
         expect(typeof final.waitingCount).toBe("number")
         expect(final.waitingCount).toBeGreaterThanOrEqual(0)
         // Total tickets in the system can never exceed what was

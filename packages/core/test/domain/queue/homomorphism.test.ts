@@ -72,6 +72,7 @@ const drive = (
           nameKana: kana,
           phoneLast4: phone,
           freeText: free,
+          appointmentAt: null,
           at: at(tick),
           eventId: newTicketEventId(),
         })

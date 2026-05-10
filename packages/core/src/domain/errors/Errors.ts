@@ -240,6 +240,68 @@ export class LaneMismatchError extends Schema.TaggedErrorClass<LaneMismatchError
   static readonly severity: ErrorSeverity = "domain"
 }
 
+/**
+ * A booking attempt landed on a slot whose capacity is already
+ * fully consumed by Waiting / Called / Serving tickets. ADR-0066
+ * makes the slot capacity guard a single-writer DO check, so the
+ * error covers the genuine race between concurrent issuers (the
+ * second arrival wins the round-trip but loses the bucket).
+ */
+export class SlotFullError extends Schema.TaggedErrorClass<SlotFullError>()("SlotFull", {
+  date: Schema.String,
+  bucketId: Schema.Number,
+  granularity: Schema.Number,
+  capacity: Schema.Number,
+}) {
+  static readonly code = "E_DOM_SLOT_FULL"
+  static readonly severity: ErrorSeverity = "domain"
+}
+
+/**
+ * A booking attempt named a slot whose `appointmentAt` is before
+ * `now`. ADR-0066 requires reservations to be in the future
+ * (otherwise the next-callable selector would fire immediately
+ * and the customer's expectation of a slot is violated).
+ */
+export class SlotInPastError extends Schema.TaggedErrorClass<SlotInPastError>()("SlotInPast", {
+  appointmentAt: Schema.String,
+}) {
+  static readonly code = "E_DOM_SLOT_IN_PAST"
+  static readonly severity: ErrorSeverity = "domain"
+}
+
+/**
+ * An issue command landed in the reservation lane without an
+ * `appointmentAt`. ADR-0066's invariant
+ * (`lane === "reservation" ⇔ appointmentAt !== null`) is enforced
+ * by the use-case rather than by `Schema` so this error covers
+ * the boundary-bypass surface (e.g. internal reissue paths).
+ */
+export class AppointmentRequiredForReservationLaneError extends Schema.TaggedErrorClass<AppointmentRequiredForReservationLaneError>()(
+  "AppointmentRequiredForReservationLane",
+  {},
+) {
+  static readonly code = "E_DOM_APPOINTMENT_REQUIRED"
+  static readonly severity: ErrorSeverity = "domain"
+}
+
+/**
+ * A check-in command arrived before the customer's slot window
+ * opened. ADR-0068 sets the threshold at `appointmentAt - 10min`;
+ * the error carries both instants so the client can render
+ * "あと N 分で受付開始" without an extra round-trip.
+ */
+export class CheckInTooEarlyError extends Schema.TaggedErrorClass<CheckInTooEarlyError>()(
+  "CheckInTooEarly",
+  {
+    appointmentAt: Schema.String,
+    now: Schema.String,
+  },
+) {
+  static readonly code = "E_DOM_CHECK_IN_TOO_EARLY"
+  static readonly severity: ErrorSeverity = "domain"
+}
+
 /* -------------------------------------------------------------------------- */
 /* Infrastructure errors — storage / concurrency failures surfaced by ports.   */
 /* -------------------------------------------------------------------------- */
@@ -311,6 +373,10 @@ export type DomainRuleError =
   | InvalidStateTransitionError
   | InsufficientCapabilityError
   | LaneMismatchError
+  | SlotFullError
+  | SlotInPastError
+  | AppointmentRequiredForReservationLaneError
+  | CheckInTooEarlyError
 
 export type InfrastructureError = AggregateNotFoundError | ConcurrencyError | StorageError
 
@@ -422,6 +488,10 @@ export const errorClassRegistry = [
   InvalidStateTransitionError,
   InsufficientCapabilityError,
   LaneMismatchError,
+  SlotFullError,
+  SlotInPastError,
+  AppointmentRequiredForReservationLaneError,
+  CheckInTooEarlyError,
   AggregateNotFoundError,
   ConcurrencyError,
   StorageError,

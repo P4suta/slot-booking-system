@@ -10,8 +10,11 @@ unchanged.
 ## Iron principles (non-negotiable)
 
 1. **Number-tag model** — no accounts, no logins, no email, no SMS,
-   no notifications. The customer holds a `TicketId` plus the
-   `(nameKana, phoneLast4)` handle they typed in.
+   no notifications. The customer's anonymous handle
+   `(nameKana, phoneLast4)` is the active-set primary key
+   (ADR-0069); a fresh issue with the same handle merges to the
+   existing ticket, and `/recover` resolves the ticket by handle
+   alone — no ticketId to remember.
 2. **Minimum PII** — kana name, phone last 4, optional free text.
    Never email, full phone, address, birthday, gender, IP, UA, or
    persistent cookies (ADR-0054).
@@ -121,6 +124,39 @@ walkthrough: [`docs/dev-workflow.md`](./docs/dev-workflow.md).
 `STAFF_SESSION_SECRET` is provisioned via `wrangler secret put`; the
 local-dev value lives in `apps/default/.dev.vars` (gitignored). The
 example template is `apps/default/.dev.vars.example`.
+
+## Door-QR walk-in entry (ADR-0068)
+
+The deployment has no in-store kiosk; walk-in customers reach the
+queue via their own phone after scanning a QR code at the shop
+entrance. The QR encodes the canonical `/issue` URL — for the
+default deployment that is `https://<your-host>/issue`. Print it
+as a 2-D barcode with any generator, post it at the door, and
+the rest of the flow (walk-in 「番号札を取る」 ✕ reservation
+expand) lives in the same page. No env var, no code change.
+
+## Customer self-service: how to modify
+
+Three customer-side modifications are supported without
+involving staff. Detailed flows live in
+[ADR-0069 §UX](./docs/adr/0069-handle-as-active-primary-and-local-cache.md)
+and [ADR-0070](./docs/adr/0070-reservation-reschedule.md).
+
+- **Appointment time** — the `/ticket` page exposes a
+  「予約時刻を変更」 button on reservation tickets. The new
+  slot is swapped atomically; the same ticket id, seq, and
+  position are preserved (ADR-0070).
+- **Lost ticket / different device** — `/recover` accepts the
+  customer's name (kana) + phone last-4 and lands them back on
+  `/ticket?id=...` (ADR-0069).
+- **Name / phone digit typo** — cancel the ticket from
+  `/ticket` and reissue from `/issue` with corrected values.
+  The active-set handle UNIQUE constraint releases on cancel and
+  re-acquires on issue (ADR-0069).
+
+The web layer's friendly copy for these flows lives in
+`apps/web/messages/{ja,en}.json` under the `confirm_*`,
+`reservation_modify_help`, and `help_*` keys.
 
 ## License
 

@@ -1,8 +1,9 @@
 # ADR-0064: Customer recovery URL (canonical / cache layering / share-safety)
 
-- Status: Accepted
+- Status: superseded by [ADR-0069](./0069-handle-as-active-primary-and-local-cache.md) — the handle becomes the active-set primary key and the URL collapses to `/ticket?id` with no PII.
 - Date: 2026-05-09
 - Refines: ADR-0054 (anonymous customer handle)
+- Superseded-By: ADR-0069 (2026-05-11)
 
 ## Decision
 
@@ -102,3 +103,13 @@ bar is exposed to a third party (showing the QR to a friend).
   ticket ids are TypeID-shaped (`tkt_<26-char-ULID>`) and
   not enumerable from outside; the `meta name="robots"` of
   `/ticket` is set to `noindex` to be defensive.
+
+## Superseded-By
+
+ADR-0069 retires the "ticketId-in-URL is the customer's primary
+artefact" assumption. The handle (kana + last4) becomes the
+active-set primary key, the recovery endpoint becomes
+`GET /tickets/by-handle?k&p`, and the URL collapses to
+`/ticket?id` with no PII. The `/recover?id` form is replaced by a
+handle-only form. The QR encodes the share-safe `/recover` URL
+(no query string); a recipient must type the handle to view.

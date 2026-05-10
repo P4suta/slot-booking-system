@@ -1,52 +1,56 @@
 import type { DomainError } from "@booking/core"
-import { Match } from "effect"
 import { currentTraceId } from "./traceIdHeader.js"
 
 /**
- * Exhaustive `(DomainError | "Defect") -> {status, body}` mapping.
- * The previous router's `statusForError` walked a `tag.startsWith` /
- * `||` chain which kept growing every time a new error landed; the
- * `Match.tagged` form forces a compile error if a future
- * `DomainError` _tag is added without a status assignment, which is
- * the only way to keep the API surface honest as the domain grows.
+ * Exhaustive `DomainError._tag -> HTTP status` mapping. Defined as
+ * a `Record<Tag, number>` so the TypeScript checker rejects any
+ * commit that adds a new tag to `DomainError` without registering
+ * its status — the same compile-time exhaustiveness `Match.tagged`
+ * gives, but without the `pipe` argument-count cap (the registry
+ * grew past 20 entries with ADR-0066 / ADR-0068).
  *
  * Status mapping by tag:
  *   - 404: TicketNotFound, AggregateNotFound, InvalidEntityId
  *   - 403: PhoneMismatch, MissingStaffCapability, InsufficientCapability
  *   - 409: QueueEmpty, AlreadyCancelled, AlreadyCompleted, AlreadyNoShow,
- *          InvalidStateTransition, Concurrency
+ *          InvalidStateTransition, LaneMismatch, SlotFull,
+ *          CheckInTooEarly, Concurrency
  *   - 422: InvalidPhoneLast4, InvalidNameKana, InvalidFreeText,
- *          InvalidBusinessTimeZone (validation-shaped errors)
+ *          InvalidBusinessTimeZone, SlotInPast,
+ *          AppointmentRequiredForReservationLane
  *   - 500: Storage, Defect (server-side / unexpected)
  */
-const status = Match.type<DomainError["_tag"]>().pipe(
-  Match.when("TicketNotFound", () => 404),
-  Match.when("AggregateNotFound", () => 404),
-  Match.when("InvalidEntityId", () => 404),
-  Match.when("PhoneMismatch", () => 403),
-  Match.when("MissingStaffCapability", () => 403),
-  Match.when("InsufficientCapability", () => 403),
-  Match.when("QueueEmpty", () => 409),
-  Match.when("AlreadyCancelled", () => 409),
-  Match.when("AlreadyCompleted", () => 409),
-  Match.when("AlreadyNoShow", () => 409),
-  Match.when("InvalidStateTransition", () => 409),
-  Match.when("LaneMismatch", () => 409),
-  Match.when("Concurrency", () => 409),
-  Match.when("InvalidPhoneLast4", () => 422),
-  Match.when("InvalidNameKana", () => 422),
-  Match.when("InvalidFreeText", () => 422),
-  Match.when("InvalidBusinessTimeZone", () => 422),
-  Match.when("Storage", () => 500),
-  Match.exhaustive,
-)
+const STATUS_BY_TAG: Record<DomainError["_tag"], number> = {
+  TicketNotFound: 404,
+  AggregateNotFound: 404,
+  InvalidEntityId: 404,
+  PhoneMismatch: 403,
+  MissingStaffCapability: 403,
+  InsufficientCapability: 403,
+  QueueEmpty: 409,
+  AlreadyCancelled: 409,
+  AlreadyCompleted: 409,
+  AlreadyNoShow: 409,
+  InvalidStateTransition: 409,
+  LaneMismatch: 409,
+  SlotFull: 409,
+  CheckInTooEarly: 409,
+  Concurrency: 409,
+  InvalidPhoneLast4: 422,
+  InvalidNameKana: 422,
+  InvalidFreeText: 422,
+  InvalidBusinessTimeZone: 422,
+  SlotInPast: 422,
+  AppointmentRequiredForReservationLane: 422,
+  Storage: 500,
+}
 
 /**
  * Map a `DomainError._tag` to its HTTP status. Pure projection; the
  * caller assembles the JSON body from `_tag`, `code`, and any
  * tag-specific extras (e.g. `MissingStaffCapability.reason`).
  */
-export const statusForTag = (tag: DomainError["_tag"]): number => status(tag)
+export const statusForTag = (tag: DomainError["_tag"]): number => STATUS_BY_TAG[tag]
 
 /**
  * Defect (unhandled fault) gets a vanilla 500. Defects bypass the

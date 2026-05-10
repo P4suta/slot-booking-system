@@ -28,6 +28,9 @@ class_name = "QueueShop"
 # the (limit, period) tuple is the real contract.
 #   - RL_ISSUE  60 requests / minute, keyed on cf-connecting-ip
 #   - RL_OPERATE 300 requests / minute, keyed on x-staff-token
+#   - RL_VERIFY 30 requests / minute, keyed on cf-connecting-ip
+#     (covers /tickets/me, /tickets/:id/cancel, /tickets/:id/check-in;
+#     slows brute force on the 4-digit phone-last-4 + kana pair)
 [[unsafe.bindings]]
 name = "RL_ISSUE"
 type = "ratelimit"
@@ -40,6 +43,12 @@ type = "ratelimit"
 namespace_id = "1002"
 simple = { limit = 300, period = 60 }
 
+[[unsafe.bindings]]
+name = "RL_VERIFY"
+type = "ratelimit"
+namespace_id = "1003"
+simple = { limit = 30, period = 60 }
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["DaySchedule"]
@@ -51,10 +60,31 @@ deleted_classes = ["DaySchedule"]
 
 [vars]
 DEPLOYMENT_NAME = "default"
-DEPLOYMENT_TIMEZONE = "UTC"
+# DEPLOYMENT_TIMEZONE — IANA TZ name; the slot grid + ETA + alarm
+# sweep all read this. Customer-facing copy is Japanese, so the
+# business default is "Asia/Tokyo". Overridable per-deployment if
+# a second shop ships in a different region; the router code falls
+# back to "Asia/Tokyo" if this var is somehow absent at runtime so
+# slot math never crashes on a misconfigured deploy (ADR-0070
+# §Defensive defaults).
+DEPLOYMENT_TIMEZONE = "Asia/Tokyo"
 IS_DEV = "0"
 OTEL_EXPORTER_URL = "disabled"
+# Default service-time (seconds) after which a Called ticket is
+# auto-marked NoShow by the alarm sweep. 300s = 5 minutes matches
+# typical retail call-and-arrival windows; longer windows leave
+# ghost tickets in the queue, shorter ones risk false NoShows.
 NO_SHOW_TIMEOUT_SECONDS = "300"
+# Default per-slot capacity (= concurrent reservations per bucket).
+# Customer reservation flow uses this when the deployment has no
+# per-bucket override. Production deployments override per shop.
+SLOT_DEFAULT_CAPACITY = "2"
+# Default slot granularity (minutes per bucket). 15 / 30 / 60.
+# Customer slot picker reads this for the grid step.
+SLOT_DEFAULT_GRANULARITY = "30"
+# Production deployments populate this with the front-end origin
+# (e.g. "https://shop.example.com"). Empty string means no
+# cross-origin access; IS_DEV=1 grants a wildcard for local dev.
 ALLOWED_ORIGINS = ""
 # STAFF_SESSION_SECRET is no longer wired in wrangler.toml so the
 # repo never carries a placeholder secret value (gitleaks-clean).

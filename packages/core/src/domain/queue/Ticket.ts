@@ -29,6 +29,18 @@ export type Actor = Schema.Schema.Type<typeof ActorSchema>
  * FIFO position consumed by UI ordering and `head` (ADR-0065): Issue
  * assigns the next per-lane displaySeq, Reorder rebalances it. `lane`
  * partitions the queue per ADR-0062.
+ *
+ * `appointmentAt` (ADR-0066) is the booked slot start instant for
+ * reservation-lane tickets and `null` for walk-in / priority. The
+ * round-trip invariant `lane === "reservation" ⇔ appointmentAt !==
+ * null` is pinned by property test (Schema cannot encode an
+ * inter-field constraint without splitting the variant union 2×).
+ *
+ * `checkedInAt` (ADR-0068) is set when a reservation customer hits
+ * the customer-side check-in button on `/ticket`. It stays null on
+ * walk-in tickets (they are implicitly checked in at issue time) and
+ * persists through subsequent state transitions so the audit / no-
+ * show analytics layer can compare arrival vs. call-time.
  */
 const CommonFields = {
   id: TicketIdSchema,
@@ -39,6 +51,8 @@ const CommonFields = {
   phoneLast4: PhoneLast4Schema,
   freeText: Schema.NullOr(FreeTextSchema),
   issuedAt: InstantSchema,
+  appointmentAt: Schema.NullOr(InstantSchema),
+  checkedInAt: Schema.NullOr(InstantSchema),
 } as const
 
 export const TicketCommonSchema = Schema.Struct(CommonFields)

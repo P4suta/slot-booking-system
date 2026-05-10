@@ -56,6 +56,8 @@ const TICKET_SCHEMA = {
     servedAt: { type: "string", format: "date-time" },
     cancelledAt: { type: "string", format: "date-time" },
     markedAt: { type: "string", format: "date-time" },
+    appointmentAt: { type: ["string", "null"], format: "date-time" },
+    checkedInAt: { type: ["string", "null"], format: "date-time" },
   },
   additionalProperties: true,
 } as const
@@ -93,7 +95,7 @@ export const openApiDocument = {
     "/tickets": {
       post: {
         tags: ["customer"],
-        summary: "Issue a new ticket",
+        summary: "Issue a new ticket (walk-in or reservation, ADR-0066/0068)",
         requestBody: {
           required: true,
           content: {
@@ -105,24 +107,114 @@ export const openApiDocument = {
                   nameKana: { type: "string" },
                   phoneLast4: { type: "string", pattern: "^[0-9]{4}$" },
                   freeText: { type: ["string", "null"] },
+                  lane: { type: "string", enum: ["walkIn", "priority", "reservation"] },
+                  appointmentAt: { type: "string", format: "date-time" },
                 },
               },
             },
           },
         },
-        responses: { "201": TICKET_ENVELOPE, "422": ERROR_RESPONSE, "429": ERROR_RESPONSE },
+        responses: {
+          "201": TICKET_ENVELOPE,
+          "200": TICKET_ENVELOPE,
+          "422": ERROR_RESPONSE,
+          "429": ERROR_RESPONSE,
+        },
       },
     },
-    "/tickets/me": {
+    "/tickets/{id}/check-in": {
+      post: {
+        tags: ["customer"],
+        summary: "Customer-side arrival audit (reservation only, ADR-0068)",
+        parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": {
+            description: "CheckedIn event recorded",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["ok"],
+                  properties: { ok: { const: true } },
+                },
+              },
+            },
+          },
+          "404": ERROR_RESPONSE,
+          "409": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+        },
+      },
+    },
+    "/slots": {
       get: {
         tags: ["customer"],
-        summary: "Customer self-fetch (handle in querystring)",
+        summary: "Slot grid availability for the customer's booking picker (ADR-0066/0068)",
         parameters: [
-          { in: "query", name: "ticketId", required: true, schema: { type: "string" } },
+          { in: "query", name: "from", required: true, schema: { type: "string", format: "date" } },
+          { in: "query", name: "to", required: true, schema: { type: "string", format: "date" } },
+          {
+            in: "query",
+            name: "granularity",
+            required: true,
+            schema: { type: "integer", enum: [15, 30, 60] },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Bucket grid with capacity / taken / available",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["ok", "slots"],
+                  properties: {
+                    ok: { const: true },
+                    slots: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        required: [
+                          "date",
+                          "bucketId",
+                          "granularity",
+                          "capacity",
+                          "taken",
+                          "available",
+                        ],
+                        properties: {
+                          date: { type: "string", format: "date" },
+                          bucketId: { type: "integer", minimum: 0 },
+                          granularity: { type: "integer", enum: [15, 30, 60] },
+                          capacity: { type: "integer", minimum: 0 },
+                          taken: { type: "integer", minimum: 0 },
+                          available: { type: "integer", minimum: 0 },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "422": ERROR_RESPONSE,
+        },
+      },
+    },
+    "/tickets/by-handle": {
+      get: {
+        tags: ["customer"],
+        summary: "Customer recovery — look up the active ticket by handle (ADR-0069)",
+        parameters: [
           { in: "query", name: "nameKana", required: true, schema: { type: "string" } },
           { in: "query", name: "phoneLast4", required: true, schema: { type: "string" } },
         ],
-        responses: { "200": TICKET_ENVELOPE, "403": ERROR_RESPONSE, "404": ERROR_RESPONSE },
+        responses: {
+          "200": TICKET_ENVELOPE,
+          "404": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+          "429": ERROR_RESPONSE,
+        },
       },
     },
     "/tickets/{id}/cancel": {
@@ -151,6 +243,55 @@ export const openApiDocument = {
                     type: "object",
                     required: ["reason"],
                     properties: { reason: { type: "string" } },
+                  },
+                ],
+              },
+            },
+          },
+        },
+        responses: {
+          "200": TICKET_ENVELOPE,
+          "403": ERROR_RESPONSE,
+          "404": ERROR_RESPONSE,
+          "409": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+        },
+      },
+    },
+    "/tickets/{id}/reschedule": {
+      post: {
+        tags: ["customer", "staff"],
+        summary: "Reschedule a reservation ticket (atomic appointmentAt swap)",
+        description:
+          "ADR-0070. Same ticketId / seq / displaySeq / handle / lane stay; " +
+          "only `appointmentAt` is replaced. Customer path verifies the handle " +
+          "constant-time against the stored ticket; staff path uses the " +
+          "`x-staff-token` header. Same-slot submissions return 200 with the " +
+          "unchanged ticket (no-op success).",
+        parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                oneOf: [
+                  {
+                    title: "CustomerReschedule",
+                    type: "object",
+                    required: ["nameKana", "phoneLast4", "newAppointmentAt"],
+                    properties: {
+                      nameKana: { type: "string" },
+                      phoneLast4: { type: "string" },
+                      newAppointmentAt: { type: "string", format: "date-time" },
+                    },
+                  },
+                  {
+                    title: "StaffReschedule",
+                    type: "object",
+                    required: ["newAppointmentAt"],
+                    properties: {
+                      newAppointmentAt: { type: "string", format: "date-time" },
+                    },
                   },
                 ],
               },

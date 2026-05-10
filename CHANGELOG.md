@@ -10,6 +10,17 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Slot-booking time-axis sprint (ADR-0066 / ADR-0067 / ADR-0068).
+  Reservation lane gains `appointmentAt: NullOr<Instant>`; EDF
+  promotes the eligible reservation head past the static
+  `priority > walkIn > reservation` chain when within `grace`
+  (default 5min, env `EDF_GRACE_MINUTES`). Customer-side check-in
+  audit (`POST /api/v1/tickets/:id/check-in`), `/issue` page gains
+  a folded reservation expand with date tabs + slot grid, `/ticket`
+  countdown + 「到着しました」 button, `/staff` Kanban slot-time
+  chip per reservation card. Door-QR walk-in entry: print the
+  `/issue` URL as a 2-D barcode and display at the entrance — no
+  in-store kiosk required, no env var, no code change.
 - Phase 3 / PR#7 — GraphQL functor migration. Replaced the Pothos
   builder with a Schema-to-GraphQL functor (`derive/graphql.ts`)
   that lifts every wire type from the existing `Effect.Schema`

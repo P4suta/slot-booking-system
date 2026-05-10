@@ -8,14 +8,18 @@ import {
   callingTickets,
   currentlyServing,
   empty,
+  firstLaneWithCallable,
   firstLaneWithWaiting,
   globalPositionOf,
   head,
   headOfLane,
   nextDisplaySeqInLane,
+  occupancyExcludingSelf,
   positionOf,
   replay,
+  reservationsByDeadline,
   servingTickets,
+  slotOccupancy,
   waitingCount,
   waitingTickets,
 } from "../../../src/domain/queue/projection.js"
@@ -23,6 +27,7 @@ import type { Called, Serving, Waiting } from "../../../src/domain/queue/Ticket.
 import {
   applyCall,
   applyCancel,
+  applyCheckIn,
   applyIssue,
   applyMarkNoShow,
   applyMarkServed,
@@ -31,6 +36,7 @@ import {
   applyStartServing,
 } from "../../../src/domain/queue/transitions.js"
 import { newTicketEventId, newTicketId, type TicketId } from "../../../src/domain/types/EntityId.js"
+import { BusinessTimeZoneSchema } from "../../../src/domain/value-objects/BusinessTimeZone.js"
 import { FreeTextSchema } from "../../../src/domain/value-objects/FreeText.js"
 import { NameKanaSchema } from "../../../src/domain/value-objects/NameKana.js"
 import { PhoneLast4Schema } from "../../../src/domain/value-objects/PhoneLast4.js"
@@ -52,6 +58,7 @@ const issue = (seq: number, opts?: { lane?: Lane; displaySeq?: number; idHint?: 
     nameKana: kana,
     phoneLast4: phone,
     freeText: free,
+    appointmentAt: null,
     at: at(`2026-05-08T09:0${String(seq)}:00Z`),
     eventId: newTicketEventId(),
   })
@@ -900,5 +907,408 @@ describe("Cancelled fold (projection coverage)", () => {
     )
     const snap = replay([a.event, call.event, ns.event])
     expect(snap.tickets.get(a.ticket.id)?.state).toBe("NoShow")
+  })
+})
+
+describe("CheckedIn fold (ADR-0068)", () => {
+  it("Issue → CheckedIn projects checkedInAt onto the Waiting ticket", () => {
+    const a = issue(1)
+    const ci = applyCheckIn(a.ticket as Waiting, at("2026-05-08T09:55:00Z"), newTicketEventId())
+    const snap = replay([a.event, ci.event])
+    const t = snap.tickets.get(a.ticket.id)
+    expect(t?.state).toBe("Waiting")
+    expect(t?.checkedInAt?.toString()).toBe(at("2026-05-08T09:55:00Z").toString())
+  })
+
+  it("re-applying CheckedIn keeps the earliest arrival (idempotent)", () => {
+    const a = issue(1)
+    const ci1 = applyCheckIn(a.ticket as Waiting, at("2026-05-08T09:55:00Z"), newTicketEventId())
+    const snap1 = replay([a.event, ci1.event])
+    const ci2 = applyCheckIn(
+      snap1.tickets.get(a.ticket.id) as Waiting,
+      at("2026-05-08T09:58:00Z"),
+      newTicketEventId(),
+    )
+    const snap2 = applyEvent(snap1, ci2.event)
+    expect(snap2.tickets.get(a.ticket.id)?.checkedInAt?.toString()).toBe(
+      at("2026-05-08T09:55:00Z").toString(),
+    )
+  })
+
+  it("a CheckedIn event for an unknown ticket is a no-op", () => {
+    const ghostEv = {
+      id: newTicketEventId(),
+      ticketId: newTicketId(),
+      version: 1 as const,
+      occurredAt: at("2026-05-08T09:00:00Z"),
+      recordedAt: at("2026-05-08T09:00:00Z"),
+      type: "CheckedIn" as const,
+      checkedInBy: "customer" as const,
+    }
+    expect(applyEvent(empty, ghostEv).tickets.size).toBe(0)
+  })
+
+  it("a CheckedIn event for a non-Waiting ticket is a no-op", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const ci = applyCheckIn(a.ticket as Waiting, at("2026-05-08T09:55:00Z"), newTicketEventId())
+    const snap = replay([a.event, call.event, ci.event])
+    const t = snap.tickets.get(a.ticket.id)
+    expect(t?.state).toBe("Called")
+    if (t?.state === "Called") expect(t.checkedInAt).toBeNull()
+  })
+})
+
+describe("ADR-0066 / ADR-0067 — slot-aware projection", () => {
+  const now = at("2026-05-08T13:55:00Z")
+  const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("UTC")
+
+  const reserve = (
+    seq: number,
+    appointmentAt: Temporal.Instant | null,
+    opts?: { displaySeq?: number; idHint?: TicketId },
+  ) => {
+    const id = opts?.idHint ?? newTicketId()
+    return applyIssue({
+      id,
+      seq,
+      lane: "reservation",
+      displaySeq: opts?.displaySeq ?? seq,
+      nameKana: kana,
+      phoneLast4: phone,
+      freeText: free,
+      appointmentAt,
+      at: at("2026-05-08T09:00:00Z"),
+      eventId: newTicketEventId(),
+    })
+  }
+
+  it("reservationsByDeadline sorts by appointmentAt asc; null-apptAt tickets are dropped (ADR-0066 invariant)", () => {
+    const a = reserve(1, at("2026-05-08T15:00:00Z"))
+    const b = reserve(2, at("2026-05-08T14:00:00Z"))
+    const c = reserve(3, null) // invariant violation; defensively dropped
+    const snap = replay([a.event, b.event, c.event])
+    const ordered = reservationsByDeadline(snap)
+    expect(ordered.map((t) => t.id)).toEqual([b.ticket.id, a.ticket.id])
+  })
+
+  it("reservationsByDeadline ignores non-Waiting reservation tickets", () => {
+    const a = reserve(1, at("2026-05-08T14:00:00Z"))
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T13:55:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([a.event, call.event])
+    expect(reservationsByDeadline(snap)).toHaveLength(0)
+  })
+
+  it("firstLaneWithCallable falls through to firstLaneWithWaiting when no reservation present", () => {
+    const w = issue(1) // walkIn
+    const snap = replay([w.event])
+    expect(firstLaneWithCallable(snap, now, Temporal.Duration.from({ minutes: 5 }))).toBe("walkIn")
+  })
+
+  it("slotOccupancy counts Waiting + Called + Serving reservations sharing the bucket startAt", () => {
+    const slot = {
+      date: Temporal.PlainDate.from("2026-05-08"),
+      bucketId: (14 * 2) as never, // 14:00 in 30-min granularity (UTC)
+      granularity: 30 as const,
+      capacity: 2,
+    }
+    const slotStart = at("2026-05-08T14:00:00Z")
+    const otherStart = at("2026-05-08T14:30:00Z")
+    const a = reserve(1, slotStart)
+    const b = reserve(2, slotStart)
+    const c = reserve(3, otherStart) // different bucket
+    const snap = replay([a.event, b.event, c.event])
+    expect(slotOccupancy(snap, slot, tz)).toBe(2)
+  })
+
+  it("slotOccupancy ignores Cancelled / NoShow / Served reservations", () => {
+    const slot = {
+      date: Temporal.PlainDate.from("2026-05-08"),
+      bucketId: (14 * 2) as never,
+      granularity: 30 as const,
+      capacity: 2,
+    }
+    const slotStart = at("2026-05-08T14:00:00Z")
+    const a = reserve(1, slotStart)
+    const cancel = applyCancel(
+      a.ticket as Waiting,
+      at("2026-05-08T13:30:00Z"),
+      newTicketEventId(),
+      "customer",
+      "changed plans",
+    )
+    const snap = replay([a.event, cancel.event])
+    expect(slotOccupancy(snap, slot, tz)).toBe(0)
+  })
+
+  it("slotOccupancy ignores reservation lane tickets with null appointmentAt (invariant violation)", () => {
+    const slot = {
+      date: Temporal.PlainDate.from("2026-05-08"),
+      bucketId: (14 * 2) as never,
+      granularity: 30 as const,
+      capacity: 2,
+    }
+    const a = reserve(1, null)
+    const snap = replay([a.event])
+    expect(slotOccupancy(snap, slot, tz)).toBe(0)
+  })
+
+  it("slotOccupancy ignores walk-in / priority lane tickets even with appointmentAt", () => {
+    const slot = {
+      date: Temporal.PlainDate.from("2026-05-08"),
+      bucketId: (14 * 2) as never,
+      granularity: 30 as const,
+      capacity: 2,
+    }
+    const slotStart = at("2026-05-08T14:00:00Z")
+    const w = applyIssue({
+      id: newTicketId(),
+      seq: 1,
+      lane: "walkIn",
+      displaySeq: 1,
+      nameKana: kana,
+      phoneLast4: phone,
+      freeText: free,
+      appointmentAt: slotStart,
+      at: at("2026-05-08T09:00:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([w.event])
+    expect(slotOccupancy(snap, slot, tz)).toBe(0)
+  })
+})
+
+describe("ADR-0070 occupancyExcludingSelf (capacity guard helper)", () => {
+  // The fixture uses UTC so the bucket math lines up with the
+  // explicit `2026-05-08T14:00:00Z` appointmentAt: 14:00 UTC at
+  // 30-min granularity = bucketId 28. (Asia/Tokyo would shift the
+  // bucket by +9h → 46, missing the slot.)
+  const tz2 = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("UTC")
+  const slot = {
+    date: Temporal.PlainDate.from("2026-05-08"),
+    bucketId: (14 * 2) as never,
+    granularity: 30 as const,
+    capacity: 2,
+  }
+  const slotStart = at("2026-05-08T14:00:00Z")
+  const reservation = (idHint: TicketId) =>
+    applyIssue({
+      id: idHint,
+      seq: 1,
+      lane: "reservation",
+      displaySeq: 1,
+      nameKana: kana,
+      phoneLast4: phone,
+      freeText: free,
+      appointmentAt: slotStart,
+      at: at("2026-05-08T09:00:00Z"),
+      eventId: newTicketEventId(),
+    })
+
+  it("excludes the named ticket from the count", () => {
+    const selfId = newTicketId()
+    const otherId = newTicketId()
+    const self = reservation(selfId)
+    const other = reservation(otherId)
+    const snap = replay([self.event, other.event])
+    expect(occupancyExcludingSelf(snap, selfId, slot, tz2)).toBe(1)
+    expect(occupancyExcludingSelf(snap, otherId, slot, tz2)).toBe(1)
+    expect(occupancyExcludingSelf(snap, newTicketId(), slot, tz2)).toBe(2)
+  })
+
+  it("does not count walk-in lane tickets even at the same instant", () => {
+    const selfId = newTicketId()
+    const walkInId = newTicketId()
+    const self = reservation(selfId)
+    const walkIn = applyIssue({
+      id: walkInId,
+      seq: 2,
+      lane: "walkIn",
+      displaySeq: 1,
+      nameKana: kana,
+      phoneLast4: phone,
+      freeText: free,
+      appointmentAt: slotStart,
+      at: at("2026-05-08T09:00:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([self.event, walkIn.event])
+    expect(occupancyExcludingSelf(snap, selfId, slot, tz2)).toBe(0)
+  })
+
+  it("does not count reservation tickets with null appointmentAt", () => {
+    const selfId = newTicketId()
+    const malformedId = newTicketId()
+    const self = reservation(selfId)
+    // Lane invariant violation — would never happen via the public
+    // boundary, but the helper has to be defensive against an
+    // un-tagged null lookup result.
+    const malformed = applyIssue({
+      id: malformedId,
+      seq: 3,
+      lane: "reservation",
+      displaySeq: 1,
+      nameKana: kana,
+      phoneLast4: phone,
+      freeText: free,
+      appointmentAt: null,
+      at: at("2026-05-08T09:00:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([self.event, malformed.event])
+    expect(occupancyExcludingSelf(snap, selfId, slot, tz2)).toBe(0)
+  })
+
+  it("does not count terminal-state tickets at the same instant", () => {
+    const selfId = newTicketId()
+    const otherId = newTicketId()
+    const self = reservation(selfId)
+    const other = reservation(otherId)
+    const otherCancel = applyCancel(
+      other.ticket as Waiting,
+      at("2026-05-08T10:00:00Z"),
+      newTicketEventId(),
+      "customer",
+      "test",
+    )
+    const snap = replay([self.event, other.event, otherCancel.event])
+    expect(occupancyExcludingSelf(snap, selfId, slot, tz2)).toBe(0)
+  })
+
+  it("does not count reservation tickets booked at a different instant", () => {
+    const selfId = newTicketId()
+    const otherId = newTicketId()
+    const self = reservation(selfId)
+    // Same lane / state / appointment-bearing — but at a different
+    // slot instant. The final Temporal.Instant.compare branch in
+    // occupancyExcludingSelf rejects this row.
+    const other = applyIssue({
+      id: otherId,
+      seq: 4,
+      lane: "reservation",
+      displaySeq: 2,
+      nameKana: kana,
+      phoneLast4: phone,
+      freeText: free,
+      appointmentAt: at("2026-05-08T15:00:00Z"),
+      at: at("2026-05-08T09:00:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const snap = replay([self.event, other.event])
+    expect(occupancyExcludingSelf(snap, selfId, slot, tz2)).toBe(0)
+  })
+})
+
+describe("ADR-0070 Rescheduled fold (projection coverage)", () => {
+  const reserveAt = (appointmentAt: Temporal.Instant, opts?: { idHint?: TicketId; lane?: Lane }) =>
+    applyIssue({
+      id: opts?.idHint ?? newTicketId(),
+      seq: 1,
+      lane: opts?.lane ?? "reservation",
+      displaySeq: 1,
+      nameKana: kana,
+      phoneLast4: phone,
+      freeText: free,
+      appointmentAt,
+      at: at("2026-05-08T09:00:00Z"),
+      eventId: newTicketEventId(),
+    })
+
+  it("Rescheduled event updates appointmentAt on the Waiting ticket", () => {
+    const apptA = at("2026-05-08T14:00:00Z")
+    const apptB = at("2026-05-08T15:00:00Z")
+    const issued = reserveAt(apptA)
+    const reschedule = {
+      id: newTicketEventId(),
+      ticketId: issued.ticket.id,
+      version: 1 as const,
+      occurredAt: at("2026-05-08T13:00:00Z"),
+      recordedAt: at("2026-05-08T13:00:00Z"),
+      type: "Rescheduled" as const,
+      fromAppointmentAt: apptA,
+      toAppointmentAt: apptB,
+      rescheduledBy: "customer" as const,
+    }
+    const snap = replay([issued.event, reschedule])
+    const after = snap.tickets.get(issued.ticket.id)
+    expect(after?.appointmentAt).not.toBeNull()
+    if (after?.appointmentAt !== null && after?.appointmentAt !== undefined) {
+      expect(Temporal.Instant.compare(after.appointmentAt, apptB)).toBe(0)
+    }
+  })
+
+  it("Rescheduled event is a no-op when the ticket is not in the active set", () => {
+    const apptA = at("2026-05-08T14:00:00Z")
+    const apptB = at("2026-05-08T15:00:00Z")
+    const issued = reserveAt(apptA)
+    const cancelled = applyCancel(
+      issued.ticket as Waiting,
+      at("2026-05-08T10:00:00Z"),
+      newTicketEventId(),
+      "customer",
+      "test",
+    )
+    const reschedule = {
+      id: newTicketEventId(),
+      ticketId: issued.ticket.id,
+      version: 1 as const,
+      occurredAt: at("2026-05-08T11:00:00Z"),
+      recordedAt: at("2026-05-08T11:00:00Z"),
+      type: "Rescheduled" as const,
+      fromAppointmentAt: apptA,
+      toAppointmentAt: apptB,
+      rescheduledBy: "customer" as const,
+    }
+    const snap = replay([issued.event, cancelled.event, reschedule])
+    const after = snap.tickets.get(issued.ticket.id)
+    expect(after?.state).toBe("Cancelled")
+  })
+
+  it("Rescheduled event is a no-op when ticketId is unknown", () => {
+    const reschedule = {
+      id: newTicketEventId(),
+      ticketId: newTicketId(),
+      version: 1 as const,
+      occurredAt: at("2026-05-08T11:00:00Z"),
+      recordedAt: at("2026-05-08T11:00:00Z"),
+      type: "Rescheduled" as const,
+      fromAppointmentAt: at("2026-05-08T14:00:00Z"),
+      toAppointmentAt: at("2026-05-08T15:00:00Z"),
+      rescheduledBy: "customer" as const,
+    }
+    const snap = replay([reschedule])
+    expect(snap.tickets.size).toBe(0)
+  })
+
+  it("Rescheduled event is a no-op on a walk-in lane ticket", () => {
+    const apptA = at("2026-05-08T14:00:00Z")
+    const apptB = at("2026-05-08T15:00:00Z")
+    // Walk-in ticket with a misset appointmentAt — this should never
+    // happen via the public boundary, but the projection should still
+    // refuse to mutate.
+    const issued = reserveAt(apptA, { lane: "walkIn" })
+    const reschedule = {
+      id: newTicketEventId(),
+      ticketId: issued.ticket.id,
+      version: 1 as const,
+      occurredAt: at("2026-05-08T11:00:00Z"),
+      recordedAt: at("2026-05-08T11:00:00Z"),
+      type: "Rescheduled" as const,
+      fromAppointmentAt: apptA,
+      toAppointmentAt: apptB,
+      rescheduledBy: "customer" as const,
+    }
+    const snap = replay([issued.event, reschedule])
+    const after = snap.tickets.get(issued.ticket.id)
+    expect(after?.appointmentAt).not.toBeNull()
+    if (after?.appointmentAt !== null && after?.appointmentAt !== undefined) {
+      expect(Temporal.Instant.compare(after.appointmentAt, apptA)).toBe(0)
+    }
   })
 })

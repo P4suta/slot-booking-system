@@ -26,10 +26,12 @@ import type {
 import type {
   CalledEvent,
   CancelledEvent,
+  CheckedInEvent,
   IssuedEvent,
   NoShowedEvent,
   RecalledEvent,
   ReorderedEvent,
+  RescheduledEvent,
   ServedEvent,
   ServingStartedEvent,
   TicketEvent,
@@ -64,6 +66,8 @@ const common = (t: TicketCommon): TicketCommon => ({
   phoneLast4: t.phoneLast4,
   freeText: t.freeText,
   issuedAt: t.issuedAt,
+  appointmentAt: t.appointmentAt,
+  checkedInAt: t.checkedInAt,
 })
 
 const baseEvent = (id: TicketEventId, ticketId: TicketId, at: Temporal.Instant) =>
@@ -89,6 +93,7 @@ export type IssueArgs = {
   readonly nameKana: NameKana
   readonly phoneLast4: PhoneLast4
   readonly freeText: FreeText | null
+  readonly appointmentAt: Temporal.Instant | null
   readonly at: Temporal.Instant
   readonly eventId: TicketEventId
 }
@@ -103,6 +108,8 @@ export const applyIssue = (args: IssueArgs): ApplyResult => {
     phoneLast4: args.phoneLast4,
     freeText: args.freeText,
     issuedAt: args.at,
+    appointmentAt: args.appointmentAt,
+    checkedInAt: null,
     state: "Waiting",
   }
   const event: IssuedEvent = {
@@ -114,6 +121,7 @@ export const applyIssue = (args: IssueArgs): ApplyResult => {
     nameKana: args.nameKana,
     phoneLast4: args.phoneLast4,
     freeText: args.freeText,
+    appointmentAt: args.appointmentAt,
   }
   return { ticket, event }
 }
@@ -269,12 +277,16 @@ export const applyRecall = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* Cancel — Waiting | Called → Cancelled. Both customer-issued (self-service)*/
-/* and staff-issued cancellations land here; the actor records who.            */
+/* Cancel — Waiting | Called | Serving → Cancelled. Both customer-issued      */
+/* (self-service) and staff-issued cancellations land here; the actor records */
+/* who. Serving is included so a mistaken `StartServing` (= staff misclick)   */
+/* is recoverable from the customer's keyboard too; the Cancelled event's     */
+/* `reason` carries the operational context. ADR-0063 keeps Serving as the    */
+/* "in-progress" state — but in-progress ≠ uncancellable.                     */
 /* -------------------------------------------------------------------------- */
 
 export const applyCancel = (
-  t: Waiting | Called,
+  t: Waiting | Called | Serving,
   at: Temporal.Instant,
   eventId: TicketEventId,
   cancelledBy: Actor,
@@ -323,12 +335,76 @@ export const applyReorder = (t: Waiting, args: ReorderArgs): ApplyResult => {
 }
 
 /* -------------------------------------------------------------------------- */
+/* CheckIn — Waiting → Waiting (ADR-0068). Customer hit the 「到着しました」    */
+/* button on /ticket after `now ≥ appointmentAt - 10min`. The ticket stays   */
+/* in Waiting (it is not yet at the counter); the CheckedIn event lands in   */
+/* the audit log and `checkedInAt` is set on the ticket so the projection's */
+/* arrival-vs-called analytics has the data it needs.                        */
+/* -------------------------------------------------------------------------- */
+
+export const applyCheckIn = (
+  t: Waiting,
+  at: Temporal.Instant,
+  eventId: TicketEventId,
+  checkedInBy: Actor = "customer",
+): ApplyResult => {
+  const ticket: Waiting = {
+    ...common(t),
+    state: "Waiting",
+    checkedInAt: at,
+  }
+  const event: CheckedInEvent = {
+    ...baseEvent(eventId, t.id, at),
+    type: "CheckedIn",
+    checkedInBy,
+  }
+  return { ticket, event }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reschedule — atomic appointmentAt swap on a reservation ticket (ADR-0070).  */
+/* Same ticketId / seq / displaySeq / handle; only the booked slot moves. The */
+/* usecase boundary enforces the lane and slot-capacity guards; this           */
+/* transition trusts the caller and emits the audit pair.                     */
+/* -------------------------------------------------------------------------- */
+
+export const applyReschedule = (
+  t: Waiting | Called | Serving,
+  newAppointmentAt: Temporal.Instant,
+  at: Temporal.Instant,
+  eventId: TicketEventId,
+  rescheduledBy: Actor = "customer",
+): ApplyResult => {
+  // Lane invariant: only reservation tickets carry an appointmentAt.
+  // The usecase already gates on lane === "reservation"; the
+  // assertion here is a structural narrowing aid + a runtime
+  // safety net should a future caller bypass the boundary.
+  /* v8 ignore next */
+  if (t.appointmentAt === null) throw new Error("applyReschedule: appointmentAt is null")
+  const fromAppointmentAt = t.appointmentAt
+  // Preserve `state` exactly — Waiting stays Waiting, Called stays
+  // Called, Serving stays Serving. Only `appointmentAt` mutates.
+  // The spread preserves the discriminant tag; the result type is
+  // the same variant as `t`.
+  const ticket: Ticket = { ...t, appointmentAt: newAppointmentAt }
+  const event: RescheduledEvent = {
+    ...baseEvent(eventId, t.id, at),
+    type: "Rescheduled",
+    fromAppointmentAt,
+    toAppointmentAt: newAppointmentAt,
+    rescheduledBy,
+  }
+  return { ticket, event }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Terminal-state guards. The use case calls `guardActive` first; if the     */
 /* ticket is already terminal the matching `Already*Error` propagates without */
 /* the right-side helpers ever being invoked.                                  */
 /* -------------------------------------------------------------------------- */
 
 export type TicketCommand =
+  | "Reschedule"
   | "CallNext"
   | "CallSpecific"
   | "CallBatch"
@@ -338,6 +414,7 @@ export type TicketCommand =
   | "Cancel"
   | "Recall"
   | "Reorder"
+  | "CheckIn"
 
 const terminalError = (state: TicketState): DomainError | null => {
   if (state === "Cancelled") return new AlreadyCancelledError({})

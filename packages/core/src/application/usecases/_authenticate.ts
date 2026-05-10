@@ -7,7 +7,10 @@ import {
 } from "../../domain/errors/Errors.js"
 import type { Ticket } from "../../domain/queue/Ticket.js"
 import type { TicketId } from "../../domain/types/EntityId.js"
-import type { CustomerHandle } from "../../domain/value-objects/CustomerHandle.js"
+import {
+  type CustomerHandle,
+  equalsCustomerHandle,
+} from "../../domain/value-objects/CustomerHandle.js"
 import { type LoadedAggregate, TicketRepository } from "../ports/EventSourcedRepository.js"
 
 /**
@@ -41,10 +44,12 @@ export const authenticateCustomer = (
         ),
       )
     const t = loaded.state
-    if (
-      (t.nameKana as string) !== (handle.nameKana as string) ||
-      (t.phoneLast4 as string) !== (handle.phoneLast4 as string)
-    ) {
+    // Constant-time compare via `equalsCustomerHandle` (CWE-208).
+    // A timing-leaky `===` would let an attacker who already has
+    // the ticketId narrow the (nameKana, phoneLast4) pair faster
+    // than the rate-limit allows.
+    const stored: CustomerHandle = { nameKana: t.nameKana, phoneLast4: t.phoneLast4 }
+    if (!equalsCustomerHandle(stored, handle)) {
       return yield* Effect.fail<DomainError>(new PhoneMismatchError({}))
     }
     return loaded

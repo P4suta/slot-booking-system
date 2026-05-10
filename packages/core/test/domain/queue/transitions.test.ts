@@ -5,6 +5,7 @@ import type { Called, Serving, Waiting } from "../../../src/domain/queue/Ticket.
 import {
   applyCall,
   applyCancel,
+  applyCheckIn,
   applyIssue,
   applyMarkNoShow,
   applyMarkServed,
@@ -33,6 +34,7 @@ const issued = (): Waiting => {
     nameKana: kana,
     phoneLast4: phone,
     freeText: free,
+    appointmentAt: null,
     at: at("2026-05-08T09:00:00Z"),
     eventId: newTicketEventId(),
   })
@@ -58,6 +60,7 @@ describe("applyIssue", () => {
       nameKana: kana,
       phoneLast4: phone,
       freeText: null,
+      appointmentAt: null,
       at: at("2026-05-08T09:00:00Z"),
       eventId: newTicketEventId(),
     })
@@ -356,6 +359,31 @@ describe("applyReorder", () => {
   })
 })
 
+describe("applyCheckIn", () => {
+  it("transitions Waiting → Waiting and sets checkedInAt", () => {
+    const w = issued()
+    const { ticket, event } = applyCheckIn(w, at("2026-05-08T09:55:00Z"), newTicketEventId())
+    expect(ticket.state).toBe("Waiting")
+    if (ticket.state === "Waiting") {
+      expect(ticket.checkedInAt?.toString()).toBe(at("2026-05-08T09:55:00Z").toString())
+    }
+    expect(event.type).toBe("CheckedIn")
+    if (event.type === "CheckedIn") {
+      expect(event.checkedInBy).toBe("customer")
+    }
+  })
+
+  it("respects an explicit checkedInBy actor", () => {
+    const { event } = applyCheckIn(
+      issued(),
+      at("2026-05-08T09:55:00Z"),
+      newTicketEventId(),
+      "staff",
+    )
+    if (event.type === "CheckedIn") expect(event.checkedInBy).toBe("staff")
+  })
+})
+
 describe("invalidTransition", () => {
   it("synthesises an InvalidStateTransition error with the offending row", () => {
     const err = invalidTransition("Waiting", "MarkServed")
@@ -374,5 +402,9 @@ describe("invalidTransition", () => {
     expect(invalidTransition("Cancelled", "CallBatch").command).toBe("CallBatch")
     expect(invalidTransition("Waiting", "StartServing").command).toBe("StartServing")
     expect(invalidTransition("Called", "Reorder").command).toBe("Reorder")
+  })
+
+  it("accepts CheckIn as a command name (ADR-0068)", () => {
+    expect(invalidTransition("Called", "CheckIn").command).toBe("CheckIn")
   })
 })

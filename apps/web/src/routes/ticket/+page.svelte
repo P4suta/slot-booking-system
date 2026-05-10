@@ -1,22 +1,42 @@
 <script lang="ts">
+  import { goto } from "$app/navigation"
   import { page } from "$app/state"
   import { onDestroy, onMount } from "svelte"
   import {
     cancelTicket,
+    checkIn,
     connectQueueFeed,
-    myTicket,
     type ProjectionEntry,
     type QueueFeedHandle,
     type QueueFeedState,
+    rescheduleTicket,
     type ShopState,
     shopState,
     type Ticket,
+    ticketByHandle,
   } from "$lib/api.js"
+  import {
+    clearAlertMemory,
+    maybeTriggerCalledAlert,
+    type NotificationPermissionState,
+    notificationPermissionState,
+    requestNotificationPermission,
+  } from "$lib/calledAlert.js"
   import Button from "$lib/components/Button.svelte"
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
-  import { buildCanonicalRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
+  import Help from "$lib/components/Help.svelte"
+  import SlotPicker from "$lib/components/SlotPicker.svelte"
+  import { errorMessage, helpText, loadingState, m } from "$lib/messages.js"
+  import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
+  import {
+    hasStaffToken,
+    isTerminalState,
+    purgeTicketCache,
+    readTicketCache,
+    writeTicketCache,
+  } from "$lib/ticketCache.js"
 
   type Stored = { ticketId: string; nameKana: string; phoneLast4: string }
 
@@ -24,17 +44,85 @@
   let ticket: Ticket | null = $state(null)
   let snapshot: ShopState | null = $state(null)
   let qrDataUrl: string | null = $state(null)
-  let canonicalUrl: string | null = $state(null)
+  let shareUrl: string | null = $state(null)
   let error: { tag: string; code: string; message: string } | null = $state(null)
   let cancelDialogOpen = $state(false)
   let cancelReason = $state("")
   let cancelBusy = $state(false)
+  // ADR-0070 — atomic appointmentAt swap. The Dialog is only
+  // openable while the ticket is reservation-laned and active; the
+  // handle is read from the localStorage cache (already populated by
+  // /ticket boot) so the customer just picks the new slot.
+  let rescheduleDialogOpen = $state(false)
+  let rescheduleNewISO: string | null = $state(null)
+  let rescheduleBusy = $state(false)
+  let rescheduleError: { tag: string; code: string; message: string } | null = $state(null)
   let feedState: QueueFeedState = $state("connecting")
+  let notificationState: NotificationPermissionState = $state("unsupported")
   let feed: QueueFeedHandle | undefined
+  let now = $state(Date.now())
+  let checkInBusy = $state(false)
+  let countdownTick: ReturnType<typeof setInterval> | undefined
 
-  // ADR-0064: canonical URL `/ticket?id&k&p` is the source of truth;
-  // sessionStorage is a cache. Read URL first, fall back only when
-  // params are absent (e.g. legacy `#id=` form).
+  // ADR-0068: customer can hit 「到着しました」 once `now ≥ appointmentAt - 10min`.
+  const CHECK_IN_WINDOW_MS = 10 * 60 * 1000
+
+  const isReservation = $derived(
+    ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined,
+  )
+  const isActive = $derived(
+    ticket?.state === "Waiting" ||
+      ticket?.state === "Called" ||
+      ticket?.state === "Serving",
+  )
+  // Visibility guard for the reschedule button. Disable-on-WS-drop
+  // is delegated to the button itself, mirroring how cancel handles
+  // a feedState !== "open" tab.
+  const canReschedule = $derived(isReservation && isActive)
+  const appointmentMs = $derived(
+    ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined
+      ? Date.parse(ticket.appointmentAt)
+      : null,
+  )
+  const minutesUntilAppointment = $derived(
+    appointmentMs !== null ? Math.round((appointmentMs - now) / 60000) : null,
+  )
+  const checkInAvailable = $derived(
+    appointmentMs !== null &&
+      ticket?.state === "Waiting" &&
+      ticket.checkedInAt === null &&
+      now >= appointmentMs - CHECK_IN_WINDOW_MS,
+  )
+  const alreadyCheckedIn = $derived(ticket?.checkedInAt !== null && ticket?.checkedInAt !== undefined)
+
+  const onCheckIn = async (): Promise<void> => {
+    if (stored === null || ticket === null) return
+    checkInBusy = true
+    try {
+      const r = await checkIn(stored.ticketId)
+      if (!r.ok) {
+        error = {
+          tag: r.error._tag,
+          code: r.error.code,
+          message: errorMessage(r.error._tag),
+        }
+        return
+      }
+      // Refresh to read the new checkedInAt.
+      await refresh(stored)
+    } finally {
+      checkInBusy = false
+    }
+  }
+
+  // ADR-0069: localStorage cache is convenience only — the
+  // server-side `GET /tickets/by-handle` is the primary recovery
+  // capability. Cache read order:
+  //   1. Legacy `?id&k&p` URL (ADR-0064) → migrate into the cache
+  //      and rewrite the URL to drop PII.
+  //   2. localStorage cache (`queue.ticket.v2` or the migrated
+  //      `queue.ticket` sessionStorage from ADR-0064).
+  //   3. Fall through → /recover prompts for the handle.
   const readStored = (): Stored | null => {
     if (typeof window === "undefined") return null
     const params = page.url.searchParams
@@ -42,63 +130,82 @@
     const k = params.get("k")
     const p = params.get("p")
     if (id !== null && k !== null && p !== null) {
-      return { ticketId: id, nameKana: k, phoneLast4: p }
+      const migrated: Stored = { ticketId: id, nameKana: k, phoneLast4: p }
+      writeTicketCache(migrated)
+      // ADR-0069: strip PII from URL bar / browser history.
+      window.history.replaceState(null, "", `/ticket?id=${encodeURIComponent(id)}`)
+      return migrated
     }
-    try {
-      const fragment = window.location.hash
-      if (fragment.startsWith("#id=")) {
-        const fid = fragment.slice(4)
-        const cached = sessionStorage.getItem("queue.ticket")
-        if (cached !== null) {
-          const parsed = JSON.parse(cached) as Stored
-          if (parsed.ticketId === fid) return parsed
-        }
-      }
-      const cached = sessionStorage.getItem("queue.ticket")
-      if (cached !== null) return JSON.parse(cached) as Stored
-    } catch {
-      return null
+    const cached = readTicketCache()
+    if (cached === null) return null
+    // If the URL carries a different `?id=…` than the cache, the
+    // recipient hit the page via someone else's share link — let
+    // /recover ask for their own handle.
+    if (id !== null && id !== cached.ticketId) return null
+    return {
+      ticketId: cached.ticketId,
+      nameKana: cached.nameKana,
+      phoneLast4: cached.phoneLast4,
     }
-    return null
   }
 
   const refresh = async (id: Stored): Promise<void> => {
     try {
-      const r = await myTicket(id)
+      const r = await ticketByHandle({ nameKana: id.nameKana, phoneLast4: id.phoneLast4 })
       if (!r.ok) {
+        // 404 TicketNotFound = the handle no longer holds an active
+        // ticket (release after Served / Cancelled / NoShow, or the
+        // cache survived a stale device). Purge + bounce to /recover.
+        if (r.error._tag === "TicketNotFound") {
+          purgeTicketCache()
+          clearAlertMemory()
+          await goto("/recover")
+          return
+        }
         error = {
           tag: r.error._tag,
           code: r.error.code,
-          message: messageOf(r.error._tag),
+          message: errorMessage(r.error._tag),
         }
         return
       }
-      ticket = r.value.ticket
+      const t = r.value.ticket
+      ticket = t
       error = null
-      sessionStorage.setItem(
-        "queue.ticket",
-        JSON.stringify({
-          ticketId: ticket.id,
-          nameKana: ticket.nameKana,
-          phoneLast4: ticket.phoneLast4,
-        }),
-      )
+      writeTicketCache({
+        ticketId: t.id,
+        nameKana: t.nameKana ?? id.nameKana,
+        phoneLast4: t.phoneLast4 ?? id.phoneLast4,
+        lastKnownState: t.state,
+      })
+      // Called observation — fires chime / vibrate / notification on
+      // the **first** transition into Called (per-calledAt instant).
+      // A Recall → re-Call mints a fresh calledAt and the alert fires
+      // again; a tab reload while the ticket is already Called does
+      // not re-fire (the calledAt is unchanged).
+      maybeTriggerCalledAlert({
+        state: t.state,
+        calledAt: "calledAt" in t ? t.calledAt : null,
+        displaySeq: t.displaySeq,
+      })
+      // Terminal observation — keep the view rendered so the
+      // customer sees "対応完了" / "キャンセル済", but release the
+      // cache so the next mount falls through to /recover.
+      if (isTerminalState(t.state)) {
+        purgeTicketCache()
+        clearAlertMemory()
+      }
       const s = await shopState()
       if (s.ok) snapshot = s.value
       const origin = window.location.origin
-      const url = buildCanonicalRecoveryUrl(
-        origin,
-        ticket.id,
-        ticket.nameKana ?? id.nameKana,
-        ticket.phoneLast4 ?? id.phoneLast4,
-      )
-      canonicalUrl = url
+      const url = buildShareRecoveryUrl(origin)
+      shareUrl = url
       qrDataUrl = await renderQrToDataUrl(url)
     } catch (e) {
       error = {
         tag: "NetworkError",
         code: "E_NET_FAIL",
-        message: e instanceof Error ? e.message : "ネットワーク接続を確認してください",
+        message: e instanceof Error ? e.message : errorMessage("NetworkError"),
       }
     }
   }
@@ -130,21 +237,10 @@
     }
   })
 
-  const messageOf = (tag: string): string => {
-    switch (tag) {
-      case "TicketNotFound":
-        return "番号が見つかりません。 名前 / 末尾 4 桁を確認してください"
-      case "PhoneMismatch":
-        return "名前または電話番号末尾が一致しません"
-      default:
-        return "情報を取得できませんでした"
-    }
-  }
-
   const onCopyUrl = async () => {
-    if (canonicalUrl === null) return
+    if (shareUrl === null) return
     try {
-      await navigator.clipboard.writeText(canonicalUrl)
+      await navigator.clipboard.writeText(shareUrl)
     } catch {
       // clipboard API 不可 (insecure context) — fallback はしない
     }
@@ -163,7 +259,7 @@
         error = {
           tag: r.error._tag,
           code: r.error.code,
-          message: messageOf(r.error._tag),
+          message: errorMessage(r.error._tag),
         }
         return
       }
@@ -175,20 +271,92 @@
     }
   }
 
+  const onRequestNotification = async (): Promise<void> => {
+    notificationState = await requestNotificationPermission()
+  }
+
+  const openRescheduleDialog = (): void => {
+    rescheduleNewISO = ticket?.appointmentAt ?? null
+    rescheduleError = null
+    rescheduleDialogOpen = true
+  }
+
+  const onRescheduleConfirm = async (): Promise<void> => {
+    if (stored === null || ticket === null || rescheduleNewISO === null) return
+    rescheduleBusy = true
+    try {
+      const r = await rescheduleTicket(stored.ticketId, {
+        nameKana: stored.nameKana,
+        phoneLast4: stored.phoneLast4,
+        newAppointmentAt: rescheduleNewISO,
+      })
+      if (!r.ok) {
+        rescheduleError = {
+          tag: r.error._tag,
+          code: r.error.code,
+          message: errorMessage(r.error._tag),
+        }
+        return
+      }
+      ticket = r.value.ticket
+      rescheduleDialogOpen = false
+      rescheduleNewISO = null
+      // Pull the latest projection so the appointment Card / feed
+      // reflect the new slot's occupancy without waiting for the
+      // next WS broadcast.
+      if (stored !== null) await refresh(stored)
+    } finally {
+      rescheduleBusy = false
+    }
+  }
+
   onMount(async () => {
+    // Stage 10: staff session sandbox — operator at the keyboard
+    // shouldn't impersonate a customer view, even by accident.
+    if (hasStaffToken()) {
+      await goto("/staff")
+      return
+    }
+    notificationState = notificationPermissionState()
     stored = readStored()
-    if (stored !== null) await refresh(stored)
+    if (stored === null) {
+      // No URL params, no cache → the customer landed on /ticket
+      // without a handle. ADR-0069 routes them to /recover to type
+      // (kana, last4); the form's submit handler will land them
+      // back here with the cache populated.
+      await goto("/recover")
+      return
+    }
+    await refresh(stored)
     feed = connectQueueFeed({
       onProjection: (parsed) => {
         snapshot = parsed as ShopState
+        // ADR-0061 — the WS broadcasts the public projection only.
+        // The customer's own state (Waiting → Called → Serving →
+        // Served) lives behind /api/v1/tickets/me and is never
+        // serialised onto the feed. Refetch on every broadcast so a
+        // staff CallNext / MarkServed / Recall flips this tab's
+        // hero state — without this, only freshly-loaded tabs would
+        // see the transition (the 「呼ばれました」 hero would be
+        // stuck on the original /ticket tab while a tab opened from
+        // the recovery URL renders correctly).
+        if (stored !== null) void refresh(stored)
       },
       onState: (next) => {
         feedState = next
       },
     })
+    // 1Hz countdown tick — only mounts client-side via onMount, so
+    // SSR never spawns a setInterval that would never clear.
+    countdownTick = setInterval(() => {
+      now = Date.now()
+    }, 1000)
   })
 
-  onDestroy(() => feed?.close())
+  onDestroy(() => {
+    feed?.close()
+    if (countdownTick !== undefined) clearInterval(countdownTick)
+  })
 </script>
 
 <svelte:head>
@@ -220,7 +388,50 @@
       </span>
     </div>
 
-    {#if ticket.state === "Waiting" && positionInfo !== null}
+    {#if isReservation && minutesUntilAppointment !== null}
+      <Card>
+        <div class="appointment">
+          <span class="appointment-label">予約時刻</span>
+          <span class="appointment-time">{ticket.appointmentAt?.slice(11, 16) ?? ""}</span>
+          {#if alreadyCheckedIn}
+            <span class="appointment-badge badge-arrived">到着済み</span>
+          {:else if minutesUntilAppointment > 0}
+            <span class="appointment-countdown">
+              あと {minutesUntilAppointment} 分
+            </span>
+          {:else}
+            <span class="appointment-countdown overdue">時間です</span>
+          {/if}
+          {#if checkInAvailable && !alreadyCheckedIn}
+            <Button
+              size="md"
+              fullWidth
+              disabled={checkInBusy}
+              onclick={onCheckIn}
+            >
+              {checkInBusy ? "送信中…" : "到着しました"}
+            </Button>
+          {/if}
+          {#if canReschedule}
+            <div class="appointment-action">
+              <Button
+                variant="secondary"
+                size="md"
+                fullWidth
+                disabled={feedState !== "open"}
+                onclick={openRescheduleDialog}
+              >
+                予約時刻を変更
+              </Button>
+              <Help text={helpText("reschedule")} label="予約時刻変更の説明を表示" />
+            </div>
+            <p class="reservation-modify-help">
+              {m.reservation_modify_help()}
+            </p>
+          {/if}
+        </div>
+      </Card>
+    {:else if ticket.state === "Waiting" && positionInfo !== null}
       <Card>
         <p class="position">
           あなたの前に <strong>{positionInfo}</strong> 人
@@ -228,8 +439,23 @@
       </Card>
     {/if}
 
+    {#if ticket.state === "Waiting" && notificationState === "default"}
+      <Card>
+        <div class="notif-opt-in">
+          <p class="notif-msg">
+            {m.notify_permission_question()}
+            <Help text={helpText("notifyPermission")} label="通知の説明を表示" />
+          </p>
+          <p class="notif-help">{m.notify_permission_help()}</p>
+          <Button variant="secondary" size="md" onclick={onRequestNotification}>
+            通知を許可する
+          </Button>
+        </div>
+      </Card>
+    {/if}
+
     {#if feedState === "reconnecting"}
-      <p class="banner" role="status" aria-live="polite">再接続中…</p>
+      <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
     {/if}
 
     {#if qrDataUrl !== null}
@@ -237,7 +463,7 @@
         <div class="qr">
           <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" width="240" height="240" />
           <div class="qr-help">
-            <p>別の端末で開けます。 リンクをコピーする場合:</p>
+            <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
             <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
           </div>
         </div>
@@ -246,13 +472,18 @@
 
     {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Serving"}
       <div class="actions">
-        <Button variant="ghost" size="md" onclick={() => (cancelDialogOpen = true)}>
+        <Button
+          variant="ghost"
+          size="md"
+          disabled={feedState !== "open"}
+          onclick={() => (cancelDialogOpen = true)}
+        >
           キャンセル
         </Button>
       </div>
     {/if}
   {:else if error === null}
-    <p class="loading">読み込み中…</p>
+    <p class="loading">{loadingState("ticket")}</p>
   {/if}
 
   <Dialog
@@ -260,12 +491,53 @@
     title="キャンセルしますか?"
     onClose={() => (cancelDialogOpen = false)}
   >
-    <p>キャンセル後は再発行が必要です。 理由 (任意):</p>
+    <p>{m.confirm_cancel_body()}</p>
+    <p class="dialog-hint">差し支えなければ理由をお書きください (任意):</p>
     <textarea bind:value={cancelReason} rows="2" placeholder="例: 都合がつかなくなった"></textarea>
     {#snippet actions()}
       <Button variant="ghost" onclick={() => (cancelDialogOpen = false)}>戻る</Button>
       <Button variant="destructive" disabled={cancelBusy} onclick={onCancelConfirm}>
         {cancelBusy ? "送信中…" : "キャンセル"}
+      </Button>
+    {/snippet}
+  </Dialog>
+
+  <Dialog
+    bind:open={rescheduleDialogOpen}
+    title="予約時刻を変更しますか?"
+    onClose={() => (rescheduleDialogOpen = false)}
+  >
+    {#if ticket !== null && ticket.appointmentAt !== null && ticket.appointmentAt !== undefined}
+      <p class="reschedule-current">
+        現在の予約時刻:
+        <strong>{ticket.appointmentAt.slice(11, 16)}</strong>
+      </p>
+    {/if}
+    <p class="reschedule-help">{m.confirm_reschedule_body()}</p>
+    <SlotPicker
+      selectedISO={rescheduleNewISO}
+      onSelect={(iso) => {
+        rescheduleNewISO = iso
+        rescheduleError = null
+      }}
+    />
+    {#if rescheduleError !== null}
+      <ErrorCard
+        tag={rescheduleError.tag}
+        code={rescheduleError.code}
+        message={rescheduleError.message}
+      />
+    {/if}
+    {#snippet actions()}
+      <Button variant="ghost" onclick={() => (rescheduleDialogOpen = false)}>戻る</Button>
+      <Button
+        variant="primary"
+        disabled={rescheduleBusy ||
+          rescheduleNewISO === null ||
+          rescheduleNewISO === ticket?.appointmentAt}
+        onclick={onRescheduleConfirm}
+      >
+        {rescheduleBusy ? "送信中…" : "この時間に変更する"}
       </Button>
     {/snippet}
   </Dialog>
@@ -330,6 +602,22 @@
     font-variant-numeric: tabular-nums;
     margin: 0 var(--space-2);
   }
+  .notif-opt-in {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    text-align: center;
+  }
+  .notif-msg {
+    font: var(--text-body-md);
+    color: var(--color-fg-primary);
+    margin: 0;
+  }
+  .notif-help {
+    font: var(--text-body-sm);
+    color: var(--color-fg-muted);
+    margin: 0 0 var(--space-2);
+  }
   .qr {
     display: flex;
     flex-direction: column;
@@ -363,6 +651,39 @@
     margin: 0;
     text-align: center;
   }
+  .appointment {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    align-items: center;
+    text-align: center;
+  }
+  .appointment-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+  }
+  .appointment-time {
+    font: var(--text-numeral-sm);
+    color: var(--color-fg-primary);
+  }
+  .appointment-countdown {
+    font: var(--text-body-md);
+    color: var(--color-fg-secondary);
+  }
+  .appointment-countdown.overdue {
+    color: var(--color-state-called);
+    font-weight: 600;
+  }
+  .appointment-badge {
+    display: inline-block;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    font: var(--text-label-sm);
+  }
+  .badge-arrived {
+    background: oklch(95% 0.07 145);
+    color: oklch(35% 0.13 145);
+  }
   textarea {
     width: 100%;
     background: var(--color-bg-subtle);
@@ -372,5 +693,40 @@
     padding: var(--space-3);
     margin-top: var(--space-2);
     resize: vertical;
+  }
+  .reschedule-current {
+    margin: 0 0 var(--space-2);
+    color: var(--color-fg-secondary);
+    font: var(--text-body-md);
+  }
+  .reschedule-current strong {
+    font: var(--text-numeral-sm);
+    color: var(--color-fg-primary);
+    margin-left: var(--space-2);
+  }
+  .reschedule-help {
+    margin: 0 0 var(--space-4);
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
+  }
+  .appointment-action {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+  }
+  .appointment-action :global(button) {
+    flex: 1;
+  }
+  .reservation-modify-help {
+    margin: var(--space-2) 0 0;
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
+    text-align: left;
+  }
+  .dialog-hint {
+    margin: var(--space-3) 0 var(--space-2);
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
   }
 </style>

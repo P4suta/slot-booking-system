@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from "$app/navigation"
   import { onDestroy, onMount } from "svelte"
   import Card from "$lib/components/Card.svelte"
   import {
@@ -9,12 +10,20 @@
     type ShopState,
     shopState,
   } from "$lib/api.js"
+  import { loadingState } from "$lib/messages.js"
+  import { hasStaffToken, readTicketCache } from "$lib/ticketCache.js"
 
   let waitingCount = $state(0)
   let laneCounts: LaneCounts = $state({ walkIn: 0, priority: 0, reservation: 0 })
   let calling = $state(0)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
+  // ADR-0069 §Stage 8 — if the customer already has an active ticket
+  // cached locally, every customer-facing route funnels into /ticket
+  // so the customer's "where am I" never has more than one answer.
+  // booting==true suppresses the landing render during the redirect
+  // frame so the customer does not see the landing flash.
+  let booting = $state(true)
 
   const refresh = (data: ShopState) => {
     waitingCount = data.waitingCount
@@ -23,6 +32,19 @@
   }
 
   onMount(async () => {
+    // Stage 10: staff session sandbox — a logged-in operator's tab
+    // never falls through to the customer landing; bounce back to
+    // /staff so the dashboard stays the dominant view until logout.
+    if (hasStaffToken()) {
+      await goto("/staff")
+      return
+    }
+    const cached = readTicketCache()
+    if (cached !== null) {
+      await goto(`/ticket?id=${encodeURIComponent(cached.ticketId)}`)
+      return
+    }
+    booting = false
     try {
       const initial = await shopState()
       if (initial.ok) refresh(initial.value)
@@ -44,45 +66,47 @@
   <title>並ぶ — 整理券</title>
 </svelte:head>
 
-<section class="hero">
-  <h1>並ぶ</h1>
-  <p class="lede">店の行列に番号を取って加わる。 列の進みはそのまま見える。</p>
+{#if !booting}
+  <section class="hero">
+    <h1>並ぶ</h1>
+    <p class="lede">店の行列に番号を取って加わる。 列の進みはそのまま見える。</p>
 
-  {#if feedState === "reconnecting"}
-    <p class="banner" role="status" aria-live="polite">再接続中…</p>
-  {/if}
+    {#if feedState === "reconnecting"}
+      <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
+    {/if}
 
-  <div class="status">
-    <Card>
-      <div class="status-grid">
-        <div class="metric">
-          <span class="metric-label">待ち人数</span>
-          <span class="metric-value">{waitingCount}</span>
+    <div class="status">
+      <Card>
+        <div class="status-grid">
+          <div class="metric">
+            <span class="metric-label">待ち人数</span>
+            <span class="metric-value">{waitingCount}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">対応中</span>
+            <span class="metric-value">{calling}</span>
+          </div>
         </div>
-        <div class="metric">
-          <span class="metric-label">対応中</span>
-          <span class="metric-value">{calling}</span>
-        </div>
-      </div>
-      {#if waitingCount > 0}
-        <div class="lanes">
-          {#if laneCounts.priority > 0}
-            <span class="lane-chip priority">優先 {laneCounts.priority}</span>
-          {/if}
-          <span class="lane-chip">通常 {laneCounts.walkIn}</span>
-          {#if laneCounts.reservation > 0}
-            <span class="lane-chip">予約 {laneCounts.reservation}</span>
-          {/if}
-        </div>
-      {/if}
-    </Card>
-  </div>
+        {#if waitingCount > 0}
+          <div class="lanes">
+            {#if laneCounts.priority > 0}
+              <span class="lane-chip priority">優先 {laneCounts.priority}</span>
+            {/if}
+            <span class="lane-chip">通常 {laneCounts.walkIn}</span>
+            {#if laneCounts.reservation > 0}
+              <span class="lane-chip">予約 {laneCounts.reservation}</span>
+            {/if}
+          </div>
+        {/if}
+      </Card>
+    </div>
 
-  <div class="actions">
-    <a class="cta" href="/issue">並ぶ</a>
-    <a class="link" href="/recover">自分の番号を確認</a>
-  </div>
-</section>
+    <div class="actions">
+      <a class="cta" href="/issue">並ぶ</a>
+      <a class="link" href="/recover">自分の番号を確認</a>
+    </div>
+  </section>
+{/if}
 
 <style>
   .hero {

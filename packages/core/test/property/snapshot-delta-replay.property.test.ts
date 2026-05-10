@@ -71,6 +71,7 @@ const drive = (steps: readonly Step[]): readonly TicketEvent[] => {
           nameKana: kana,
           phoneLast4: phone,
           freeText: free,
+          appointmentAt: null,
           at: at(tick),
           eventId: newTicketEventId(),
         })

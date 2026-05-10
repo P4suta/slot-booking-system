@@ -7,13 +7,13 @@ import { describe, expect, it } from "vitest"
  * `docs/error-codes.md` (drift-gated by `just error-docs-drift-check`)
  * and the prefix-grouping convention ADR-0017 relies on.
  *
- * Layout: 6 validation entries → 9 domain entries → 3 infrastructure.
+ * Layout: 6 validation entries → 13 domain entries → 3 infrastructure.
  * The i18n-key generator and the HTTP error envelope both rest on
  * this contiguous severity ordering.
  */
 describe("errorClassRegistry", () => {
-  it("has 18 entries", () => {
-    expect(errorClassRegistry).toHaveLength(18)
+  it("has 22 entries", () => {
+    expect(errorClassRegistry).toHaveLength(22)
   })
 
   const severitiesOf = (): readonly string[] =>
@@ -21,11 +21,11 @@ describe("errorClassRegistry", () => {
       (cls) => (cls as { readonly severity: "validation" | "domain" | "infrastructure" }).severity,
     )
 
-  it("groups severities in 6/9/3 contiguous blocks", () => {
+  it("groups severities in 6/13/3 contiguous blocks", () => {
     const seen = severitiesOf()
     expect(seen.slice(0, 6).every((s) => s === "validation")).toBe(true)
-    expect(seen.slice(6, 15).every((s) => s === "domain")).toBe(true)
-    expect(seen.slice(15, 18).every((s) => s === "infrastructure")).toBe(true)
+    expect(seen.slice(6, 19).every((s) => s === "domain")).toBe(true)
+    expect(seen.slice(19, 22).every((s) => s === "infrastructure")).toBe(true)
   })
 
   it("uses unique error codes", () => {

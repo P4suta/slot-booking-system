@@ -23,6 +23,8 @@ const baseFields = {
   phoneLast4: "1234",
   freeText: null,
   issuedAt: "2026-05-08T09:00:00Z",
+  appointmentAt: null,
+  checkedInAt: null,
 }
 
 describe("TicketSchema discrimination", () => {

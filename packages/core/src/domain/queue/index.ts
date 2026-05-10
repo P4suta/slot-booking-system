@@ -1,5 +1,7 @@
+export * from "./eta.js"
 export * from "./Lane.js"
 export * from "./projection.js"
+export * from "./Slot.js"
 export * from "./Ticket.js"
 export * from "./TicketEvent.js"
 export * from "./transitions.js"

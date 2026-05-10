@@ -26,6 +26,7 @@ const issueOne = (): ApplyResult =>
     nameKana: kana,
     phoneLast4: phone,
     freeText: null,
+    appointmentAt: null,
     at: at("2026-05-08T09:00:00Z"),
     eventId: newTicketEventId(),
   })

@@ -22,6 +22,7 @@
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
   import Toast from "$lib/components/Toast.svelte"
+  import { emptyState } from "$lib/messages.js"
 
   type LaneFilter = "all" | Lane
 
@@ -45,12 +46,27 @@
   let batchN = $state(1)
   let selected: Set<string> = $state(new Set())
   let detail: Ticket | null = $state(null)
-  let helpOpen = $state(false)
   let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
   let audioCue = $state(
     typeof window === "undefined" ? false : localStorage.getItem("queue.audioCue") === "1",
   )
-  let searchInput: HTMLInputElement | null = $state(null)
+  let now = $state(Date.now())
+  let slotChipTick: ReturnType<typeof setInterval> | undefined
+
+  // ADR-0067 grace window — same threshold the EDF lane-chain promotes
+  // a reservation. The chip turns "due" within the same 5min window the
+  // backend uses, so the operator sees the same boundary the projection
+  // is computing.
+  const SLOT_CHIP_DUE_MS = 5 * 60 * 1000
+
+  const slotChipState = (appointmentAt: string): "due" | "overdue" | "soon" | "future" => {
+    const ms = Date.parse(appointmentAt)
+    const delta = ms - now
+    if (delta <= -SLOT_CHIP_DUE_MS) return "overdue"
+    if (delta <= SLOT_CHIP_DUE_MS) return "due"
+    if (delta <= 30 * 60 * 1000) return "soon"
+    return "future"
+  }
 
   /* ---------- derived ---------- */
   const filteredWaiting = $derived.by(() => {
@@ -86,6 +102,7 @@
       waiting = r.value.waitingPreview
       calling = r.value.calling
       servingList = r.value.serving
+      done = r.value.terminal
       error = null
     } catch (e) {
       error = `refresh: ${String(e)}`
@@ -279,40 +296,6 @@
     selected = next
   }
 
-  /* ---------- keyboard ---------- */
-  const onKey = (event: KeyboardEvent) => {
-    if (!authenticated) return
-    const target = event.target as HTMLElement | null
-    const isInput =
-      target !== null && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
-    if (event.key === "/" && !isInput) {
-      event.preventDefault()
-      searchInput?.focus()
-      return
-    }
-    if (event.key === "Escape") {
-      selected = new Set()
-      detail = null
-      helpOpen = false
-      return
-    }
-    if (isInput) return
-    if (event.key === "?") {
-      event.preventDefault()
-      helpOpen = true
-      return
-    }
-    if (event.key.toLowerCase() === "n") {
-      void onCallNext()
-      return
-    }
-    const firstSelected = selected.values().next().value
-    if (firstSelected === undefined) return
-    if (event.key.toLowerCase() === "s") void onStartServing(firstSelected)
-    if (event.key.toLowerCase() === "c") void onMarkServed(firstSelected)
-    if (event.key.toLowerCase() === "r") void onRecallTicket(firstSelected)
-  }
-
   const onAudioToggle = () => {
     audioCue = !audioCue
     localStorage.setItem("queue.audioCue", audioCue ? "1" : "0")
@@ -324,12 +307,15 @@
       ensureNotificationPermission()
       await startLiveFeed()
     }
-    window.addEventListener("keydown", onKey)
+    // 1Hz tick drives the slot chip due/overdue colour transition.
+    slotChipTick = setInterval(() => {
+      now = Date.now()
+    }, 1000)
   })
 
   onDestroy(() => {
     feed?.close()
-    if (typeof window !== "undefined") window.removeEventListener("keydown", onKey)
+    if (slotChipTick !== undefined) clearInterval(slotChipTick)
   })
 </script>
 
@@ -369,7 +355,6 @@
         {/each}
       </div>
       <input
-        bind:this={searchInput}
         type="search"
         bind:value={search}
         placeholder="名前 (一部) / 末尾4桁"
@@ -381,7 +366,6 @@
       </div>
       <div class="meta">
         <span class="dot" data-state={feedState} aria-label={`feed: ${feedState}`}></span>
-        <Button variant="ghost" size="md" onclick={() => (helpOpen = true)} aria-label="help (?)">?</Button>
         <Button variant="ghost" size="md" onclick={onAudioToggle} aria-label="audio cue">
           {audioCue ? "🔔" : "🔕"}
         </Button>
@@ -418,6 +402,11 @@
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  {#if t.appointmentAt !== null}
+                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                      {t.appointmentAt.slice(11, 16)}
+                    </span>
+                  {/if}
                 </div>
                 <div class="ticket-body">
                   <span class="kana">{t.nameKana ?? ""}</span>
@@ -427,7 +416,7 @@
             </Card>
           {/each}
           {#if filteredWaiting.length === 0}
-            <p class="empty">該当なし</p>
+            <p class="empty">{emptyState("waiting")}</p>
           {/if}
         </div>
       </section>
@@ -441,6 +430,11 @@
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  {#if t.appointmentAt !== null}
+                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                      {t.appointmentAt.slice(11, 16)}
+                    </span>
+                  {/if}
                 </div>
                 <div class="ticket-body">
                   <span class="kana">{t.nameKana ?? ""}</span>
@@ -456,7 +450,7 @@
             </Card>
           {/each}
           {#if calling.length === 0}
-            <p class="empty">なし</p>
+            <p class="empty">{emptyState("calling")}</p>
           {/if}
         </div>
       </section>
@@ -470,6 +464,11 @@
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  {#if t.appointmentAt !== null}
+                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                      {t.appointmentAt.slice(11, 16)}
+                    </span>
+                  {/if}
                 </div>
                 <div class="ticket-body">
                   <span class="kana">{t.nameKana ?? ""}</span>
@@ -483,7 +482,7 @@
             </Card>
           {/each}
           {#if servingList.length === 0}
-            <p class="empty">なし</p>
+            <p class="empty">{emptyState("serving")}</p>
           {/if}
         </div>
       </section>
@@ -502,7 +501,7 @@
             </Card>
           {/each}
           {#if done.length === 0}
-            <p class="empty">なし</p>
+            <p class="empty">{emptyState("terminal")}</p>
           {/if}
         </div>
       </section>
@@ -548,20 +547,6 @@
     </Dialog>
 
     <!-- help dialog -->
-    <Dialog bind:open={helpOpen} title="キーボード操作" onClose={() => (helpOpen = false)}>
-      <dl class="help">
-        <dt>N</dt><dd>次を呼ぶ (CallNext)</dd>
-        <dt>S</dt><dd>選択中チケットの対応開始 (StartServing)</dd>
-        <dt>C</dt><dd>選択中チケットの対応完了 (MarkServed)</dd>
-        <dt>R</dt><dd>選択中チケットの取消 (Recall)</dd>
-        <dt>/</dt><dd>検索フォーカス</dd>
-        <dt>?</dt><dd>このヘルプ</dd>
-        <dt>Esc</dt><dd>選択解除 / dialog 閉じる</dd>
-        <dt>Click</dt><dd>選択 (Shift+click で複数選択)</dd>
-        <dt>Dbl-click / Enter</dt><dd>詳細を開く</dd>
-      </dl>
-    </Dialog>
-
     <!-- toast -->
     {#if toast !== null}
       <div class="toast-host">
@@ -733,6 +718,27 @@
   .lane.lane-priority {
     color: var(--color-state-called);
     background: oklch(95% 0.05 65 / 30%);
+  }
+  .slot-chip {
+    font: var(--text-mono-sm);
+    color: var(--color-fg-secondary);
+    background: var(--color-bg-subtle);
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+  }
+  .slot-chip[data-state="soon"] {
+    color: oklch(40% 0.13 65);
+    background: oklch(95% 0.07 65 / 50%);
+  }
+  .slot-chip[data-state="due"] {
+    color: oklch(35% 0.18 30);
+    background: oklch(92% 0.13 30 / 60%);
+    font-weight: 600;
+  }
+  .slot-chip[data-state="overdue"] {
+    color: oklch(35% 0.22 25);
+    background: oklch(85% 0.18 25 / 70%);
+    font-weight: 700;
   }
   .ticket-body {
     display: flex;

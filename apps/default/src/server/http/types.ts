@@ -10,11 +10,14 @@ export type Env = {
   readonly DB: D1Database
   readonly QUEUE_SHOP: DurableObjectNamespace<QueueShop>
   readonly DEPLOYMENT_NAME: string
-  readonly DEPLOYMENT_TIMEZONE: string
+  readonly DEPLOYMENT_TIMEZONE?: string
   readonly IS_DEV?: string
   readonly OTEL_EXPORTER_URL?: string
   readonly OTEL_EXPORTER_KEY?: string
   readonly STAFF_SESSION_SECRET?: string
   readonly NO_SHOW_TIMEOUT_SECONDS?: string
   readonly ALLOWED_ORIGINS?: string
+  readonly SLOT_DEFAULT_CAPACITY?: string
+  readonly SLOT_DEFAULT_GRANULARITY?: string
+  readonly EDF_GRACE_MINUTES?: string
 }

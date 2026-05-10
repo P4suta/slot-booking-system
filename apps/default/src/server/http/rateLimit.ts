@@ -8,7 +8,7 @@ import type { Env } from "./types.js"
  * (Cloudflare docs); the binding is tied to a namespace_id +
  * (limit, period) tuple defined in wrangler.toml.
  *
- * Two namespaces ship by default:
+ * Three namespaces ship by default:
  *
  *   - RL_ISSUE (60 / minute): customer-side ticket issue, scoped
  *     per CF-Connecting-IP so a single client cannot starve the
@@ -17,6 +17,13 @@ import type { Env } from "./types.js"
  *   - RL_OPERATE (300 / minute): staff-side mutations, scoped per
  *     staff-token hash. A burst of repeated clicks during a busy hour
  *     should not trip the limit; a runaway script will.
+ *   - RL_VERIFY (30 / minute): customer-side handle verification
+ *     (`/tickets/me`, `/tickets/:id/cancel`, `/tickets/:id/check-in`),
+ *     scoped per CF-Connecting-IP. The 4-digit phone last-4 has
+ *     10 000 combinations and kana adds non-trivial entropy; a 30/min
+ *     ceiling makes brute force impractical (< 0.005 % of the kana ×
+ *     last4 space per day) without disrupting normal customer
+ *     refresh polling.
  *
  * Miniflare does not implement `[[unsafe.bindings]]` so the binding
  * is `undefined` under `wrangler dev --local` — the middleware
@@ -28,11 +35,12 @@ type RateLimitBinding = {
   readonly limit: (args: { key: string }) => Promise<{ success: boolean }>
 }
 
-export type RateLimitNamespace = "RL_ISSUE" | "RL_OPERATE"
+export type RateLimitNamespace = "RL_ISSUE" | "RL_OPERATE" | "RL_VERIFY"
 
 const KEY_FNS: Record<RateLimitNamespace, (c: Context<{ Bindings: Env }>) => string> = {
   RL_ISSUE: (c) => c.req.header("cf-connecting-ip") ?? "anonymous",
   RL_OPERATE: (c) => c.req.header("x-staff-token") ?? "no-token",
+  RL_VERIFY: (c) => c.req.header("cf-connecting-ip") ?? "anonymous",
 }
 
 const RETRY_AFTER_SECONDS = 60
