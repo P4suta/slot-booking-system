@@ -8,34 +8,65 @@ type ErrorEnvelope = {
   readonly reason?: string
 }
 
+export type Lane = "walkIn" | "priority" | "reservation"
+export type TicketState = "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
+
 export type Ticket = {
   readonly id: string
   readonly seq: number
-  readonly state: "Waiting" | "Called" | "Served" | "NoShow" | "Cancelled"
+  readonly lane: Lane
+  readonly displaySeq: number
+  readonly state: TicketState
   readonly nameKana: string | null
   readonly phoneLast4: string | null
   readonly freeText: string | null
   readonly issuedAt: string
   readonly calledAt?: string
+  readonly servingStartedAt?: string
   readonly servedAt?: string
   readonly cancelledAt?: string
   readonly markedAt?: string
 }
 
+export type ProjectionEntry = {
+  readonly id: string
+  readonly seq: number
+  readonly lane: Lane
+  readonly displaySeq: number
+}
+
+export type LaneCounts = {
+  readonly walkIn: number
+  readonly priority: number
+  readonly reservation: number
+}
+
+/**
+ * v2 anonymous shop projection (ADR-0062 / ADR-0063 / ADR-0065).
+ * Lane-aware preview, `calling[]` + `serving[]` arrays, and
+ * `laneCounts` so the client renders the same shape from
+ * `GET /api/v1/queue` and the WebSocket feed.
+ */
 export type ShopState = {
+  readonly v: 2
   readonly waitingCount: number
-  readonly serving: Ticket | null
-  readonly waitingPreview: readonly { id: string; seq: number }[]
+  readonly laneCounts: LaneCounts
+  readonly calling: readonly ProjectionEntry[]
+  readonly serving: readonly ProjectionEntry[]
+  readonly waitingPreview: readonly ProjectionEntry[]
 }
 
 /**
  * Staff-only shape: PII (nameKana / phoneLast4 / freeText) のせ。
- * `x-staff-token` を付けて GET /api/v1/queue を叩いたときに返る形。
- * 顧客 landing で使う {@link ShopState} のスーパーセット。
+ * v2 では calling / serving / waitingPreview のすべてが full Ticket
+ * row を carry。 `x-staff-token` 付き GET /api/v1/queue で返る。
  */
 export type StaffShopState = {
+  readonly v: 2
   readonly waitingCount: number
-  readonly serving: Ticket | null
+  readonly laneCounts: LaneCounts
+  readonly calling: readonly Ticket[]
+  readonly serving: readonly Ticket[]
   readonly waitingPreview: readonly Ticket[]
 }
 
@@ -127,6 +158,7 @@ export const issueTicket = async (input: {
   nameKana: string
   phoneLast4: string
   freeText: string | null
+  lane?: Lane
 }): Promise<ApiResult<{ ticket: Ticket }>> =>
   fetchJson(`${baseUrl()}/api/v1/tickets`, {
     method: "POST",
@@ -263,10 +295,53 @@ const staffHeaders = (token: string) => ({
   "x-staff-token": token,
 })
 
-export const callNext = async (token: string): Promise<ApiResult<{ ticket: Ticket }>> =>
+export const callNext = async (
+  token: string,
+  body: { lane?: Lane } = {},
+): Promise<ApiResult<{ ticket: Ticket }>> =>
   fetchJson(`${baseUrl()}/api/v1/queue/call-next`, {
     method: "POST",
     headers: staffHeaders(token),
+    body: body.lane !== undefined ? JSON.stringify({ lane: body.lane }) : undefined,
+  })
+
+export const callSpecific = async (
+  token: string,
+  ticketId: string,
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/queue/call-specific`, {
+    method: "POST",
+    headers: staffHeaders(token),
+    body: JSON.stringify({ ticketId }),
+  })
+
+export const callBatch = async (
+  token: string,
+  ticketIds: readonly string[],
+): Promise<ApiResult<{ tickets: readonly Ticket[] }>> =>
+  fetchJson(`${baseUrl()}/api/v1/queue/call-batch`, {
+    method: "POST",
+    headers: staffHeaders(token),
+    body: JSON.stringify({ ticketIds }),
+  })
+
+export const startServing = async (
+  token: string,
+  ticketId: string,
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/start-serving`, {
+    method: "POST",
+    headers: staffHeaders(token),
+  })
+
+export const reorder = async (
+  token: string,
+  body: { ticketId: string; afterTicketId: string | null },
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/queue/reorder`, {
+    method: "POST",
+    headers: staffHeaders(token),
+    body: JSON.stringify(body),
   })
 
 export const markServed = async (

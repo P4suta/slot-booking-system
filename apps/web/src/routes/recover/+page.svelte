@@ -1,20 +1,29 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
-  import { issueTicket } from "$lib/api.js"
+  import { page } from "$app/state"
+  import { onMount } from "svelte"
+  import { myTicket } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
 
+  let ticketId = $state("")
   let nameKana = $state("")
   let phoneLast4 = $state("")
-  let freeText = $state("")
   let busy = $state(false)
   let error: { tag: string; code: string; message: string } | null = $state(null)
 
-  // ひらがな入力を即座にカタカナへ昇格 (UX 配慮)。 worker 側の
-  // `parseNameKana` はカタカナ + 半角カナ + 空白のみ受け付けるため、
-  // ひらがなのまま submit すると即 InvalidNameKana で弾かれる。
+  // Pre-fill ticketId from `?id=` query param when the customer
+  // arrives via the share-safe `/recover?id=...` form. The handle
+  // (kana + last4) is always typed by the user — never by URL —
+  // so a recipient who only got the share link cannot bypass the
+  // verification (ADR-0064 share-safety).
+  onMount(() => {
+    const id = page.url.searchParams.get("id")
+    if (id !== null) ticketId = id
+  })
+
   const onNameInput = (event: Event): void => {
     const el = event.currentTarget as HTMLInputElement
     nameKana = toKatakana(el.value)
@@ -25,36 +34,28 @@
     error = null
     busy = true
     try {
-      const result = await issueTicket({
-        nameKana,
-        phoneLast4,
-        freeText: freeText.length === 0 ? null : freeText,
-      })
-      if (!result.ok) {
+      const r = await myTicket({ ticketId, nameKana, phoneLast4 })
+      if (!r.ok) {
         error = {
-          tag: result.error._tag,
-          code: result.error.code,
-          message: messageOf(result.error._tag),
+          tag: r.error._tag,
+          code: r.error.code,
+          message: messageOf(r.error._tag),
         }
         return
       }
-      // Persist the **server-canonical** handle (NFKC + whitespace
-      // collapse + trim already applied by NameKanaSchema) so the
-      // /ticket route's myTicket query carries a value that
-      // round-trips through the same boundary schema.
-      const ticket = result.value.ticket
+      const t = r.value.ticket
       sessionStorage.setItem(
         "queue.ticket",
         JSON.stringify({
-          ticketId: ticket.id,
-          nameKana: ticket.nameKana,
-          phoneLast4: ticket.phoneLast4,
+          ticketId: t.id,
+          nameKana: t.nameKana,
+          phoneLast4: t.phoneLast4,
         }),
       )
       const params = new URLSearchParams({
-        id: ticket.id,
-        k: ticket.nameKana ?? nameKana,
-        p: ticket.phoneLast4 ?? phoneLast4,
+        id: t.id,
+        k: t.nameKana ?? nameKana,
+        p: t.phoneLast4 ?? phoneLast4,
       })
       await goto(`/ticket?${params.toString()}`)
     } catch (e) {
@@ -68,35 +69,47 @@
     }
   }
 
-  // i18n は Stage 8 で paraglide に統一する想定。 暫定 inline message map
-  // (registry の error tag → 日本語表示)。
   const messageOf = (tag: string): string => {
     switch (tag) {
+      case "TicketNotFound":
+        return "番号が見つかりません。 ticket id を確認してください"
+      case "PhoneMismatch":
+        return "名前または電話番号末尾が一致しません"
       case "InvalidNameKana":
         return "お名前はカタカナ + 空白のみで入力してください"
       case "InvalidPhoneLast4":
         return "電話番号は末尾 4 桁の数字で入力してください"
-      case "InvalidFreeText":
-        return "用件は 200 文字以内で入力してください"
-      case "InvalidBody":
-        return "送信内容に不備があります"
-      case "RateLimited":
-        return "しばらく時間をおいて再度お試しください"
+      case "InvalidEntityId":
+        return "ticket id の形式が正しくありません"
       default:
-        return "送信できませんでした (エラーコード参照)"
+        return "情報を取得できませんでした"
     }
   }
 </script>
 
 <svelte:head>
-  <title>並ぶ — 整理券</title>
+  <title>番号を確認 — 整理券</title>
+  <meta name="robots" content="noindex" />
 </svelte:head>
 
-<section class="issue">
-  <h1>並ぶ</h1>
-  <p class="lede">名前と電話番号末尾4桁、 用件 (任意) を入力して列に加わります。</p>
+<section class="recover">
+  <h1>番号を確認</h1>
+  <p class="lede">
+    お名前 (カタカナ) と電話番号末尾 4 桁を入力すると、 ご自分の番号画面を開けます。
+  </p>
 
   <form onsubmit={onSubmit}>
+    <label class="field">
+      <span class="label">ticket id</span>
+      <input
+        type="text"
+        bind:value={ticketId}
+        required
+        placeholder="tkt_..."
+        autocomplete="off"
+      />
+    </label>
+
     <label class="field">
       <span class="label">お名前 (カタカナ)</span>
       <input
@@ -111,27 +124,18 @@
 
     <PhoneOtpInput bind:value={phoneLast4} />
 
-    <label class="field">
-      <span class="label">用件 (任意)</span>
-      <textarea bind:value={freeText} rows="2" placeholder="ご相談内容など"></textarea>
-    </label>
-
     {#if error !== null}
       <ErrorCard tag={error.tag} code={error.code} message={error.message} />
     {/if}
 
     <Button type="submit" size="lg" fullWidth disabled={busy}>
-      {busy ? "送信中…" : "並ぶ"}
+      {busy ? "確認中…" : "番号を表示"}
     </Button>
-
-    <p class="hint">
-      送信後は番号が発行され、 列の進みを確認できます。
-    </p>
   </form>
 </section>
 
 <style>
-  .issue {
+  .recover {
     max-width: 28rem;
     margin: var(--space-12) auto;
     padding: 0 var(--space-4);
@@ -159,21 +163,11 @@
     font: var(--text-label-md);
     color: var(--color-fg-secondary);
   }
-  input,
-  textarea {
+  input {
     background: var(--color-bg-raised);
     color: var(--color-fg-primary);
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
     padding: var(--space-3) var(--space-4);
-  }
-  textarea {
-    resize: vertical;
-    min-height: 4rem;
-  }
-  .hint {
-    margin: 0;
-    color: var(--color-fg-muted);
-    font: var(--text-body-sm);
   }
 </style>

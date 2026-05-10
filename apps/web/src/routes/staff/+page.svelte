@@ -55,7 +55,11 @@
       }
       prevWaitingCount = nextCount
       waitingCount = nextCount
-      serving = r.value.serving
+      // v2 wire shape: serving / calling are arrays. Stage 7 rewrites
+      // this page into the lane-aware Kanban; until then we collapse
+      // to the lowest-displaySeq active ticket so the legacy single-
+      // serving UI keeps rendering.
+      serving = r.value.calling[0] ?? r.value.serving[0] ?? null
       preview = r.value.waitingPreview
     } catch (e) {
       error = `refresh: ${String(e)}`
