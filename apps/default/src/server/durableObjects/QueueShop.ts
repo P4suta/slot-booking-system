@@ -257,6 +257,24 @@ export class QueueShop extends DurableObject<Env> {
   }
 
   /**
+   * Single-row lookup by primary key. Used by `/api/v1/tickets/me`
+   * so the customer self-fetch path is O(log N) on the SQLite
+   * `id`-keyed btree rather than O(N) JSON-decode of every ticket
+   * in the table. The encoding shape matches `listTickets`'s element
+   * type — same `JSON.parse(payload)` so the wire is JSON-safe under
+   * structuredClone.
+   *
+   * Returns `null` for an unknown id; the router maps that to the
+   * standard `TicketNotFound` 404.
+   */
+  getTicketById(id: TicketId): Promise<EncodedTicket | null> {
+    const rows = this.sql.exec("SELECT payload FROM tickets WHERE id = ? LIMIT 1", id).toArray()
+    const r = rows[0]
+    if (r === undefined) return Promise.resolve(null)
+    return Promise.resolve(JSON.parse(r.payload as string) as EncodedTicket)
+  }
+
+  /**
    * Hibernating WebSocket entry — Cloudflare Workers Durable Object
    * runtime forwards `Upgrade: websocket` requests to this method
    * (set up by the Hono router at `/api/v1/queue/feed`). The DO

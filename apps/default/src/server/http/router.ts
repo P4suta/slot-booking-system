@@ -226,9 +226,12 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       const fail = dispatchDecodeFailure(decoded.failure)
       return failResponse(fail.status, fail.tag, fail.code)
     }
-    const all = await stub(c.env).listTickets()
-    const ticket = all.find((t) => t.id === decoded.success.ticketId)
-    if (ticket === undefined) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    // Direct primary-key lookup (O(log N) on the SQLite btree)
+    // — the previous `listTickets()` + `Array.find` was O(N) JSON-
+    // decode per request, which doubled as a DoS lever for an
+    // attacker probing /tickets/me at the RL_VERIFY ceiling.
+    const ticket = await stub(c.env).getTicketById(decoded.success.ticketId)
+    if (ticket === null) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     // Constant-time compare on both components (CWE-208). Without
     // this an attacker who knows the ticketId can narrow the
     // (kana, last4) pair via response-timing differential between
