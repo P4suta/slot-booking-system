@@ -4,9 +4,11 @@
   import { issueTicket } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
+  import Help from "$lib/components/Help.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import SlotPicker from "$lib/components/SlotPicker.svelte"
   import { toKatakana } from "$lib/kana.js"
+  import { errorMessage, helpText } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
 
   let nameKana = $state("")
@@ -98,7 +100,7 @@
       error = {
         tag: result.error._tag,
         code: result.error.code,
-        message: messageOf(result.error._tag),
+        message: errorMessage(result.error._tag),
       }
       return
     }
@@ -136,26 +138,6 @@
     void submitReservation()
   }
 
-  const messageOf = (tag: string): string => {
-    switch (tag) {
-      case "InvalidNameKana":
-        return "お名前はカタカナ + 空白のみで入力してください"
-      case "InvalidPhoneLast4":
-        return "電話番号は末尾 4 桁の数字で入力してください"
-      case "InvalidFreeText":
-        return "用件は 200 文字以内で入力してください"
-      case "InvalidBody":
-        return "送信内容に不備があります"
-      case "RateLimited":
-        return "しばらく時間をおいて再度お試しください"
-      case "SlotFull":
-        return "選択した時間枠は満席です。 別の時間をお選びください"
-      case "SlotInPast":
-        return "過去の時間は選択できません"
-      default:
-        return "送信できませんでした (エラーコード参照)"
-    }
-  }
 </script>
 
 <svelte:head>
@@ -199,7 +181,10 @@
   </form>
 
   <details class="reservation" ontoggle={onReservationToggle}>
-    <summary>▶ 予約する (時間を指定)</summary>
+    <summary>
+      <span>▶ 予約する (時間を指定)</span>
+      <Help text={helpText("slotPicker")} label="予約の説明を表示" />
+    </summary>
     <div class="reservation-body">
       <SlotPicker
         selectedISO={selectedSlotISO}

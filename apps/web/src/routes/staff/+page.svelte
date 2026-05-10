@@ -22,6 +22,7 @@
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
   import Toast from "$lib/components/Toast.svelte"
+  import { emptyState } from "$lib/messages.js"
 
   type LaneFilter = "all" | Lane
 
@@ -415,7 +416,7 @@
             </Card>
           {/each}
           {#if filteredWaiting.length === 0}
-            <p class="empty">該当なし</p>
+            <p class="empty">{emptyState("waiting")}</p>
           {/if}
         </div>
       </section>
@@ -449,7 +450,7 @@
             </Card>
           {/each}
           {#if calling.length === 0}
-            <p class="empty">なし</p>
+            <p class="empty">{emptyState("calling")}</p>
           {/if}
         </div>
       </section>
@@ -481,7 +482,7 @@
             </Card>
           {/each}
           {#if servingList.length === 0}
-            <p class="empty">なし</p>
+            <p class="empty">{emptyState("serving")}</p>
           {/if}
         </div>
       </section>
@@ -500,7 +501,7 @@
             </Card>
           {/each}
           {#if done.length === 0}
-            <p class="empty">なし</p>
+            <p class="empty">{emptyState("terminal")}</p>
           {/if}
         </div>
       </section>

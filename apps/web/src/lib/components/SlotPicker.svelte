@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte"
   import { listSlots, type SlotEntry } from "$lib/api.js"
+  import { emptyState, loadingState } from "$lib/messages.js"
   import {
     defaultDateTabs,
     labelOfBucket,
@@ -87,9 +88,9 @@
 </div>
 
 {#if slotsLoading}
-  <p class="loading">空き枠を読み込み中…</p>
+  <p class="loading">{loadingState("slots")}</p>
 {:else if slotsForDate(selectedDate).length === 0}
-  <p class="empty">空き枠はありません</p>
+  <p class="empty">{emptyState("slotPicker")}</p>
 {:else}
   <div class="slot-grid">
     {#each slotsForDate(selectedDate) as slot (`${slot.date}-${slot.bucketId}`)}

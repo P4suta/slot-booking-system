@@ -4,8 +4,10 @@
   import { ticketByHandle } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
+  import Help from "$lib/components/Help.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
+  import { errorMessage, helpText } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
 
   let nameKana = $state("")
@@ -51,7 +53,7 @@
         error = {
           tag: r.error._tag,
           code: r.error.code,
-          message: messageOf(r.error._tag),
+          message: errorMessage(r.error._tag),
         }
         return
       }
@@ -67,23 +69,10 @@
       error = {
         tag: "NetworkError",
         code: "E_NET_FAIL",
-        message: e instanceof Error ? e.message : "ネットワーク接続を確認してください",
+        message: e instanceof Error ? e.message : errorMessage("NetworkError"),
       }
     } finally {
       busy = false
-    }
-  }
-
-  const messageOf = (tag: string): string => {
-    switch (tag) {
-      case "TicketNotFound":
-        return "該当する整理券が見つかりません。 名前 (カタカナ) と電話番号末尾を確認してください"
-      case "InvalidNameKana":
-        return "お名前はカタカナ + 空白のみで入力してください"
-      case "InvalidPhoneLast4":
-        return "電話番号は末尾 4 桁の数字で入力してください"
-      default:
-        return "情報を取得できませんでした"
     }
   }
 </script>
@@ -95,7 +84,10 @@
 
 {#if !booting}
   <section class="recover">
-    <h1>番号を確認</h1>
+    <h1>
+      番号を確認
+      <Help text={helpText("recoverHandle")} label="復帰の説明を表示" />
+    </h1>
     <p class="lede">
       お名前 (カタカナ) と電話番号末尾 4 桁を入力すると、 ご自分の番号画面を開けます。
     </p>

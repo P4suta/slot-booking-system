@@ -10,6 +10,7 @@
     type ShopState,
     shopState,
   } from "$lib/api.js"
+  import { loadingState } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache } from "$lib/ticketCache.js"
 
   let waitingCount = $state(0)
@@ -71,7 +72,7 @@
     <p class="lede">店の行列に番号を取って加わる。 列の進みはそのまま見える。</p>
 
     {#if feedState === "reconnecting"}
-      <p class="banner" role="status" aria-live="polite">再接続中…</p>
+      <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
     {/if}
 
     <div class="status">

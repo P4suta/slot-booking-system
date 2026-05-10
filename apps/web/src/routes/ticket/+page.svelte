@@ -26,7 +26,9 @@
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
+  import Help from "$lib/components/Help.svelte"
   import SlotPicker from "$lib/components/SlotPicker.svelte"
+  import { errorMessage, helpText, loadingState, m } from "$lib/messages.js"
   import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
   import {
     hasStaffToken,
@@ -102,7 +104,7 @@
         error = {
           tag: r.error._tag,
           code: r.error.code,
-          message: messageOf(r.error._tag),
+          message: errorMessage(r.error._tag),
         }
         return
       }
@@ -163,7 +165,7 @@
         error = {
           tag: r.error._tag,
           code: r.error.code,
-          message: messageOf(r.error._tag),
+          message: errorMessage(r.error._tag),
         }
         return
       }
@@ -203,7 +205,7 @@
       error = {
         tag: "NetworkError",
         code: "E_NET_FAIL",
-        message: e instanceof Error ? e.message : "ネットワーク接続を確認してください",
+        message: e instanceof Error ? e.message : errorMessage("NetworkError"),
       }
     }
   }
@@ -235,21 +237,6 @@
     }
   })
 
-  const messageOf = (tag: string): string => {
-    switch (tag) {
-      case "TicketNotFound":
-        return "番号が見つかりません。 名前 / 末尾 4 桁を確認してください"
-      case "PhoneMismatch":
-        return "名前または電話番号末尾が一致しません"
-      case "CheckInTooEarly":
-        return "受付開始時刻まで少々お待ちください"
-      case "AppointmentRequiredForReservationLane":
-        return "この操作は予約のチケットでのみ可能です"
-      default:
-        return "情報を取得できませんでした"
-    }
-  }
-
   const onCopyUrl = async () => {
     if (shareUrl === null) return
     try {
@@ -272,7 +259,7 @@
         error = {
           tag: r.error._tag,
           code: r.error.code,
-          message: messageOf(r.error._tag),
+          message: errorMessage(r.error._tag),
         }
         return
       }
@@ -307,7 +294,7 @@
         rescheduleError = {
           tag: r.error._tag,
           code: r.error.code,
-          message: rescheduleMessageOf(r.error._tag),
+          message: errorMessage(r.error._tag),
         }
         return
       }
@@ -320,23 +307,6 @@
       if (stored !== null) await refresh(stored)
     } finally {
       rescheduleBusy = false
-    }
-  }
-
-  const rescheduleMessageOf = (tag: string): string => {
-    switch (tag) {
-      case "SlotFull":
-        return "選択した時間枠は満席です。 別の時間をお選びください"
-      case "SlotInPast":
-        return "過去の時間は選択できません"
-      case "LaneMismatch":
-        return "このチケットは予約ではないため変更できません"
-      case "PhoneMismatch":
-        return "名前または電話番号末尾が一致しません"
-      case "TicketNotFound":
-        return "番号が見つかりませんでした"
-      default:
-        return "予約時刻を変更できませんでした"
     }
   }
 
@@ -443,15 +413,21 @@
             </Button>
           {/if}
           {#if canReschedule}
-            <Button
-              variant="secondary"
-              size="md"
-              fullWidth
-              disabled={feedState !== "open"}
-              onclick={openRescheduleDialog}
-            >
-              予約時刻を変更
-            </Button>
+            <div class="appointment-action">
+              <Button
+                variant="secondary"
+                size="md"
+                fullWidth
+                disabled={feedState !== "open"}
+                onclick={openRescheduleDialog}
+              >
+                予約時刻を変更
+              </Button>
+              <Help text={helpText("reschedule")} label="予約時刻変更の説明を表示" />
+            </div>
+            <p class="reservation-modify-help">
+              {m.reservation_modify_help()}
+            </p>
           {/if}
         </div>
       </Card>
@@ -466,8 +442,11 @@
     {#if ticket.state === "Waiting" && notificationState === "default"}
       <Card>
         <div class="notif-opt-in">
-          <p class="notif-msg">呼ばれたときに通知を受け取りますか?</p>
-          <p class="notif-help">音とバイブと画面通知でお知らせします。</p>
+          <p class="notif-msg">
+            {m.notify_permission_question()}
+            <Help text={helpText("notifyPermission")} label="通知の説明を表示" />
+          </p>
+          <p class="notif-help">{m.notify_permission_help()}</p>
           <Button variant="secondary" size="md" onclick={onRequestNotification}>
             通知を許可する
           </Button>
@@ -476,7 +455,7 @@
     {/if}
 
     {#if feedState === "reconnecting"}
-      <p class="banner" role="status" aria-live="polite">再接続中…</p>
+      <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
     {/if}
 
     {#if qrDataUrl !== null}
@@ -504,7 +483,7 @@
       </div>
     {/if}
   {:else if error === null}
-    <p class="loading">読み込み中…</p>
+    <p class="loading">{loadingState("ticket")}</p>
   {/if}
 
   <Dialog
@@ -512,7 +491,8 @@
     title="キャンセルしますか?"
     onClose={() => (cancelDialogOpen = false)}
   >
-    <p>キャンセル後は再発行が必要です。 理由 (任意):</p>
+    <p>{m.confirm_cancel_body()}</p>
+    <p class="dialog-hint">差し支えなければ理由をお書きください (任意):</p>
     <textarea bind:value={cancelReason} rows="2" placeholder="例: 都合がつかなくなった"></textarea>
     {#snippet actions()}
       <Button variant="ghost" onclick={() => (cancelDialogOpen = false)}>戻る</Button>
@@ -533,9 +513,7 @@
         <strong>{ticket.appointmentAt.slice(11, 16)}</strong>
       </p>
     {/if}
-    <p class="reschedule-help">
-      新しい時間を選んでください。 名前 / 電話番号は変えられません — 変更したい場合は一度キャンセルして再度発券してください。
-    </p>
+    <p class="reschedule-help">{m.confirm_reschedule_body()}</p>
     <SlotPicker
       selectedISO={rescheduleNewISO}
       onSelect={(iso) => {
@@ -728,6 +706,26 @@
   }
   .reschedule-help {
     margin: 0 0 var(--space-4);
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
+  }
+  .appointment-action {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+  }
+  .appointment-action :global(button) {
+    flex: 1;
+  }
+  .reservation-modify-help {
+    margin: var(--space-2) 0 0;
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
+    text-align: left;
+  }
+  .dialog-hint {
+    margin: var(--space-3) 0 var(--space-2);
     color: var(--color-fg-muted);
     font: var(--text-body-sm);
   }
