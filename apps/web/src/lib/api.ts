@@ -72,16 +72,20 @@ export type ShopState = {
 
 /**
  * Staff-only shape: PII (nameKana / phoneLast4 / freeText) のせ。
- * v2 では calling / serving / waitingPreview のすべてが full Ticket
- * row を carry。 `x-staff-token` 付き GET /api/v1/queue で返る。
+ * calling / serving / waitingPreview のすべてが full Ticket row を
+ * carry。 `terminal` は ADR-0069 §Stage 11 で追加された直近 8 件の
+ * Served / Cancelled / NoShow ticket スライス (履歴列の source)。
+ * `x-staff-token` 付き GET /api/v1/queue で返る。
  */
 export type StaffShopState = {
-  readonly v: 2
+  readonly v: 3
   readonly waitingCount: number
   readonly laneCounts: LaneCounts
   readonly calling: readonly Ticket[]
   readonly serving: readonly Ticket[]
   readonly waitingPreview: readonly Ticket[]
+  readonly terminal: readonly Ticket[]
+  readonly nextReservationDeadline: string | null
 }
 
 /**

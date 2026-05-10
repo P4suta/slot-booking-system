@@ -437,6 +437,16 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const serving = tickets
       .filter((t) => t.state === "Serving")
       .sort((a, b) => a.displaySeq - b.displaySeq)
+    // ADR-0069 §Stage 11 — staff 履歴 column needs the recent terminal
+    // tickets so an operator can see what just finished. `seq` is
+    // monotone over the queue's lifetime, so sorting desc + slicing 8
+    // gives a stable "newest first" recency proxy without a time
+    // index. Anonymous projection does not include this slice (no
+    // benefit to the public landing, plus PII via seq position).
+    const terminalRecent = tickets
+      .filter((t) => t.state === "Served" || t.state === "Cancelled" || t.state === "NoShow")
+      .sort((a, b) => b.seq - a.seq)
+      .slice(0, 8)
     const project = (t: (typeof tickets)[number]) => ({
       id: t.id,
       seq: t.seq,
@@ -472,6 +482,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
           calling,
           serving,
           waitingPreview: waiting.slice(0, 20),
+          terminal: terminalRecent,
           nextReservationDeadline,
         }),
         { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },

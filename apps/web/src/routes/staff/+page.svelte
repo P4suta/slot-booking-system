@@ -101,6 +101,7 @@
       waiting = r.value.waitingPreview
       calling = r.value.calling
       servingList = r.value.serving
+      done = r.value.terminal
       error = null
     } catch (e) {
       error = `refresh: ${String(e)}`
