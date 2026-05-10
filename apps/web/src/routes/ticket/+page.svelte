@@ -330,17 +330,54 @@
     await refresh(stored)
     feed = connectQueueFeed({
       onProjection: (parsed) => {
-        snapshot = parsed as ShopState
-        // ADR-0061 — the WS broadcasts the public projection only.
-        // The customer's own state (Waiting → Called → Serving →
-        // Served) lives behind /api/v1/tickets/me and is never
-        // serialised onto the feed. Refetch on every broadcast so a
-        // staff CallNext / MarkServed / Recall flips this tab's
-        // hero state — without this, only freshly-loaded tabs would
-        // see the transition (the 「呼ばれました」 hero would be
-        // stuck on the original /ticket tab while a tab opened from
-        // the recovery URL renders correctly).
-        if (stored !== null) void refresh(stored)
+        const snap = parsed as ShopState
+        snapshot = snap
+        if (stored === null) return
+        // ADR-0071 — v4 projection carries `state` on every entry,
+        // so the common transition path (Waiting position shuffle,
+        // appointmentAt edit, lane reorder) rides the WS feed
+        // directly with no HTTP follow-up. A `ticketByHandle()`
+        // round-trip is only spent on two rare boundaries:
+        //   1. Waiting → Called   — we need a fresh `calledAt`
+        //                            instant to drive the chime /
+        //                            vibrate / notification (the
+        //                            replay-protection key in
+        //                            `maybeTriggerCalledAlert`).
+        //   2. active → terminal — the id has fallen out of every
+        //                            bucket; one HTTP call confirms
+        //                            the terminal state and lets
+        //                            `refresh()` purge the cache +
+        //                            redirect to /recover.
+        const selfEntry =
+          snap.calling.find((t) => t.id === stored.ticketId) ??
+          snap.serving.find((t) => t.id === stored.ticketId) ??
+          snap.waitingPreview.find((t) => t.id === stored.ticketId) ??
+          null
+        if (selfEntry !== null) {
+          const wasCalled = ticket?.state === "Called"
+          const nowCalled = selfEntry.state === "Called"
+          if (!wasCalled && nowCalled) {
+            // Called transition observed — one HTTP fetch pulls the
+            // server-assigned `calledAt` so the chime can fire and
+            // the audit timestamp is real. `refresh()` runs the
+            // alert internally.
+            void refresh(stored)
+            return
+          }
+          if (ticket !== null) {
+            ticket = {
+              ...ticket,
+              state: selfEntry.state,
+              lane: selfEntry.lane,
+              displaySeq: selfEntry.displaySeq,
+              appointmentAt: selfEntry.appointmentAt,
+            }
+          }
+          return
+        }
+        if (ticket !== null && !isTerminalState(ticket.state)) {
+          void refresh(stored)
+        }
       },
       onState: (next) => {
         feedState = next
