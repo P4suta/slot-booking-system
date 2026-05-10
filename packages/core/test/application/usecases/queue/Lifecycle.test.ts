@@ -606,6 +606,7 @@ describe("queue lifecycle round-trip", () => {
         issue: () => Effect.void,
         saveBatch: () => Effect.void,
         nextSeq: () => Effect.succeed(1),
+        findActiveByHandle: () => Effect.succeed(null),
       }),
     )
     const layer = Layer.mergeAll(
@@ -768,6 +769,66 @@ describe("queue lifecycle round-trip", () => {
           const err = r.error as { _tag: string }
           expect(err._tag).toBe("TicketNotFound")
         }
+      }),
+    ))
+
+  /* ------------------------------------------------------------------------ */
+  /* ADR-0069 — idempotent IssueTicket (handle as active-set primary key)     */
+  /* ------------------------------------------------------------------------ */
+
+  it("ADR-0069: re-issue with same handle returns the existing active ticket", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null })
+        const t2 = yield* IssueTicket({ handle: h, freeText: null })
+        expect(t2.id).toBe(t1.id)
+        expect(t2.seq).toBe(t1.seq)
+        expect(t2.state).toBe("Waiting")
+      }),
+    ))
+
+  it("ADR-0069: re-issue ignores caller-supplied lane / appointmentAt", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null, lane: "walkIn" })
+        // Second issue tries to upgrade lane → priority + supply appointmentAt;
+        // both fields stay at the first issue's values.
+        const t2 = yield* IssueTicket({
+          handle: h,
+          freeText: null,
+          lane: "priority",
+          appointmentAt: Temporal.Instant.from("2026-05-15T10:30:00Z"),
+        })
+        expect(t2.id).toBe(t1.id)
+        expect(t2.lane).toBe("walkIn")
+        expect(t2.appointmentAt).toBeNull()
+      }),
+    ))
+
+  it("ADR-0069: terminal Served releases handle — re-issue mints a fresh ticket", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null })
+        yield* CallNext()
+        yield* MarkServed(t1.id)
+        const t2 = yield* IssueTicket({ handle: h, freeText: null })
+        expect(t2.id).not.toBe(t1.id)
+        expect(t2.state).toBe("Waiting")
+      }),
+    ))
+
+  it("ADR-0069: Called ticket still holds the handle — re-issue merges", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null })
+        yield* CallNext()
+        const t2 = yield* IssueTicket({ handle: h, freeText: null })
+        expect(t2.id).toBe(t1.id)
+        expect(t2.state).toBe("Called")
       }),
     ))
 })

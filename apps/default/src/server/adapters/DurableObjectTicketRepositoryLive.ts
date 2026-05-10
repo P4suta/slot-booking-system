@@ -335,4 +335,27 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
         },
         catch: (e) => new StorageError({ reason: "listAll", cause: e }),
       }),
+    findActiveByHandle: (handle) =>
+      Effect.try({
+        try: () => {
+          // Active-set lookup (ADR-0069). Filtered SELECT against the
+          // projection table — the partial UNIQUE index defined in
+          // schema.ts (`uq_tickets_handle_active`) makes this O(log N)
+          // for the index lookup, and the WHERE state IN (...) clause
+          // matches the index's partial predicate so the query planner
+          // serves the read directly off the index. Returns null when
+          // the active set holds no ticket with the supplied handle.
+          const rows = sql
+            .exec(
+              "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','Serving') LIMIT 1",
+              handle.nameKana,
+              handle.phoneLast4,
+            )
+            .toArray()
+          const row = rows[0]
+          if (row === undefined) return null
+          return Schema.decodeUnknownSync(TicketSchema)(JSON.parse(row.payload as string))
+        },
+        catch: (e) => new StorageError({ reason: "findActiveByHandle", cause: e }),
+      }),
   })

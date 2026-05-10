@@ -53,6 +53,16 @@ export const IssueTicket = (
 > =>
   Effect.gen(function* () {
     const repo = yield* TicketRepository
+    // ADR-0069: handle is the active-set primary key. A second issue
+    // with the same `(nameKana, phoneLast4)` while a prior ticket is
+    // still active short-circuits to the existing ticket — the
+    // customer recovery flow and the "double issue" guard collapse
+    // into the same primitive. Lane / appointmentAt / freeText
+    // supplied to the merged call are deliberately ignored; the
+    // first issue's intent is authoritative until the ticket leaves
+    // the active set (Served / Cancelled / NoShow).
+    const existing = yield* repo.findActiveByHandle(input.handle)
+    if (existing !== null) return existing
     const lane: Lane = input.lane ?? "walkIn"
     const appointmentAt = input.appointmentAt ?? null
     const all = yield* repo.listAll()

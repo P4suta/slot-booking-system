@@ -1,6 +1,7 @@
 import { Temporal } from "@js-temporal/polyfill"
 import type { TicketId } from "../types/EntityId.js"
 import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
+import { type CustomerHandle, equalsCustomerHandle } from "../value-objects/CustomerHandle.js"
 import { type Lane, PREFERRED_LANE_CHAIN } from "./Lane.js"
 import { intervalOf, type Slot } from "./Slot.js"
 import type { Called, Serving, Ticket, Waiting } from "./Ticket.js"
@@ -390,7 +391,7 @@ export const slotOccupancy = (snap: QueueSnapshot, slot: Slot, tz: BusinessTimeZ
   for (const t of snap.tickets.values()) {
     if (t.lane !== "reservation") continue
     if (t.appointmentAt === null) continue
-    if (t.state !== "Waiting" && t.state !== "Called" && t.state !== "Serving") continue
+    if (!isActiveForHandle(t)) continue
     if (Temporal.Instant.compare(t.appointmentAt, startAt) === 0) n += 1
   }
   return n
@@ -543,4 +544,41 @@ export const nextDisplaySeqInLane = (snap: QueueSnapshot, lane: Lane): number =>
     if (t.displaySeq > max) max = t.displaySeq
   }
   return max + 1
+}
+
+/* -------------------------------------------------------------------------- */
+/* Handle-as-active-primary (ADR-0069)                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A ticket "holds" the customer's handle while in any of the three
+ * pre-terminal states. `CheckedIn` is an audit field on top of
+ * `Waiting`, not a state, so it does not appear here. Once a ticket
+ * transitions to `Served / Cancelled / NoShow` the handle is
+ * released and may be re-used by a fresh issue.
+ */
+export const isActiveForHandle = (t: Ticket): boolean =>
+  t.state === "Waiting" || t.state === "Called" || t.state === "Serving"
+
+/**
+ * `(nameKana, phoneLast4)` is enforced as the **active-set primary key**
+ * (ADR-0069). A second issue with the same pair while a prior ticket
+ * is still active is an *idempotent merge*: the caller observes the
+ * existing ticket instead of minting a new one. The same lookup
+ * underpins the customer recovery flow (`GET /tickets/by-handle`),
+ * so the two paths share one projection helper.
+ *
+ * Equality goes through `equalsCustomerHandle` (constant-time per
+ * field, ADR-0058) — the iteration order leaks "how many actives
+ * precede the match" but not "which kana is in the queue", and the
+ * caller is rate-limited (RL_VERIFY, 30/min/IP, ADR-0069 §Trade-offs).
+ */
+export const findActiveByHandle = (snap: QueueSnapshot, handle: CustomerHandle): Ticket | null => {
+  for (const t of snap.tickets.values()) {
+    if (!isActiveForHandle(t)) continue
+    const stored: CustomerHandle = { nameKana: t.nameKana, phoneLast4: t.phoneLast4 }
+    if (!equalsCustomerHandle(stored, handle)) continue
+    return t
+  }
+  return null
 }

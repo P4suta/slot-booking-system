@@ -5,7 +5,11 @@ import {
   TicketRepository,
 } from "../../application/ports/EventSourcedRepository.js"
 import { AggregateNotFoundError, ConcurrencyError } from "../../domain/errors/Errors.js"
-import { applyEvent, type QueueSnapshot } from "../../domain/queue/projection.js"
+import {
+  applyEvent,
+  findActiveByHandle,
+  type QueueSnapshot,
+} from "../../domain/queue/projection.js"
 import type { Ticket } from "../../domain/queue/Ticket.js"
 import type { TicketEvent } from "../../domain/queue/TicketEvent.js"
 import type { TicketId } from "../../domain/types/EntityId.js"
@@ -176,6 +180,15 @@ export const makeInMemoryTicketRepositoryLive = (
           }),
         listAll: () =>
           Ref.get(store).pipe(Effect.map((m) => Array.from(m.values()).map((r) => r.state))),
+        findActiveByHandle: (handle) =>
+          Ref.get(store).pipe(
+            Effect.map((m) => {
+              const snap: QueueSnapshot = {
+                tickets: new Map(Array.from(m.entries()).map(([id, r]) => [id, r.state])),
+              }
+              return findActiveByHandle(snap, handle)
+            }),
+          ),
       }
     }),
   )
