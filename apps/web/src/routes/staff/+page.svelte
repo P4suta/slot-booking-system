@@ -22,7 +22,7 @@
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
   import Toast from "$lib/components/Toast.svelte"
-  import { emptyState } from "$lib/messages.js"
+  import { emptyState, m } from "$lib/messages.js"
 
   type LaneFilter = "all" | Lane
 
@@ -354,7 +354,7 @@
   <div class="staff">
     <!-- top bar -->
     <header class="topbar">
-      <div class="lane-chips" role="tablist" aria-label="lane filter">
+      <div class="lane-chips" role="tablist" aria-label="レーン絞り込み">
         {#each ["all", "walkIn", "priority", "reservation"] as filter}
           <button
             type="button"
@@ -370,16 +370,51 @@
       <input
         type="search"
         bind:value={search}
-        placeholder="名前 (一部) / 末尾4桁"
+        placeholder="名前 (一部) / 末尾4桁で検索"
+        aria-label="待機客を検索"
         class="search"
       />
       <div class="batch">
-        <input type="number" bind:value={batchN} min="1" max="20" />
-        <Button variant="secondary" size="md" onclick={onCallNextBatch}>{batchN} 人呼ぶ</Button>
+        <label class="batch-label">
+          <span class="batch-caption">順番に呼ぶ人数</span>
+          <input
+            type="number"
+            bind:value={batchN}
+            min="1"
+            max="20"
+            aria-label="順番に呼ぶ人数"
+          />
+        </label>
+        <Button variant="secondary" size="md" onclick={onCallNextBatch}>
+          先頭から呼ぶ
+        </Button>
       </div>
       <div class="meta">
-        <span class="dot" data-state={feedState} aria-label={`feed: ${feedState}`}></span>
-        <Button variant="ghost" size="md" onclick={onAudioToggle} aria-label="audio cue">
+        <span
+          class="dot"
+          data-state={feedState}
+          title={feedState === "open"
+            ? "通信は正常です"
+            : feedState === "reconnecting"
+              ? "サーバに再接続しています"
+              : feedState === "connecting"
+                ? "サーバに接続中です"
+                : "通信が切断されています"}
+          aria-label={feedState === "open"
+            ? "通信状態: 正常"
+            : feedState === "reconnecting"
+              ? "通信状態: 再接続中"
+              : feedState === "connecting"
+                ? "通信状態: 接続中"
+                : "通信状態: 切断"}
+        ></span>
+        <Button
+          variant="ghost"
+          size="md"
+          onclick={onAudioToggle}
+          title={audioCue ? "呼び出し時の音を鳴らさないようにする" : "呼び出し時に音を鳴らす"}
+          aria-label={audioCue ? "呼出音をオフにする" : "呼出音をオンにする"}
+        >
           {audioCue ? "🔔" : "🔕"}
         </Button>
         <Button variant="ghost" size="md" onclick={onLogout}>ログアウト</Button>
@@ -469,7 +504,7 @@
         <div class="cards">
           {#each calling as t (t.id)}
             <Card>
-              <div class="ticket" role="group" aria-label="called ticket">
+              <div class="ticket" role="group" aria-label="呼び出し中の整理券">
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
@@ -503,7 +538,7 @@
         <div class="cards">
           {#each servingList as t (t.id)}
             <Card>
-              <div class="ticket" role="group" aria-label="serving ticket">
+              <div class="ticket" role="group" aria-label="対応中の整理券">
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
@@ -531,15 +566,72 @@
       </section>
 
       <section class="col">
-        <header><h2>履歴</h2></header>
+        <header><h2>履歴 ({done.length})</h2></header>
         <div class="cards">
-          {#each done.slice(0, 8) as t (t.id)}
-            <Card>
-              <div class="ticket muted">
-                <div class="ticket-head">
-                  <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane">{t.state}</span>
-                </div>
+          {#each done.slice(0, 12) as t (t.id)}
+            <Card interactive>
+              <div
+                class="ticket history-card"
+                data-expanded={expanded.has(t.id) ? "true" : undefined}
+              >
+                <button
+                  type="button"
+                  class="ticket-body-button"
+                  aria-expanded={expanded.has(t.id)}
+                  aria-controls={`history-detail-${t.id}`}
+                  onclick={() => toggleExpanded(t.id)}
+                >
+                  <div class="ticket-head">
+                    <span class="numeral">{t.displaySeq}</span>
+                    <span class="lane lane-{t.lane}">
+                      {t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}
+                    </span>
+                    <span class="state-badge" data-state={t.state}>
+                      {t.state === "Served"
+                        ? m.state_Served()
+                        : t.state === "Cancelled"
+                          ? m.state_Cancelled()
+                          : t.state === "NoShow"
+                            ? m.state_NoShow()
+                            : t.state}
+                    </span>
+                  </div>
+                  <div class="ticket-body">
+                    <span class="kana">{t.nameKana ?? ""}</span>
+                    <span class="last4">{t.phoneLast4 ?? ""}</span>
+                  </div>
+                </button>
+                {#if expanded.has(t.id)}
+                  <div id={`history-detail-${t.id}`} class="ticket-detail">
+                    <dl>
+                      <dt>状態</dt>
+                      <dd>
+                        {t.state === "Served"
+                          ? m.state_Served()
+                          : t.state === "Cancelled"
+                            ? m.state_Cancelled()
+                            : t.state === "NoShow"
+                              ? m.state_NoShow()
+                              : t.state}
+                      </dd>
+                      <dt>レーン</dt>
+                      <dd>
+                        {t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}
+                      </dd>
+                      <dt>受付番号</dt><dd>{t.displaySeq}</dd>
+                      <dt>お名前</dt><dd>{t.nameKana ?? ""}</dd>
+                      <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
+                      {#if t.freeText !== null && t.freeText !== undefined}
+                        <dt>ご相談内容</dt>
+                        <dd class="freetext">{t.freeText}</dd>
+                      {/if}
+                      {#if t.appointmentAt !== null}
+                        <dt>予約時刻</dt>
+                        <dd>{t.appointmentAt.slice(11, 16)}</dd>
+                      {/if}
+                    </dl>
+                  </div>
+                {/if}
               </div>
             </Card>
           {/each}
@@ -603,6 +695,11 @@
   }
   .staff {
     padding: var(--space-4);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-sizing: border-box;
   }
   .topbar {
     display: flex;
@@ -610,6 +707,7 @@
     gap: var(--space-3);
     flex-wrap: wrap;
     margin-bottom: var(--space-4);
+    flex-shrink: 0;
   }
   .lane-chips {
     display: flex;
@@ -635,7 +733,16 @@
   .batch {
     display: flex;
     gap: var(--space-2);
-    align-items: center;
+    align-items: flex-end;
+  }
+  .batch-label {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .batch-caption {
+    font: var(--text-label-sm);
+    color: var(--color-fg-secondary);
   }
   .batch input {
     width: 4rem;
@@ -674,19 +781,24 @@
     display: grid;
     grid-template-columns: 1fr;
     gap: var(--space-4);
-  }
-  @container (min-width: 56rem) {
-    .kanban {
-      grid-template-columns: 1.5fr 1fr 1fr 1fr;
-    }
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
   @media (min-width: 56rem) {
     .kanban {
-      grid-template-columns: 1.5fr 1fr 1fr 1fr;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
     }
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
   }
   .col header {
     margin-bottom: var(--space-3);
+    flex-shrink: 0;
   }
   .col h2 {
     font: var(--text-label-md);
@@ -699,6 +811,11 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: var(--space-1);
   }
   .ticket {
     display: flex;
@@ -844,6 +961,31 @@
   }
   .muted {
     opacity: 0.55;
+  }
+  .history-card {
+    position: relative;
+  }
+  .history-card .ticket-body-button {
+    color: var(--color-fg-muted);
+  }
+  .state-badge {
+    font: var(--text-label-sm);
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+    background: var(--color-bg-subtle);
+    color: var(--color-fg-secondary);
+  }
+  .state-badge[data-state="Served"] {
+    background: oklch(95% 0.07 145);
+    color: oklch(35% 0.13 145);
+  }
+  .state-badge[data-state="Cancelled"] {
+    background: var(--color-bg-subtle);
+    color: var(--color-fg-muted);
+  }
+  .state-badge[data-state="NoShow"] {
+    background: oklch(95% 0.07 25);
+    color: var(--color-state-danger);
   }
   .action-bar {
     position: fixed;
