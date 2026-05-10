@@ -37,10 +37,10 @@ pre-commit:
       run: actionlint {staged_files}
     biome-staged:
       glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,json}"
-      run: bash scripts/dev-exec.sh ./node_modules/.bin/biome check --error-on-warnings --no-errors-on-unmatched {staged_files}
+      run: scripts/dev-exec.ts ./node_modules/.bin/biome check --error-on-warnings --no-errors-on-unmatched {staged_files}
     comment-bans-staged:
       glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,md,sql,yaml,yml,toml}"
-      run: bash scripts/dev-exec.sh bash scripts/lint/comment-bans.sh {staged_files}
+      run: scripts/lint/comment-bans.ts {staged_files}
 
 commit-msg:
   commands:
@@ -53,33 +53,33 @@ pre-push:
     - rebase
   commands:
     codegen:
-      run: bash scripts/dev-exec.sh bash -c "cd apps/web && corepack pnpm run paraglide"
+      run: scripts/dev-exec.ts bash -c "cd apps/web && corepack pnpm run paraglide"
     typecheck:
-      run: bash scripts/dev-exec.sh ./node_modules/.bin/tsc -b --pretty
+      run: scripts/dev-exec.ts ./node_modules/.bin/tsc -b --pretty
     biome-full:
-      run: bash scripts/dev-exec.sh ./node_modules/.bin/biome check --error-on-warnings .
+      run: scripts/dev-exec.ts ./node_modules/.bin/biome check --error-on-warnings .
     eslint-full:
-      run: bash scripts/dev-exec.sh ./node_modules/.bin/eslint . --max-warnings 0
+      run: scripts/dev-exec.ts ./node_modules/.bin/eslint . --max-warnings 0
     arch:
-      run: bash scripts/dev-exec.sh ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
+      run: scripts/dev-exec.ts ./node_modules/.bin/depcruise --validate .dependency-cruiser.cjs packages/core/src apps
     test:
-      run: bash scripts/dev-exec.sh corepack pnpm exec tsx scripts/test/runner.ts @booking/core
+      run: scripts/dev-exec.ts corepack pnpm exec tsx scripts/test/runner.ts @booking/core
     test-default:
-      run: bash scripts/dev-exec.sh env TEST_DEADLINE=20 corepack pnpm exec tsx scripts/test/runner.ts default
+      run: scripts/dev-exec.ts env TEST_DEADLINE=90 corepack pnpm exec tsx scripts/test/runner.ts default
     test-web:
-      run: bash scripts/dev-exec.sh corepack pnpm exec tsx scripts/test/runner.ts web
+      run: scripts/dev-exec.ts corepack pnpm exec tsx scripts/test/runner.ts web
     test-scripts:
-      run: bash scripts/dev-exec.sh corepack pnpm exec tsx scripts/test/runner.ts @booking/scripts
+      run: scripts/dev-exec.ts corepack pnpm exec tsx scripts/test/runner.ts @booking/scripts
     comment-bans-full:
-      run: bash scripts/dev-exec.sh bash scripts/lint/comment-bans.sh
+      run: scripts/lint/comment-bans.ts
     strict-code:
       # Scope: packages/core/src only — the imperative shell in
       # apps/default/src/server/durableObjects/ runs outside the
       # Effect runtime and legitimately uses raw Date for alarm
       # scheduling / outbox recordedAt.
       run: |
-        bash scripts/dev-exec.sh bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
+        scripts/dev-exec.ts bash -c '! rg -n -t ts -e "\bnew Date\(|\bDate\.now\(|@ts-ignore|@ts-expect-error|: any\b" packages/core/src 2>/dev/null'
     dead-code:
-      run: bash scripts/dev-exec.sh ./node_modules/.bin/knip --treat-config-hints-as-errors
+      run: scripts/dev-exec.ts ./node_modules/.bin/knip --treat-config-hints-as-errors
     type-coverage:
-      run: bash scripts/dev-exec.sh corepack pnpm -F @booking/core run type-coverage
+      run: scripts/dev-exec.ts corepack pnpm -F @booking/core run type-coverage

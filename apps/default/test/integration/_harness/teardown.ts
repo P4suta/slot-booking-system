@@ -1,5 +1,14 @@
-import { abortAllDurableObjects } from "cloudflare:test"
-import { afterAll } from "vitest"
+import { abortAllDurableObjects, reset } from "cloudflare:test"
+import { afterAll, afterEach } from "vitest"
+
+afterEach(async () => {
+  // Per-test storage reset so the next case starts from an empty
+  // shop. The integration suites that stage their own fixture
+  // (queueWebSocket, queueFlow.property) call `reset()` themselves
+  // before populating; this is the safety net for the suites that
+  // forget.
+  await reset()
+})
 
 afterAll(async () => {
   // Without an explicit DO abort the workers pool keeps the

@@ -65,9 +65,8 @@ const main = async (): Promise<number> => {
   // Stage 1 — core property tests (in-process domain + Effect).
   let status = await stage(
     "stage 1 / 2 — core property tests (packages/core)",
-    "bash",
+    "scripts/dev-exec.ts",
     [
-      "scripts/dev-exec.sh",
       "corepack",
       "pnpm",
       "-F",
@@ -87,9 +86,8 @@ const main = async (): Promise<number> => {
   if (status === 0) {
     status = await stage(
       "stage 2 / 2 — integration property tests (apps/default workers project)",
-      "bash",
+      "scripts/dev-exec.ts",
       [
-        "scripts/dev-exec.sh",
         "corepack",
         "pnpm",
         "exec",

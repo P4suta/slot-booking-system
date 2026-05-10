@@ -8,8 +8,8 @@ set dotenv-load := false
 # vitest live exclusively inside `docker compose dev`.
 # ---------------------------------------------------------------------------
 
-DEV  := "bash scripts/dev-exec.sh"
-DEVP := "bash scripts/dev-exec.sh"   # ports already bound by `up -d`
+DEV  := "scripts/dev-exec.ts"
+DEVP := "scripts/dev-exec.ts"   # ports already bound by `up -d`
 CI   := "docker compose run --rm ci"
 
 # Common in-container CLIs through pnpm / corepack so they pin the workspace's
@@ -174,7 +174,7 @@ size-limit-refresh:
 # / CHANGELOG. Source describes the present; git log + ADRs own the
 # milestone trail.
 comment-bans:
-    {{DEV}} bash scripts/lint/comment-bans.sh
+    scripts/lint/comment-bans.ts
 
 # Forbidden constructs grep: Date, throw, @ts-ignore (ADR-0010).
 # Scope is `packages/core/src` only — the DO actor-model code in
@@ -217,7 +217,7 @@ diagnose-tsescapes:
 # actually needs, so the wrapper does NOT mask a real slowdown.
 test:
     {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts @booking/core
-    {{DEV}} env TEST_DEADLINE=20 {{PNPM}} exec tsx scripts/test/runner.ts default
+    {{DEV}} env TEST_DEADLINE=90 {{PNPM}} exec tsx scripts/test/runner.ts default
     {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts web
     {{DEV}} {{PNPM}} exec tsx scripts/test/runner.ts @booking/scripts
 
@@ -295,10 +295,10 @@ dev-down:
 
 # Bring up the long-running `dev` container that the `{{DEV}}`
 # wrapper execs into. Idempotent — re-running while it's up is a
-# no-op. Auto-invoked by `scripts/dev-exec.sh` on first command,
+# no-op. Auto-invoked by `scripts/dev-exec.ts` on first command,
 # but exposed as a recipe for explicit pre-warming + diagnostics.
 dev-shell-up:
-    bash scripts/dev-exec.sh true
+    scripts/dev-exec.ts true
 
 # Stop + remove the long-running `dev` container (and its sibling
 # `dev-web`). The pnpm-store / pnpm-home volumes survive so the

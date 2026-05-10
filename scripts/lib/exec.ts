@@ -1,6 +1,6 @@
 /**
  * Thin process-exec helpers used by the diagnose suite. Every
- * command goes through `bash scripts/dev-exec.sh` so the actual
+ * command goes through `scripts/dev-exec.ts` so the actual
  * tooling (tsc, biome, eslint, depcruise, jq, rg) keeps running
  * inside the dev container — only orchestration / parsing /
  * aggregation lives on the host.
@@ -37,4 +37,4 @@ export const exec = (
   })
 
 export const devExec = (args: readonly string[], env?: NodeJS.ProcessEnv): Promise<ExecResult> =>
-  exec("bash", ["scripts/dev-exec.sh", ...args], env)
+  exec("scripts/dev-exec.ts", [...args], env)

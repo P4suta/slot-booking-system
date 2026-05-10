@@ -5,9 +5,11 @@
     "scripts": {
       "entry": [
         "check.ts",
+        "dev-exec.ts",
         "diagnose.ts",
         "diagnose/multiAngle.ts",
         "fuzz/runSoak.ts",
+        "lint/comment-bans.ts",
         "test/runner.ts",
         "test/**/*.test.ts"
       ],
