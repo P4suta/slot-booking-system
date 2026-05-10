@@ -1,39 +1,203 @@
-/* Global styles for both customer and staff routes. Kept tiny — most
-   styling lives co-located with each page component. */
+/* ----------------------------------------------------------------
+ * Design tokens (CSS variables). Light defaults on :root, dark
+ * pair on [data-theme="dark"] + auto-via-prefers-color-scheme. The
+ * TS layer (`lib/design/tokens.ts` + `lib/design/typography.ts`)
+ * resolves every component's color/space/radius to these names so a
+ * palette overhaul touches only this file.
+ *
+ * OKLCH base (perceptually uniform). The light / dark pair share
+ * the same token names; only the values differ.
+ * ---------------------------------------------------------------- */
+
+:root {
+  /* Surfaces */
+  --color-bg-surface: oklch(99% 0.003 240);
+  --color-bg-subtle: oklch(96% 0.005 240);
+  --color-bg-raised: oklch(100% 0 0);
+  --color-bg-inverted: oklch(20% 0.01 240);
+
+  /* Foregrounds */
+  --color-fg-primary: oklch(20% 0.01 240);
+  --color-fg-secondary: oklch(40% 0.01 240);
+  --color-fg-muted: oklch(60% 0.01 240);
+  --color-fg-inverted: oklch(99% 0.003 240);
+
+  /* Borders */
+  --color-border-subtle: oklch(90% 0.005 240);
+  --color-border-strong: oklch(80% 0.01 240);
+  --color-border-focus: oklch(55% 0.18 240);
+
+  /* States */
+  --color-state-waiting: oklch(70% 0.05 240);
+  --color-state-called: oklch(72% 0.16 65);
+  --color-state-serving: oklch(70% 0.13 145);
+  --color-state-done: oklch(60% 0.04 240);
+  --color-state-danger: oklch(58% 0.2 25);
+
+  /* Accent */
+  --color-accent-primary: oklch(55% 0.18 240);
+  --color-accent-on-primary: oklch(99% 0.003 240);
+
+  /* Spacing — 4px base */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-pill: 9999px;
+
+  /* Shadow */
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 5%);
+  --shadow-md: 0 4px 8px oklch(0% 0 0 / 8%);
+  --shadow-lg: 0 12px 24px oklch(0% 0 0 / 10%);
+
+  /* Typography — clamp() so hero scales with viewport */
+  --text-numeral-hero: 600 clamp(6rem, 14vw, 8rem) / 1
+    "ui-rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --text-numeral-xl: 600 clamp(3rem, 6vw, 4rem) / 1.05
+    "ui-rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --text-numeral-md: 600 1.75rem / 1.1
+    "ui-rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --text-body-lg: 400 1.125rem / 1.55 system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --text-body-md: 400 1rem / 1.55 system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --text-body-sm: 400 0.875rem / 1.55 system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --text-label-md: 500 0.95rem / 1.45 system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --text-label-sm: 500 0.8rem / 1.4 system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --text-mono-md: 500 0.95rem / 1.45 ui-monospace, "SF Mono", Menlo,
+    Consolas, monospace;
+  --text-mono-sm: 500 0.8rem / 1.4 ui-monospace, "SF Mono", Menlo,
+    Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg-surface: oklch(15% 0.01 240);
+    --color-bg-subtle: oklch(20% 0.01 240);
+    --color-bg-raised: oklch(22% 0.01 240);
+    --color-bg-inverted: oklch(99% 0.003 240);
+
+    --color-fg-primary: oklch(95% 0.005 240);
+    --color-fg-secondary: oklch(75% 0.01 240);
+    --color-fg-muted: oklch(55% 0.01 240);
+    --color-fg-inverted: oklch(15% 0.01 240);
+
+    --color-border-subtle: oklch(28% 0.01 240);
+    --color-border-strong: oklch(40% 0.01 240);
+    --color-border-focus: oklch(70% 0.18 240);
+
+    --color-state-waiting: oklch(70% 0.05 240);
+    --color-state-called: oklch(78% 0.16 65);
+    --color-state-serving: oklch(75% 0.13 145);
+    --color-state-done: oklch(55% 0.04 240);
+    --color-state-danger: oklch(65% 0.2 25);
+
+    --color-accent-primary: oklch(70% 0.18 240);
+    --color-accent-on-primary: oklch(15% 0.01 240);
+
+    --shadow-sm: 0 1px 2px oklch(0% 0 0 / 25%);
+    --shadow-md: 0 4px 8px oklch(0% 0 0 / 35%);
+    --shadow-lg: 0 12px 24px oklch(0% 0 0 / 45%);
+  }
+}
+
+[data-theme="dark"] {
+  --color-bg-surface: oklch(15% 0.01 240);
+  --color-bg-subtle: oklch(20% 0.01 240);
+  --color-bg-raised: oklch(22% 0.01 240);
+  --color-bg-inverted: oklch(99% 0.003 240);
+
+  --color-fg-primary: oklch(95% 0.005 240);
+  --color-fg-secondary: oklch(75% 0.01 240);
+  --color-fg-muted: oklch(55% 0.01 240);
+  --color-fg-inverted: oklch(15% 0.01 240);
+
+  --color-border-subtle: oklch(28% 0.01 240);
+  --color-border-strong: oklch(40% 0.01 240);
+  --color-border-focus: oklch(70% 0.18 240);
+
+  --color-state-waiting: oklch(70% 0.05 240);
+  --color-state-called: oklch(78% 0.16 65);
+  --color-state-serving: oklch(75% 0.13 145);
+  --color-state-done: oklch(55% 0.04 240);
+  --color-state-danger: oklch(65% 0.2 25);
+
+  --color-accent-primary: oklch(70% 0.18 240);
+  --color-accent-on-primary: oklch(15% 0.01 240);
+
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 25%);
+  --shadow-md: 0 4px 8px oklch(0% 0 0 / 35%);
+  --shadow-lg: 0 12px 24px oklch(0% 0 0 / 45%);
+}
+
+/* ----------------------------------------------------------------
+ * Element-level resets / defaults that consume the tokens above.
+ * ---------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
+  font: var(--text-body-md);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--color-accent-primary);
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
 
 button {
-  cursor: pointer;
   font: inherit;
-  padding: 0.5rem 1rem;
-  border: 1px solid #1d1d1f;
-  background: white;
-  border-radius: 0.5rem;
-}
-
-button:hover {
-  background: #f0f0f0;
-}
-
-button:focus-visible {
-  outline: 2px solid #0070f3;
-  outline-offset: 2px;
+  cursor: pointer;
 }
 
 input,
-select {
+select,
+textarea {
   font: inherit;
-  padding: 0.5rem;
-  border: 1px solid #999;
-  border-radius: 0.375rem;
 }
 
-input:focus-visible,
-select:focus-visible {
-  outline: 2px solid #0070f3;
-  outline-offset: 2px;
-}
-
-label {
-  display: block;
-  margin: 0.5rem 0;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

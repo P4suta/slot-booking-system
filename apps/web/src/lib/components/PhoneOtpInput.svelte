@@ -1,10 +1,11 @@
 <script lang="ts">
   import { tick } from "svelte"
+  import type { FullAutoFill } from "svelte/elements"
 
   type Props = {
     value: string
     label?: string
-    autocomplete?: string
+    autocomplete?: FullAutoFill
   }
 
   let { value = $bindable(""), label = "電話番号末尾4桁", autocomplete = "off" }: Props = $props()
