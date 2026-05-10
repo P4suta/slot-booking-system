@@ -1,11 +1,40 @@
 <script lang="ts">
   import "../app.css"
+  import { goto } from "$app/navigation"
   import { onMount } from "svelte"
 
   let { children } = $props()
 
   type Theme = "light" | "dark" | "auto"
   let theme: Theme = $state("auto")
+
+  // The header brand link bounces to `/` by default. On a device
+  // that already has a customer cache or a staff token, that "/"
+  // tap would render the landing frame for a tick before the
+  // route's `onMount` redirected onwards — perceived as a flicker.
+  // Resolve the destination synchronously from localStorage and
+  // navigate via `goto` so the in-between render never happens.
+  const resolveHomeDestination = (): string => {
+    if (typeof window === "undefined") return "/"
+    try {
+      if (window.localStorage.getItem("queue.staffToken") !== null) return "/staff"
+      const cached = window.localStorage.getItem("queue.ticket.v2")
+      if (cached !== null) {
+        const parsed = JSON.parse(cached) as { ticketId?: string }
+        if (typeof parsed.ticketId === "string" && parsed.ticketId.length > 0) {
+          return `/ticket?id=${encodeURIComponent(parsed.ticketId)}`
+        }
+      }
+    } catch {
+      /* localStorage may throw under private-mode quotas — fall through. */
+    }
+    return "/"
+  }
+
+  const onBrandClick = (event: MouseEvent): void => {
+    event.preventDefault()
+    void goto(resolveHomeDestination())
+  }
 
   // Theme persistence: localStorage > prefers-color-scheme. The
   // CSS layer handles the fallback (`@media (prefers-color-scheme:
@@ -39,14 +68,14 @@
 </script>
 
 <header>
-  <nav aria-label="Primary">
-    <a href="/">Queue</a>
+  <nav aria-label="メイン">
+    <a href="/" onclick={onBrandClick}>整理券</a>
   </nav>
   <button
     type="button"
     class="theme-toggle"
-    aria-label="theme toggle"
-    title="theme: {theme}"
+    aria-label={theme === "dark" ? "テーマ切替 (現在: ダーク)" : theme === "light" ? "テーマ切替 (現在: ライト)" : "テーマ切替 (現在: 自動)"}
+    title={theme === "dark" ? "テーマ: ダーク (タップでライトに)" : theme === "light" ? "テーマ: ライト (タップで自動に)" : "テーマ: 自動 (タップでダークに)"}
     onclick={() => setTheme(theme === "dark" ? "light" : theme === "light" ? "auto" : "dark")}
   >
     {theme === "dark" ? "☾" : theme === "light" ? "☀" : "↺"}

@@ -424,16 +424,29 @@
   {/if}
 
   {#if ticket !== null}
-    <div class="numeral-hero" data-state={ticket.state}>
-      <span class="state-tag">{stateLabel}</span>
-      <span class="numeral">{ticket.displaySeq}</span>
-      <span class="lane">
-        {ticket.lane === "priority"
-          ? "優先"
-          : ticket.lane === "reservation"
-            ? "予約"
-            : "通常"}
-      </span>
+    <div class="hero-row">
+      <div class="numeral-hero" data-state={ticket.state}>
+        <span class="state-tag">{stateLabel}</span>
+        <span class="numeral">{ticket.displaySeq}</span>
+        <span class="lane">
+          {ticket.lane === "priority"
+            ? "優先"
+            : ticket.lane === "reservation"
+              ? "予約"
+              : "通常"}
+        </span>
+      </div>
+      {#if qrDataUrl !== null}
+        <Card>
+          <div class="qr">
+            <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" />
+            <div class="qr-help">
+              <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
+              <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
+            </div>
+          </div>
+        </Card>
+      {/if}
     </div>
 
     {#if isReservation && minutesUntilAppointment !== null}
@@ -504,18 +517,6 @@
 
     {#if feedState === "reconnecting"}
       <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
-    {/if}
-
-    {#if qrDataUrl !== null}
-      <Card>
-        <div class="qr">
-          <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" width="240" height="240" />
-          <div class="qr-help">
-            <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
-            <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
-          </div>
-        </div>
-      </Card>
     {/if}
 
     {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Serving"}
@@ -602,8 +603,21 @@
   }
   @media (min-width: 48rem) {
     .ticket-page {
-      max-width: 40rem;
+      max-width: 56rem;
       padding: 0 var(--space-6);
+    }
+  }
+  .hero-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+  }
+  @media (min-width: 48rem) {
+    .hero-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: stretch;
+      gap: var(--space-6);
     }
   }
   .numeral-hero {
@@ -615,6 +629,16 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    justify-content: center;
+  }
+  @media (min-width: 48rem) {
+    .numeral-hero {
+      padding: var(--space-10) var(--space-6);
+    }
+    .numeral-hero .numeral {
+      font-size: 8rem;
+      line-height: 1;
+    }
   }
   .numeral-hero[data-state="Called"],
   .numeral-hero[data-state="Serving"] {
@@ -677,16 +701,22 @@
     flex-direction: column;
     gap: var(--space-4);
     align-items: center;
+    height: 100%;
+    justify-content: center;
   }
   .qr img {
     border-radius: var(--radius-md);
     background: white;
     padding: var(--space-2);
+    width: clamp(12rem, 60%, 18rem);
+    height: auto;
+    aspect-ratio: 1 / 1;
   }
   .qr-help p {
     margin: 0 0 var(--space-2);
     color: var(--color-fg-secondary);
     font: var(--text-body-sm);
+    text-align: center;
   }
   .actions {
     display: flex;

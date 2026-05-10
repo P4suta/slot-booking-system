@@ -332,9 +332,17 @@
   })
 </script>
 
+<!-- While the staff dashboard is mounted, lock the document
+     scroll. The fixed-position viewport-fit `.staff` owns the
+     whole area below the layout header; any scrollbar gutter the
+     browser would reserve on `<html>` / `<body>` is a phantom
+     strip that does not correspond to any overflowing content. -->
 <svelte:head>
   <title>店舗管理 — 整理券</title>
   <meta name="robots" content="noindex" />
+  {#if authenticated}
+    <style>html, body { overflow: hidden; }</style>
+  {/if}
 </svelte:head>
 
 {#if !authenticated}
@@ -693,9 +701,17 @@
     border-radius: var(--radius-md);
     padding: var(--space-3) var(--space-4);
   }
+  /* Pin the staff dashboard to the viewport below the layout
+     header (4rem) so the whole page never spawns body scroll.
+     Each column's `.cards` does its own overflow-y, keeping the
+     topbar and per-column headers fixed. */
   .staff {
+    position: fixed;
+    top: 4rem;
+    left: 0;
+    right: 0;
+    bottom: 0;
     padding: var(--space-4);
-    height: 100vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
