@@ -4,12 +4,14 @@
   import { onMount } from "svelte"
   import { m } from "$lib/messages.js"
   import { wsStatus } from "$lib/wsStatus.js"
+  import {
+    clearStaffSession,
+    initStaffSession,
+    staffSessionActive,
+  } from "$lib/staffSession.js"
   import type { QueueFeedState } from "$lib/api.js"
 
   let { children } = $props()
-
-  type Theme = "light" | "dark" | "auto"
-  let theme: Theme = $state("auto")
 
   // Resolve a single WS-status descriptor (label + tone) per
   // QueueFeedState value. Color alone fails a11y; the visible text
@@ -59,26 +61,14 @@
     void goto(resolveHomeDestination())
   }
 
-  // Theme persistence: localStorage > prefers-color-scheme. The
-  // CSS layer handles the fallback (`@media (prefers-color-scheme:
-  // dark)` only fires when [data-theme] is not "light"), so the
-  // body attribute is set only for the explicit overrides.
-  const applyTheme = (next: Theme): void => {
-    if (typeof document === "undefined") return
-    if (next === "auto") {
-      document.documentElement.removeAttribute("data-theme")
-    } else {
-      document.documentElement.setAttribute("data-theme", next)
-    }
-  }
+  // Theme is OS-driven. The user feedback was: 「社内ツールに切替
+  // ボタンはいらない、 環境を読み取って自動切替だけでいい」 — so
+  // there is no toggle anymore. CSS's `@media (prefers-color-scheme:
+  // dark)` does the work, no localStorage involved.
 
-  const setTheme = (next: Theme): void => {
-    theme = next
-    applyTheme(next)
-    if (typeof window !== "undefined") {
-      if (next === "auto") localStorage.removeItem("queue.theme")
-      else localStorage.setItem("queue.theme", next)
-    }
+  const onHeaderLogout = (): void => {
+    clearStaffSession()
+    void goto("/")
   }
 
   // navigator.onLine is the simplest heuristic to tell "device is
@@ -98,11 +88,7 @@
   }
 
   onMount(() => {
-    const stored = localStorage.getItem("queue.theme")
-    if (stored === "dark" || stored === "light") {
-      theme = stored
-      applyTheme(stored)
-    }
+    initStaffSession()
     online = navigator.onLine
     window.addEventListener("online", onOnline)
     window.addEventListener("offline", onOffline)
@@ -124,15 +110,11 @@
       </span>
     </span>
   </nav>
-  <button
-    type="button"
-    class="theme-toggle"
-    aria-label={theme === "dark" ? "テーマ切替 (現在: ダーク)" : theme === "light" ? "テーマ切替 (現在: ライト)" : "テーマ切替 (現在: 自動)"}
-    title={theme === "dark" ? "テーマ: ダーク (タップでライトに)" : theme === "light" ? "テーマ: ライト (タップで自動に)" : "テーマ: 自動 (タップでダークに)"}
-    onclick={() => setTheme(theme === "dark" ? "light" : theme === "light" ? "auto" : "dark")}
-  >
-    {theme === "dark" ? "☾" : theme === "light" ? "☀" : "↺"}
-  </button>
+  {#if $staffSessionActive}
+    <button type="button" class="header-logout" onclick={onHeaderLogout}>
+      ログアウト
+    </button>
+  {/if}
 </header>
 
 <main>
@@ -160,7 +142,9 @@
         <span>{m.ws_alert_offline_body()}</span>
       {:else}
         <strong>{m.ws_alert_server_title()}</strong>
-        <span>{m.ws_alert_server_body()}</span>
+        <span>
+          {$staffSessionActive ? m.ws_alert_server_body_staff() : m.ws_alert_server_body()}
+        </span>
       {/if}
     </div>
   </div>
@@ -270,18 +254,19 @@
   .ws-alert-body strong {
     font: var(--text-label-md);
   }
-  .theme-toggle {
+  .header-logout {
     background: transparent;
     border: 1px solid var(--color-border-subtle);
-    color: var(--color-fg-primary);
+    color: var(--color-fg-secondary);
     border-radius: var(--radius-pill);
-    width: 2.5rem;
-    height: 2.5rem;
-    font-size: 1.1rem;
+    padding: var(--space-2) var(--space-4);
+    font: var(--text-label-sm);
     cursor: pointer;
   }
-  .theme-toggle:hover {
+  .header-logout:hover,
+  .header-logout:focus-visible {
     background: var(--color-bg-raised);
+    color: var(--color-fg-primary);
   }
   main {
     min-height: calc(100vh - 4rem);

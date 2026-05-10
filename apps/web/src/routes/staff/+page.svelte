@@ -24,6 +24,7 @@
   import Help from "$lib/components/Help.svelte"
   import Toast from "$lib/components/Toast.svelte"
   import { emptyState, m } from "$lib/messages.js"
+  import { clearStaffSession, markStaffLoggedIn } from "$lib/staffSession.js"
   import { wsStatus } from "$lib/wsStatus.js"
 
   type LaneFilter = "all" | Lane
@@ -219,13 +220,14 @@
     event.preventDefault()
     if (token.length === 0) return
     localStorage.setItem("queue.staffToken", token)
+    markStaffLoggedIn()
     authenticated = true
     ensureNotificationPermission()
     await startLiveFeed()
   }
 
   const onLogout = (): void => {
-    localStorage.removeItem("queue.staffToken")
+    clearStaffSession()
     token = ""
     authenticated = false
     feed?.close()
@@ -352,6 +354,10 @@
   /* ---------- lifecycle ---------- */
   onMount(async () => {
     if (authenticated) {
+      // Token came from localStorage at script init; the shared
+      // store needs to mirror it so the layout's ログアウト button
+      // renders without waiting for an explicit login event.
+      markStaffLoggedIn()
       ensureNotificationPermission()
       await startLiveFeed()
     }
@@ -395,33 +401,6 @@
   </section>
 {:else}
   <div class="staff">
-    <!-- top bar -->
-    <header class="topbar">
-      <input
-        type="search"
-        bind:value={search}
-        placeholder="名前 (一部) / 末尾4桁で検索"
-        aria-label="待機客を検索"
-        class="search"
-      />
-      <div class="primary-action">
-        <Button variant="primary" size="md" onclick={onCallNextOne} disabled={busy}>
-          {m.call_next_one_button()}
-        </Button>
-        <button
-          type="button"
-          class="batch-link"
-          onclick={() => (batchDialogOpen = true)}
-          disabled={busy}
-        >
-          {m.call_next_batch_link()}
-        </button>
-      </div>
-      <div class="meta">
-        <Button variant="ghost" size="md" onclick={onLogout}>ログアウト</Button>
-      </div>
-    </header>
-
     {#if error !== null}
       <p class="error" role="alert">{error}</p>
     {/if}
@@ -429,8 +408,30 @@
     <!-- 4-column kanban -->
     <div class="kanban">
       <section class="col">
-        <header class="col-header">
-          <h2>待機 ({filteredWaiting.length} / {waitingCount})</h2>
+        <header class="col-header waiting-col-header">
+          <div class="col-title-row">
+            <h2>待機 ({filteredWaiting.length} / {waitingCount})</h2>
+            <div class="primary-action">
+              <Button variant="primary" size="md" onclick={onCallNextOne} disabled={busy}>
+                {m.call_next_one_button()}
+              </Button>
+              <button
+                type="button"
+                class="batch-link"
+                onclick={() => (batchDialogOpen = true)}
+                disabled={busy}
+              >
+                {m.call_next_batch_link()}
+              </button>
+            </div>
+          </div>
+          <input
+            type="search"
+            bind:value={search}
+            placeholder="名前 (一部) / 末尾4桁で検索"
+            aria-label="待機客を検索"
+            class="search"
+          />
           <div class="lane-filter" role="radiogroup" aria-label="待機列の種別絞り込み">
             <span class="filter-label">{m.filter_label()}</span>
             <Help text={m.lane_help_summary()} label="種別の説明を表示" />
@@ -758,14 +759,6 @@
     overflow: hidden;
     box-sizing: border-box;
   }
-  .topbar {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-    margin-bottom: var(--space-4);
-    flex-shrink: 0;
-  }
   .chip {
     background: transparent;
     color: var(--color-fg-secondary);
@@ -780,9 +773,22 @@
     color: var(--color-bg-surface);
     border-color: transparent;
   }
-  .search {
+  .waiting-col-header {
+    gap: var(--space-3);
+  }
+  .col-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .col-title-row h2 {
     flex: 1;
-    min-width: 12rem;
+  }
+  .search {
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
   }
   .primary-action {
     display: flex;
@@ -807,12 +813,6 @@
   .batch-link:disabled {
     color: var(--color-fg-muted);
     cursor: not-allowed;
-  }
-  .meta {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-    margin-left: auto;
   }
   .col-header {
     display: flex;
