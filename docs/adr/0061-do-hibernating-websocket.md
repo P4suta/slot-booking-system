@@ -87,3 +87,14 @@ amortises across the lifetime of the queue surface.
   `/queue/events` text/event-stream entry.
 
 Superseded-By:
+
+## Refined-By
+
+ADR-0071 (Projection v4 — state on every entry, cap removed).
+The "anonymous projection only" decision in this ADR carried
+forward to ADR-0071 as PII-only-not-public (kana, last4, freeText
+remain staff-only). The state field — public information already
+visible on the in-store monitor — moves onto the wire so /ticket
+can resolve its own transitions from the WS feed alone, without
+the per-broadcast `ticketByHandle` HTTP follow-up that was
+consuming customer RL_VERIFY budget under v3.

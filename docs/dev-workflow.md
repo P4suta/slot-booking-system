@@ -134,8 +134,12 @@ flow is funnel-shaped:
 2. **Hold the ticket** — `/ticket` lives via a localStorage
    cache (`queue.ticket.v2`) keyed by `ticketId`. On boot it
    renders from cache while a `GET /tickets/by-handle` round-trip
-   re-validates (stale-while-revalidate). The WS feed
-   (`connectQueueFeed`) drives subsequent updates.
+   re-validates (stale-while-revalidate). After boot the WS feed
+   (`connectQueueFeed`) drives every subsequent update directly
+   from the v4 projection (ADR-0071) — the page only spends an
+   HTTP fetch on a Called transition (to read the server's
+   `calledAt` for the chime / notification) or a terminal
+   transition (to confirm Served / Cancelled / NoShow).
 3. **Get called** — when the projection observes the
    customer's ticket entering `Called`, the page fires a
    Web Audio chime + `navigator.vibrate` + `Notification` (if

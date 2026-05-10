@@ -68,6 +68,7 @@ back.
 | [0068](./adr/0068-unified-issue-flow-and-door-qr.md) | Unified `/issue` flow + door-QR walk-in entry               | accepted |
 | [0069](./adr/0069-handle-as-active-primary-and-local-cache.md) | Handle as active-set primary key + localStorage cache | accepted |
 | [0070](./adr/0070-reservation-reschedule.md)        | Reservation reschedule — atomic appointmentAt swap            | accepted |
+| [0071](./adr/0071-projection-state-and-ws-driven-ticket.md) | Projection v4 — state on every entry, cap removed     | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).
