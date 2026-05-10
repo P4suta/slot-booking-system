@@ -6,7 +6,7 @@
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
-  import { readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
+  import { hasStaffToken, readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
 
   let nameKana = $state("")
   let phoneLast4 = $state("")
@@ -18,6 +18,13 @@
   let booting = $state(true)
 
   onMount(async () => {
+    // Stage 10: staff session sandbox — staff token in localStorage
+    // means an operator is at the keyboard; redirect to /staff so
+    // the customer-recovery form does not impersonate a customer view.
+    if (hasStaffToken()) {
+      await goto("/staff")
+      return
+    }
     const cached = readTicketCache()
     if (cached !== null) {
       await goto(`/ticket?id=${encodeURIComponent(cached.ticketId)}`)

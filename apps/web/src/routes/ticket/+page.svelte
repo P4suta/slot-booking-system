@@ -27,6 +27,7 @@
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
   import {
+    hasStaffToken,
     isTerminalState,
     purgeTicketCache,
     readTicketCache,
@@ -269,6 +270,12 @@
   }
 
   onMount(async () => {
+    // Stage 10: staff session sandbox — operator at the keyboard
+    // shouldn't impersonate a customer view, even by accident.
+    if (hasStaffToken()) {
+      await goto("/staff")
+      return
+    }
     notificationState = notificationPermissionState()
     stored = readStored()
     if (stored === null) {

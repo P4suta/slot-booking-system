@@ -141,3 +141,19 @@ export const purgeTicketCache = (): void => {
 const TERMINAL_STATES: readonly string[] = ["Served", "Cancelled", "NoShow"] as const
 
 export const isTerminalState = (state: string): boolean => TERMINAL_STATES.includes(state)
+
+/**
+ * Staff-side session key. Set by `/staff` after a successful
+ * `POST /api/v1/staff/login` and read on every page mount so the
+ * staff dashboard re-authenticates on tab restart.
+ *
+ * Exposed here so the customer-facing routes can detect a staff
+ * session and funnel back to `/staff` instead of rendering the
+ * customer landing / forms while a staff session is live (ADR-0069
+ * §Stage 10).
+ */
+export const hasStaffToken = (): boolean => {
+  if (typeof window === "undefined") return false
+  const t = window.localStorage.getItem("queue.staffToken")
+  return t !== null && t.length > 0
+}

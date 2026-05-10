@@ -10,7 +10,7 @@
     type ShopState,
     shopState,
   } from "$lib/api.js"
-  import { readTicketCache } from "$lib/ticketCache.js"
+  import { hasStaffToken, readTicketCache } from "$lib/ticketCache.js"
 
   let waitingCount = $state(0)
   let laneCounts: LaneCounts = $state({ walkIn: 0, priority: 0, reservation: 0 })
@@ -31,6 +31,13 @@
   }
 
   onMount(async () => {
+    // Stage 10: staff session sandbox — a logged-in operator's tab
+    // never falls through to the customer landing; bounce back to
+    // /staff so the dashboard stays the dominant view until logout.
+    if (hasStaffToken()) {
+      await goto("/staff")
+      return
+    }
     const cached = readTicketCache()
     if (cached !== null) {
       await goto(`/ticket?id=${encodeURIComponent(cached.ticketId)}`)
