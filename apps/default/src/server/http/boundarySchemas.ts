@@ -114,6 +114,18 @@ export const ByHandleQuerySchema = Schema.Struct({
   phoneLast4: PhoneLast4Schema,
 })
 
+/**
+ * `POST /api/v1/tickets/:id/reschedule` body (customer path,
+ * ADR-0070). Customer presents the handle for self-service auth +
+ * the new `newAppointmentAt`. Staff path omits the handle fields
+ * (validated by `x-staff-token` middleware).
+ */
+export const RescheduleBodySchema = Schema.Struct({
+  nameKana: Schema.optional(NameKanaSchema),
+  phoneLast4: Schema.optional(PhoneLast4Schema),
+  newAppointmentAt: Schema.String,
+})
+
 export const CancelBodySchema = Schema.Struct({
   nameKana: NameKanaSchema,
   phoneLast4: PhoneLast4Schema,

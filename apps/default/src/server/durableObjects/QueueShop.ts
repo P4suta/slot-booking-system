@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers"
 import {
+  type BusinessTimeZone,
   CallBatch,
   CallNext,
   CallSpecific,
@@ -20,6 +21,7 @@ import {
   type NonEmptyReadonlyArray,
   Recall,
   Reorder,
+  RescheduleTicket,
   reservationsByDeadline,
   StartServing,
   type StorageError,
@@ -84,6 +86,16 @@ export type QueueAction =
       handle?: CustomerHandle
     }
   | { type: "CheckIn"; ticketId: TicketId }
+  | {
+      type: "RescheduleTicket"
+      ticketId: TicketId
+      newAppointmentAt: string
+      granularity: 15 | 30 | 60
+      tz: string
+      capacity: number
+      actor: "customer" | "staff"
+      handle?: CustomerHandle
+    }
 
 /**
  * The Worker boundary serialises every DO RPC return through
@@ -205,6 +217,19 @@ export class QueueShop extends DurableObject<Env> {
       case "CheckIn":
         eff = CheckIn(action.ticketId)
         break
+      case "RescheduleTicket": {
+        const newAppointmentAt = Schema.decodeUnknownSync(InstantSchema)(action.newAppointmentAt)
+        eff = RescheduleTicket({
+          ticketId: action.ticketId,
+          newAppointmentAt,
+          granularity: action.granularity,
+          tz: action.tz as BusinessTimeZone,
+          capacity: action.capacity,
+          actor: action.actor,
+          ...(action.handle !== undefined ? { handle: action.handle } : {}),
+        })
+        break
+      }
     }
     const result: QueueResult = await Effect.runPromise(
       Effect.matchCauseEffect(eff, {

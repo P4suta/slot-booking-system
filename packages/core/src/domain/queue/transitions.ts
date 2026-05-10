@@ -31,6 +31,7 @@ import type {
   NoShowedEvent,
   RecalledEvent,
   ReorderedEvent,
+  RescheduledEvent,
   ServedEvent,
   ServingStartedEvent,
   TicketEvent,
@@ -361,12 +362,49 @@ export const applyCheckIn = (
 }
 
 /* -------------------------------------------------------------------------- */
+/* Reschedule — atomic appointmentAt swap on a reservation ticket (ADR-0070).  */
+/* Same ticketId / seq / displaySeq / handle; only the booked slot moves. The */
+/* usecase boundary enforces the lane and slot-capacity guards; this           */
+/* transition trusts the caller and emits the audit pair.                     */
+/* -------------------------------------------------------------------------- */
+
+export const applyReschedule = (
+  t: Waiting | Called | Serving,
+  newAppointmentAt: Temporal.Instant,
+  at: Temporal.Instant,
+  eventId: TicketEventId,
+  rescheduledBy: Actor = "customer",
+): ApplyResult => {
+  // Lane invariant: only reservation tickets carry an appointmentAt.
+  // The usecase already gates on lane === "reservation"; the
+  // assertion here is a structural narrowing aid + a runtime
+  // safety net should a future caller bypass the boundary.
+  /* v8 ignore next */
+  if (t.appointmentAt === null) throw new Error("applyReschedule: appointmentAt is null")
+  const fromAppointmentAt = t.appointmentAt
+  // Preserve `state` exactly — Waiting stays Waiting, Called stays
+  // Called, Serving stays Serving. Only `appointmentAt` mutates.
+  // The spread preserves the discriminant tag; the result type is
+  // the same variant as `t`.
+  const ticket: Ticket = { ...t, appointmentAt: newAppointmentAt }
+  const event: RescheduledEvent = {
+    ...baseEvent(eventId, t.id, at),
+    type: "Rescheduled",
+    fromAppointmentAt,
+    toAppointmentAt: newAppointmentAt,
+    rescheduledBy,
+  }
+  return { ticket, event }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Terminal-state guards. The use case calls `guardActive` first; if the     */
 /* ticket is already terminal the matching `Already*Error` propagates without */
 /* the right-side helpers ever being invoked.                                  */
 /* -------------------------------------------------------------------------- */
 
 export type TicketCommand =
+  | "Reschedule"
   | "CallNext"
   | "CallSpecific"
   | "CallBatch"

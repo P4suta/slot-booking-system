@@ -24,6 +24,7 @@ import {
   IssueTicketBodySchema,
   MyTicketQuerySchema,
   ReorderBodySchema,
+  RescheduleBodySchema,
   SlotsQuerySchema,
   StaffCancelBodySchema,
 } from "./boundarySchemas.js"
@@ -294,6 +295,60 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return dispatchEnvelope(await stub(c.env).dispatch({ type: "CheckIn", ticketId: idR.success }))
   })
 
+  // POST /api/v1/tickets/:id/reschedule — atomic appointmentAt swap
+  // (ADR-0070). Customer path (handle in body) or staff path (token
+  // via x-staff-token). The new slot's capacity is checked excluding
+  // the ticket itself so a same-slot reschedule is a no-op success.
+  app.post("/api/v1/tickets/:id/reschedule", rateLimitMiddleware("RL_VERIFY"), async (c) => {
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok)
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    const decoded = Schema.decodeUnknownResult(RescheduleBodySchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const isStaff =
+      c.env.STAFF_SESSION_SECRET !== undefined &&
+      c.req.header("x-staff-token") === c.env.STAFF_SESSION_SECRET
+    // NaN-safe coercion: `Number("")` and `Number("abc")` both yield
+    // NaN. Without the `|| <default>` arm a NaN capacity would slip
+    // past every comparison and accept every booking, and a NaN
+    // granularity would corrupt `bucketOf`.
+    const granularity = (Number(c.env.SLOT_DEFAULT_GRANULARITY) || 30) as 15 | 30 | 60
+    // Defensive default: the wrangler binding ships "Asia/Tokyo" by
+    // default; this fallback covers the (unlikely) misconfigured
+    // deploy that strips the binding. Without the fallback the
+    // reschedule path would crash on the slot computation; with it
+    // the customer's clock continues to make sense.
+    const tz = c.env.DEPLOYMENT_TIMEZONE ?? "Asia/Tokyo"
+    const capacity = Number(c.env.SLOT_DEFAULT_CAPACITY) || 2
+    const handle =
+      !isStaff && decoded.success.nameKana !== undefined && decoded.success.phoneLast4 !== undefined
+        ? {
+            nameKana: decoded.success.nameKana,
+            phoneLast4: decoded.success.phoneLast4,
+          }
+        : undefined
+    if (!isStaff && handle === undefined) {
+      return failResponse(422, "InvalidBody", "E_VAL_BODY")
+    }
+    return dispatchEnvelope(
+      await stub(c.env).dispatch({
+        type: "RescheduleTicket",
+        ticketId: idR.success,
+        newAppointmentAt: decoded.success.newAppointmentAt,
+        granularity,
+        tz,
+        capacity,
+        actor: isStaff ? "staff" : "customer",
+        ...(handle !== undefined ? { handle } : {}),
+      }),
+    )
+  })
+
   // GET /api/v1/slots — bucket-grid availability for the customer's
   // /book picker (ADR-0066 / ADR-0068). Returns one row per bucket
   // in the [from, to] window, with `taken` derived from the live
@@ -312,13 +367,17 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return failResponse(fail.status, fail.tag, fail.code)
     }
     const { from, to, granularity } = decoded.success
-    const capacity = Number(c.env.SLOT_DEFAULT_CAPACITY ?? 2)
+    // NaN-safe — empty string or non-numeric env value falls back
+    // to the canonical default (2 per shop bucket).
+    const capacity = Number(c.env.SLOT_DEFAULT_CAPACITY) || 2
     // The bucket→instant projection lives in the business time zone
     // (ADR-0066 §morphism); a JST deployment computes 09:00 buckets
     // at JST 09:00 = 00:00 UTC, not 09:00 UTC. `intervalOf` is the
     // canonical morphism — using it here means the slot endpoint
     // matches `slotOccupancy`'s aggregation path inside the DO.
-    const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)(c.env.DEPLOYMENT_TIMEZONE)
+    const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)(
+      c.env.DEPLOYMENT_TIMEZONE ?? "Asia/Tokyo",
+    )
     const all = await stub(c.env).listTickets()
     const reservations = all.filter(
       (t) =>

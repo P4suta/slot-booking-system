@@ -222,6 +222,20 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
       tickets.set(event.ticketId, next)
       return { tickets }
     }
+    case "Rescheduled": {
+      const prior = tickets.get(event.ticketId)
+      if (prior === undefined) return snap
+      if (prior.state !== "Waiting" && prior.state !== "Called" && prior.state !== "Serving") {
+        return snap
+      }
+      // Lane invariant: only reservation tickets carry an
+      // appointmentAt. Walk-in / priority tickets that somehow reach
+      // here are ignored — the usecase already gates on lane.
+      if (prior.lane !== "reservation") return snap
+      const next: Ticket = { ...prior, appointmentAt: event.toAppointmentAt }
+      tickets.set(event.ticketId, next)
+      return { tickets }
+    }
   }
 }
 
@@ -389,6 +403,35 @@ export const slotOccupancy = (snap: QueueSnapshot, slot: Slot, tz: BusinessTimeZ
   const { startAt } = intervalOf(slot, tz)
   let n = 0
   for (const t of snap.tickets.values()) {
+    if (t.lane !== "reservation") continue
+    if (t.appointmentAt === null) continue
+    if (!isActiveForHandle(t)) continue
+    if (Temporal.Instant.compare(t.appointmentAt, startAt) === 0) n += 1
+  }
+  return n
+}
+
+/**
+ * Slot occupancy with one specific ticket virtually removed
+ * (ADR-0070). Used by `RescheduleTicket` to check whether the new
+ * slot has capacity *after* releasing the ticket's current slot.
+ * Without the exclusion a reschedule onto the same slot (or onto
+ * one that the ticket already "occupies" from a prior failed
+ * write) would always trip the capacity guard.
+ *
+ * If `excludeTicketId` is not in the snapshot the result equals
+ * `slotOccupancy(snap, slot, tz)`.
+ */
+export const occupancyExcludingSelf = (
+  snap: QueueSnapshot,
+  excludeTicketId: TicketId,
+  slot: Slot,
+  tz: BusinessTimeZone,
+): number => {
+  const { startAt } = intervalOf(slot, tz)
+  let n = 0
+  for (const t of snap.tickets.values()) {
+    if (t.id === excludeTicketId) continue
     if (t.lane !== "reservation") continue
     if (t.appointmentAt === null) continue
     if (!isActiveForHandle(t)) continue

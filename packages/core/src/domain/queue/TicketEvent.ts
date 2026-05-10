@@ -138,6 +138,30 @@ export const CheckedInEventSchema = Schema.Struct({
 })
 export type CheckedInEvent = Schema.Schema.Type<typeof CheckedInEventSchema>
 
+/**
+ * Reservation reschedule — `appointmentAt` atomic swap (ADR-0070).
+ * Same ticketId / seq / handle; only the booked slot moves. Fired
+ * when the customer or staff issues
+ * `POST /api/v1/tickets/:id/reschedule`. The projection updates the
+ * Ticket's `appointmentAt` in place and (transitively) the slot
+ * occupancy on both the old and the new slot.
+ *
+ * Allowed on `state ∈ {Waiting, Called, Serving}` and `lane ===
+ * "reservation"`; walk-in / priority tickets carry `appointmentAt
+ * === null` by lane invariant and are not rescheduleable. The
+ * audit-log keeps both `from` and `to` so a no-show analysis can
+ * follow the customer's slot history without joining external
+ * tables.
+ */
+export const RescheduledEventSchema = Schema.Struct({
+  ...TicketEventBaseFields,
+  type: Schema.Literal("Rescheduled"),
+  fromAppointmentAt: InstantSchema,
+  toAppointmentAt: InstantSchema,
+  rescheduledBy: ActorSchema,
+})
+export type RescheduledEvent = Schema.Schema.Type<typeof RescheduledEventSchema>
+
 /* -------------------------------------------------------------------------- */
 /* Top-level union                                                             */
 /* -------------------------------------------------------------------------- */
@@ -152,6 +176,7 @@ export const TicketEventSchema = Schema.Union([
   RecalledEventSchema,
   ReorderedEventSchema,
   CheckedInEventSchema,
+  RescheduledEventSchema,
 ])
 export type TicketEvent = Schema.Schema.Type<typeof TicketEventSchema>
 
@@ -167,4 +192,5 @@ export const ALL_TICKET_EVENT_TYPES: readonly TicketEventType[] = [
   "Recalled",
   "Reordered",
   "CheckedIn",
+  "Rescheduled",
 ] as const

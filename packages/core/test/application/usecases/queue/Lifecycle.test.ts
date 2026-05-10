@@ -13,11 +13,13 @@ import {
   MarkServed,
   Recall,
   Reorder,
+  RescheduleTicket,
   StartServing,
 } from "../../../../src/application/usecases/queue/index.js"
 import { AggregateNotFoundError } from "../../../../src/domain/errors/Errors.js"
 import { applyIssue } from "../../../../src/domain/queue/transitions.js"
 import { newTicketEventId, newTicketId } from "../../../../src/domain/types/EntityId.js"
+import { BusinessTimeZoneSchema } from "../../../../src/domain/value-objects/BusinessTimeZone.js"
 import type { CustomerHandle } from "../../../../src/domain/value-objects/CustomerHandle.js"
 import { NameKanaSchema } from "../../../../src/domain/value-objects/NameKana.js"
 import { PhoneLast4Schema } from "../../../../src/domain/value-objects/PhoneLast4.js"
@@ -859,6 +861,355 @@ describe("queue lifecycle round-trip", () => {
         const t2 = yield* IssueTicket({ handle: h, freeText: null })
         expect(t2.id).toBe(t1.id)
         expect(t2.state).toBe("Called")
+      }),
+    ))
+
+  /* ------------------------------------------------------------------------ */
+  /* ADR-0070 — RescheduleTicket (atomic appointmentAt swap)                 */
+  /* ------------------------------------------------------------------------ */
+
+  it("RescheduleTicket moves appointmentAt while preserving ticketId / seq", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptA = Temporal.Now.instant().add({ hours: 2 })
+        const apptB = Temporal.Now.instant().add({ hours: 4 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        const t2 = yield* RescheduleTicket({
+          ticketId: t1.id,
+          newAppointmentAt: apptB,
+          granularity: 30,
+          tz,
+          capacity: 2,
+          actor: "customer",
+          handle: handle("ヤマダ タロウ", "1234"),
+        })
+        expect(t2.id).toBe(t1.id)
+        expect(t2.seq).toBe(t1.seq)
+        expect(t2.appointmentAt).not.toBeNull()
+        if (t2.appointmentAt !== null) {
+          expect(Temporal.Instant.compare(t2.appointmentAt, apptB)).toBe(0)
+        }
+      }),
+    ))
+
+  it("RescheduleTicket to the same slot is a no-op success", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptAt = Temporal.Now.instant().add({ hours: 2 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptAt,
+        })
+        const t2 = yield* RescheduleTicket({
+          ticketId: t1.id,
+          newAppointmentAt: apptAt,
+          granularity: 30,
+          tz,
+          capacity: 2,
+          actor: "customer",
+          handle: handle("ヤマダ タロウ", "1234"),
+        })
+        expect(t2.id).toBe(t1.id)
+        if (t2.appointmentAt !== null) {
+          expect(Temporal.Instant.compare(t2.appointmentAt, apptAt)).toBe(0)
+        }
+      }),
+    ))
+
+  it("RescheduleTicket on a walk-in ticket yields LaneMismatch", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptB = Temporal.Now.instant().add({ hours: 2 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        const r = yield* eitherEffect(
+          RescheduleTicket({
+            ticketId: t1.id,
+            newAppointmentAt: apptB,
+            granularity: 30,
+            tz,
+            capacity: 2,
+            actor: "customer",
+            handle: handle("ヤマダ タロウ", "1234"),
+          }),
+        )
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("LaneMismatch")
+        }
+      }),
+    ))
+
+  it("RescheduleTicket to a past time yields SlotInPast", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptA = Temporal.Now.instant().add({ hours: 2 })
+        const apptPast = Temporal.Now.instant().subtract({ hours: 2 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        const r = yield* eitherEffect(
+          RescheduleTicket({
+            ticketId: t1.id,
+            newAppointmentAt: apptPast,
+            granularity: 30,
+            tz,
+            capacity: 2,
+            actor: "customer",
+            handle: handle("ヤマダ タロウ", "1234"),
+          }),
+        )
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("SlotInPast")
+        }
+      }),
+    ))
+
+  it("RescheduleTicket onto a full slot (excluding self) yields SlotFull", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        // Bucket-align both apptA and apptB to 30-minute boundaries
+        // so `intervalOf(slot, tz).startAt` matches the stored
+        // `appointmentAt` exactly. Real /issue path always feeds
+        // bucket-aligned instants (the slot picker hands back
+        // `bucketOf` outputs), so this mirrors production semantics.
+        const nowLocal = Temporal.Now.zonedDateTimeISO(tz)
+        const baseLocal = nowLocal
+          .add({ hours: 2 })
+          .with({ minute: 0, second: 0, millisecond: 0, microsecond: 0, nanosecond: 0 })
+        const apptA = baseLocal.toInstant()
+        const apptB = baseLocal.add({ minutes: 30 }).toInstant()
+        // Fill apptB to capacity 1 with one ticket from a different handle.
+        yield* IssueTicket({
+          handle: handle("サトウ ハナコ", "5678"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptB,
+        })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        // Capacity 1 + apptB already occupied by サトウ → ヤマダ
+        // reschedule to apptB rejected (occupancy_excluding_self=1).
+        const r = yield* eitherEffect(
+          RescheduleTicket({
+            ticketId: t1.id,
+            newAppointmentAt: apptB,
+            granularity: 30,
+            tz,
+            capacity: 1,
+            actor: "customer",
+            handle: handle("ヤマダ タロウ", "1234"),
+          }),
+        )
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("SlotFull")
+        }
+      }),
+    ))
+
+  it("RescheduleTicket with wrong handle yields PhoneMismatch", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptA = Temporal.Now.instant().add({ hours: 2 })
+        const apptB = Temporal.Now.instant().add({ hours: 4 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        const r = yield* eitherEffect(
+          RescheduleTicket({
+            ticketId: t1.id,
+            newAppointmentAt: apptB,
+            granularity: 30,
+            tz,
+            capacity: 2,
+            actor: "customer",
+            handle: handle("ヤマダ タロウ", "9999"),
+          }),
+        )
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("PhoneMismatch")
+        }
+      }),
+    ))
+
+  it("RescheduleTicket via staff path (no handle) succeeds from Called", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptA = Temporal.Now.instant().add({ hours: 2 })
+        const apptB = Temporal.Now.instant().add({ hours: 4 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        yield* CallNext()
+        const t2 = yield* RescheduleTicket({
+          ticketId: t1.id,
+          newAppointmentAt: apptB,
+          granularity: 30,
+          tz,
+          capacity: 2,
+          actor: "staff",
+        })
+        expect(t2.id).toBe(t1.id)
+        expect(t2.state).toBe("Called")
+      }),
+    ))
+
+  it("RescheduleTicket via staff path succeeds from Serving", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptA = Temporal.Now.instant().add({ hours: 2 })
+        const apptB = Temporal.Now.instant().add({ hours: 4 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        yield* CallNext()
+        yield* StartServing(t1.id)
+        const t2 = yield* RescheduleTicket({
+          ticketId: t1.id,
+          newAppointmentAt: apptB,
+          granularity: 30,
+          tz,
+          capacity: 2,
+          actor: "staff",
+        })
+        expect(t2.id).toBe(t1.id)
+        expect(t2.state).toBe("Serving")
+      }),
+    ))
+
+  it("RescheduleTicket on a Served ticket yields InvalidStateTransition", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptA = Temporal.Now.instant().add({ hours: 2 })
+        const apptB = Temporal.Now.instant().add({ hours: 4 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        yield* CallNext()
+        yield* MarkServed(t1.id)
+        const r = yield* eitherEffect(
+          RescheduleTicket({
+            ticketId: t1.id,
+            newAppointmentAt: apptB,
+            granularity: 30,
+            tz,
+            capacity: 2,
+            actor: "staff",
+          }),
+        )
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("InvalidStateTransition")
+        }
+      }),
+    ))
+
+  it("RescheduleTicket on a Cancelled ticket yields InvalidStateTransition", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptA = Temporal.Now.instant().add({ hours: 2 })
+        const apptB = Temporal.Now.instant().add({ hours: 4 })
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({
+          handle: h,
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        yield* CancelTicket(t1.id, "customer", "test-cancel", h)
+        const r = yield* eitherEffect(
+          RescheduleTicket({
+            ticketId: t1.id,
+            newAppointmentAt: apptB,
+            granularity: 30,
+            tz,
+            capacity: 2,
+            actor: "staff",
+          }),
+        )
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("InvalidStateTransition")
+        }
+      }),
+    ))
+
+  it("RescheduleTicket on a NoShow ticket yields InvalidStateTransition", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
+        const apptA = Temporal.Now.instant().add({ hours: 2 })
+        const apptB = Temporal.Now.instant().add({ hours: 4 })
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptA,
+        })
+        yield* CallNext()
+        yield* MarkNoShow(t1.id, "staff")
+        const r = yield* eitherEffect(
+          RescheduleTicket({
+            ticketId: t1.id,
+            newAppointmentAt: apptB,
+            granularity: 30,
+            tz,
+            capacity: 2,
+            actor: "staff",
+          }),
+        )
+        expect(r.ok).toBe(false)
+        if (!r.ok) {
+          const err = r.error as { _tag: string }
+          expect(err._tag).toBe("InvalidStateTransition")
+        }
       }),
     ))
 })
