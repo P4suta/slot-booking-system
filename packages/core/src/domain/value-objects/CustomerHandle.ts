@@ -68,12 +68,45 @@ export const parseCustomerHandleStrict = (
 }
 
 /**
+ * Constant-time string equality folded over UTF-16 code units. The
+ * length-mismatch early-exit is the only data-dependent branch and
+ * runs *before* secret material reaches the comparator, matching
+ * the convention `apps/default/src/server/security/timingSafeEqual.ts`
+ * uses for the staff token (ADR-0058 §CWE-208). The XOR fold means
+ * the loop body is independent of the secret at the branch level —
+ * an attacker cannot infer prefix-match length from response timing.
+ *
+ * Why an inline copy lives in the domain layer: the customer
+ * authentication path (`authenticateCustomer`, `equalsCustomerHandle`)
+ * runs inside the core domain, which has no Workers-side
+ * dependencies. The implementation is identical to the staff helper
+ * and the pair is pinned to stay drift-free by the symmetric
+ * matrix test (`packages/core/test/value-objects/CustomerHandle.test.ts`).
+ */
+export const constantTimeStringEqual = (a: string, b: string): boolean => {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+  return diff === 0
+}
+
+/**
  * Equality on the structural pair. Two handles match iff both
  * components are equal as branded scalars (string equality after
  * normalisation has already happened during parsing).
+ *
+ * Both component checks always run — the operator-`||` short-circuit
+ * lives at the post-evaluation `if`, after both `constantTimeStringEqual`
+ * calls have returned. This closes the timing channel that would
+ * otherwise distinguish "kana wrong" from "kana right + phone wrong"
+ * during `/api/v1/tickets/me` brute force on the kana+last4 pair.
  */
-export const equalsCustomerHandle = (a: CustomerHandle, b: CustomerHandle): boolean =>
-  (a.nameKana as string) === (b.nameKana as string) &&
-  (a.phoneLast4 as string) === (b.phoneLast4 as string)
+export const equalsCustomerHandle = (a: CustomerHandle, b: CustomerHandle): boolean => {
+  const kanaOK = constantTimeStringEqual(a.nameKana, b.nameKana)
+  const phoneOK = constantTimeStringEqual(a.phoneLast4, b.phoneLast4)
+  return kanaOK && phoneOK
+}
 
 export type { NameKana, PhoneLast4 }

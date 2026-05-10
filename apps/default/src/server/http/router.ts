@@ -1,5 +1,6 @@
 import {
   BusinessTimeZoneSchema,
+  constantTimeStringEqual,
   intervalOf,
   reservationsByDeadline,
   type Slot,
@@ -226,10 +227,16 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const all = await stub(c.env).listTickets()
     const ticket = all.find((t) => t.id === decoded.success.ticketId)
     if (ticket === undefined) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    if (
-      ticket.nameKana !== decoded.success.nameKana ||
-      ticket.phoneLast4 !== decoded.success.phoneLast4
-    ) {
+    // Constant-time compare on both components (CWE-208). Without
+    // this an attacker who knows the ticketId can narrow the
+    // (kana, last4) pair via response-timing differential between
+    // "kana wrong" (short-circuit on first byte) and "kana right +
+    // last4 wrong" (full kana scan + last4 check). Both checks
+    // always run before the post-evaluation `||` so the response-
+    // time signal does not distinguish which component failed.
+    const kanaOK = constantTimeStringEqual(ticket.nameKana, decoded.success.nameKana)
+    const phoneOK = constantTimeStringEqual(ticket.phoneLast4, decoded.success.phoneLast4)
+    if (!kanaOK || !phoneOK) {
       return failResponse(403, "PhoneMismatch", "E_DOM_PHONE_MISMATCH")
     }
     return new Response(JSON.stringify({ ok: true, ticket }), {
