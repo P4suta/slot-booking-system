@@ -67,6 +67,7 @@ back.
 | [0067](./adr/0067-time-aware-lane-chain.md)         | Time-aware lane chain (EDF on reservation head)              | accepted |
 | [0068](./adr/0068-unified-issue-flow-and-door-qr.md) | Unified `/issue` flow + door-QR walk-in entry               | accepted |
 | [0069](./adr/0069-handle-as-active-primary-and-local-cache.md) | Handle as active-set primary key + localStorage cache | accepted |
+| [0070](./adr/0070-reservation-reschedule.md)        | Reservation reschedule — atomic appointmentAt swap            | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).

@@ -258,6 +258,55 @@ export const openApiDocument = {
         },
       },
     },
+    "/tickets/{id}/reschedule": {
+      post: {
+        tags: ["customer", "staff"],
+        summary: "Reschedule a reservation ticket (atomic appointmentAt swap)",
+        description:
+          "ADR-0070. Same ticketId / seq / displaySeq / handle / lane stay; " +
+          "only `appointmentAt` is replaced. Customer path verifies the handle " +
+          "constant-time against the stored ticket; staff path uses the " +
+          "`x-staff-token` header. Same-slot submissions return 200 with the " +
+          "unchanged ticket (no-op success).",
+        parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                oneOf: [
+                  {
+                    title: "CustomerReschedule",
+                    type: "object",
+                    required: ["nameKana", "phoneLast4", "newAppointmentAt"],
+                    properties: {
+                      nameKana: { type: "string" },
+                      phoneLast4: { type: "string" },
+                      newAppointmentAt: { type: "string", format: "date-time" },
+                    },
+                  },
+                  {
+                    title: "StaffReschedule",
+                    type: "object",
+                    required: ["newAppointmentAt"],
+                    properties: {
+                      newAppointmentAt: { type: "string", format: "date-time" },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+        responses: {
+          "200": TICKET_ENVELOPE,
+          "403": ERROR_RESPONSE,
+          "404": ERROR_RESPONSE,
+          "409": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+        },
+      },
+    },
     "/tickets/{id}/served": {
       post: {
         tags: ["staff"],

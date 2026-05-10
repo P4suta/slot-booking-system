@@ -122,6 +122,42 @@ docs/
   error-codes.md           generated tag table (drift-gated)
 ```
 
+## Customer flow (how the queue behaves end-to-end)
+
+The customer never authenticates; their identity is the
+`(nameKana, phoneLast4)` handle (ADR-0054 / ADR-0069). The web
+flow is funnel-shaped:
+
+1. **Issue** — `/issue` accepts walk-in or reservation; same
+   handle + still-active ticket merges into the existing ticket
+   (`merged: true`) rather than minting a duplicate (ADR-0069).
+2. **Hold the ticket** — `/ticket` lives via a localStorage
+   cache (`queue.ticket.v2`) keyed by `ticketId`. On boot it
+   renders from cache while a `GET /tickets/by-handle` round-trip
+   re-validates (stale-while-revalidate). The WS feed
+   (`connectQueueFeed`) drives subsequent updates.
+3. **Get called** — when the projection observes the
+   customer's ticket entering `Called`, the page fires a
+   Web Audio chime + `navigator.vibrate` + `Notification` (if
+   permission granted). Stage 7 of ADR-0069.
+4. **Modify** — `/ticket` exposes:
+   - a 「予約時刻を変更」 button on reservation tickets,
+     opening a Dialog that POSTs to `/tickets/:id/reschedule`
+     (ADR-0070). Same ticket id, atomic slot swap.
+   - a キャンセル button on active tickets, which releases the
+     handle so a corrected re-issue can mint a fresh ticket.
+5. **Recover** — if the cache is gone (tab close + clear,
+   different device), `/recover` accepts kana + last-4 and
+   re-populates the cache via `GET /tickets/by-handle`
+   (ADR-0069).
+
+All friendly copy + Help tooltips for these flows live in
+`apps/web/messages/{ja,en}.json` (paraglide) and are surfaced
+through `apps/web/src/lib/messages.ts` (`errorMessage`,
+`emptyState`, `loadingState`, `helpText`). A new error tag in
+the registry only requires the matching `error_<Tag>` key in
+the catalogue; the routes already look it up dynamically.
+
 ## Common edits, ordered
 
 1. Add a domain error class →

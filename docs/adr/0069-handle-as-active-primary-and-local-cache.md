@@ -149,6 +149,59 @@ release cycle with zero callers it will be deleted.
   cache-driven boot; ticketByHandle as the recovery primitive;
   URL stripped to `/ticket?id`.
 
+## §UX (operations playbook)
+
+The customer-side primitives from this ADR compose into three
+operational flows that staff can hand to a confused customer.
+
+### "I lost my ticket / I'm on a different device"
+
+1. The customer goes to **`/recover`**.
+2. They type kana + phone last-4 (the handle).
+3. The form fires `GET /tickets/by-handle?k&p` and lands them on
+   `/ticket?id=...` with the localStorage cache populated.
+4. From now on, opening `/` or `/issue` on the same device
+   redirects straight to `/ticket` (Stage 8 boot funnel).
+5. Browser tab close + reopen survives because the cache lives in
+   `localStorage`, not `sessionStorage`.
+
+### "I want to fix my reservation time"
+
+1. The reservation Card on `/ticket` exposes a 「予約時刻を変更」
+   button (visible iff the ticket is reservation-laned and
+   `state ∈ {Waiting, Called, Serving}`).
+2. The Dialog opens with the **current** appointmentAt
+   pre-selected in `SlotPicker`.
+3. Confirming POSTs to `/tickets/:id/reschedule` (ADR-0070); the
+   handle is sent from the cache so the customer never re-types it.
+4. Success: the appointment Card's countdown re-reads the new
+   slot without waiting for the next WS broadcast.
+
+### "I want to fix my name / phone digits"
+
+This is *not* supported as an in-place edit. The customer is
+expected to:
+
+1. Cancel the current ticket (the cancel button on `/ticket`).
+2. Reissue from `/issue` with corrected values.
+
+Releasing the handle on cancel + re-acquiring on issue keeps the
+active-set primary key invariant (ADR-0069) clean. The
+operational pattern is rare enough that staff can read it off the
+section above.
+
+### "I want to be alerted when called"
+
+1. While the ticket is `Waiting`, `/ticket` shows a 通知 Card.
+2. Tapping 「通知を許可する」 prompts the browser permission flow.
+3. On `Called`, the page fires:
+   - Web Audio chime (Stage 7)
+   - `navigator.vibrate` (mobile)
+   - `Notification` API (if the customer granted permission)
+4. The alert is **once per `calledAt` instant** — a tab reload
+   while `Called` does not re-fire; a staff `Recall → re-Call`
+   mints a fresh `calledAt` and the alert fires again.
+
 ## Consequences
 
 - The browser URL no longer carries PII. The `meta name="robots" noindex`

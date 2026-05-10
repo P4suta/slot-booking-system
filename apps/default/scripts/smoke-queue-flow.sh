@@ -60,6 +60,52 @@ by_handle_id=$(require_jq "$by_handle_response" '.ticket.id')
 }
 echo "  -> by-handle returned $by_handle_id"
 
+echo "smoke-queue: 1c/6 reschedule side-trip (ADR-0070)"
+# A separate reservation ticket so the main walk-in lifecycle below
+# is undisturbed. The slot stamps use the local server day at fixed
+# off-peak hours; the reschedule swap targets a sibling bucket on
+# the same day.
+slot_day=$(date -u +%Y-%m-%d)
+slot_from="${slot_day}T20:00:00.000Z"
+slot_to="${slot_day}T20:30:00.000Z"
+reservation_response=$(post_json /api/v1/tickets "{
+  \"nameKana\": \"スズキ ハナコ\",
+  \"phoneLast4\": \"5678\",
+  \"freeText\": null,
+  \"lane\": \"reservation\",
+  \"appointmentAt\": \"$slot_from\"
+}")
+reservation_id=$(require_jq "$reservation_response" '.ticket.id')
+reservation_at=$(require_jq "$reservation_response" '.ticket.appointmentAt')
+[ "$reservation_at" = "$slot_from" ] || {
+  echo "smoke-queue: expected appointmentAt=$slot_from, got $reservation_at" >&2
+  exit 1
+}
+reschedule_response=$(post_json "/api/v1/tickets/$reservation_id/reschedule" "{
+  \"nameKana\": \"スズキ ハナコ\",
+  \"phoneLast4\": \"5678\",
+  \"newAppointmentAt\": \"$slot_to\"
+}")
+reschedule_at=$(require_jq "$reschedule_response" '.ticket.appointmentAt')
+[ "$reschedule_at" = "$slot_to" ] || {
+  echo "smoke-queue: expected appointmentAt=$slot_to after reschedule, got $reschedule_at" >&2
+  exit 1
+}
+echo "  -> reservation $reservation_id swapped $slot_from -> $slot_to"
+# Release the side-trip ticket so subsequent runs of the smoke can
+# reuse the same handle without colliding on the active-set UNIQUE
+# index from ADR-0069.
+cancel_side=$(post_json "/api/v1/tickets/$reservation_id/cancel" "{
+  \"nameKana\": \"スズキ ハナコ\",
+  \"phoneLast4\": \"5678\",
+  \"reason\": \"smoke-queue cleanup\"
+}")
+cancel_side_state=$(require_jq "$cancel_side" '.ticket.state')
+[ "$cancel_side_state" = "Cancelled" ] || {
+  echo "smoke-queue: side-trip cleanup expected Cancelled, got $cancel_side_state" >&2
+  exit 1
+}
+
 echo "smoke-queue: 2/6 staff call-specific (target our handle's ticket)"
 call_response=$(post_json /api/v1/queue/call-specific "{\"ticketId\":\"$ticket_id\"}" \
   -H "x-staff-token: $STAFF_TOKEN")

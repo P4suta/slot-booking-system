@@ -135,6 +135,29 @@ as a 2-D barcode with any generator, post it at the door, and
 the rest of the flow (walk-in 「番号札を取る」 ✕ reservation
 expand) lives in the same page. No env var, no code change.
 
+## Customer self-service: how to modify
+
+Three customer-side modifications are supported without
+involving staff. Detailed flows live in
+[ADR-0069 §UX](./docs/adr/0069-handle-as-active-primary-and-local-cache.md)
+and [ADR-0070](./docs/adr/0070-reservation-reschedule.md).
+
+- **Appointment time** — the `/ticket` page exposes a
+  「予約時刻を変更」 button on reservation tickets. The new
+  slot is swapped atomically; the same ticket id, seq, and
+  position are preserved (ADR-0070).
+- **Lost ticket / different device** — `/recover` accepts the
+  customer's name (kana) + phone last-4 and lands them back on
+  `/ticket?id=...` (ADR-0069).
+- **Name / phone digit typo** — cancel the ticket from
+  `/ticket` and reissue from `/issue` with corrected values.
+  The active-set handle UNIQUE constraint releases on cancel and
+  re-acquires on issue (ADR-0069).
+
+The web layer's friendly copy for these flows lives in
+`apps/web/messages/{ja,en}.json` under the `confirm_*`,
+`reservation_modify_help`, and `help_*` keys.
+
 ## License
 
 Dual-licensed under Apache-2.0 OR MIT, at your option. See
