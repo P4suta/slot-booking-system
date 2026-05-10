@@ -98,18 +98,30 @@
   const onCheckIn = async (): Promise<void> => {
     if (stored === null || ticket === null) return
     checkInBusy = true
+    // Optimistic update: paint 「到着済み」 immediately so the customer
+    // sees the result on press. The server-assigned `checkedInAt` will
+    // overwrite this on the next projection broadcast (the server fires
+    // one as part of the mutation pipeline). On failure we revert and
+    // surface the error.
+    const previousCheckedInAt = ticket.checkedInAt
+    ticket = { ...ticket, checkedInAt: new Date().toISOString() }
     try {
       const r = await checkIn(stored.ticketId)
       if (!r.ok) {
+        // Revert the optimistic flip — the customer sees a transient
+        // 「到着済み」 then the original state plus the error card.
+        ticket = ticket === null ? null : { ...ticket, checkedInAt: previousCheckedInAt }
         error = {
           tag: r.error._tag,
           code: r.error.code,
           message: errorMessage(r.error._tag),
         }
-        return
       }
-      // Refresh to read the new checkedInAt.
-      await refresh(stored)
+      // Success: the optimistic value stays. The next WS broadcast +
+      // selfEntry merge keeps state/lane/displaySeq fresh; a real
+      // `checkedInAt` value would only arrive via a follow-up HTTP
+      // (e.g. /recover boot path), and the local string-form ISO is
+      // good enough for the 「到着済み」 badge in the meantime.
     } finally {
       checkInBusy = false
     }
@@ -301,10 +313,9 @@
       ticket = r.value.ticket
       rescheduleDialogOpen = false
       rescheduleNewISO = null
-      // Pull the latest projection so the appointment Card / feed
-      // reflect the new slot's occupancy without waiting for the
-      // next WS broadcast.
-      if (stored !== null) await refresh(stored)
+      // The mutation response is the authoritative ticket; the WS
+      // projection broadcast that the server emits next will keep
+      // /staff and other /ticket tabs in sync. No HTTP refresh needed.
     } finally {
       rescheduleBusy = false
     }
