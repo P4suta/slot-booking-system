@@ -342,6 +342,36 @@ export const firstLaneWithCallable = (
 }
 
 /**
+ * The next-callable Waiting ticket. Composes
+ * {@link firstLaneWithCallable} with the matching head selector:
+ * the reservation lane head is the **earliest-`appointmentAt`**
+ * Waiting (EDF semantics from ADR-0067), not the lowest
+ * `displaySeq` — operators expect the next-deadline reservation,
+ * not the order in which reservation tickets were issued.
+ *
+ * Walk-in / priority lane heads keep ADR-0065's `displaySeq`-min
+ * behaviour. Returns `null` when the snapshot has no Waiting ticket.
+ */
+export const nextCallable = (
+  snap: QueueSnapshot,
+  now: Temporal.Instant,
+  grace: Temporal.Duration,
+): Waiting | null => {
+  const lane = firstLaneWithCallable(snap, now, grace)
+  if (lane === null) return null
+  if (lane === "reservation") {
+    // `firstLaneWithCallable` only returns "reservation" when
+    // `reservationsByDeadline[0]` exists and is within the grace
+    // window, so the `?? null` defensive fallback is unreachable
+    // here — the v8 coverage tool reports it as a never-taken
+    // branch, which we acknowledge.
+    /* v8 ignore next */
+    return reservationsByDeadline(snap)[0] ?? null
+  }
+  return headOfLane(snap, lane)
+}
+
+/**
  * ADR-0066 — slot capacity bookkeeping.
  *
  * Counts the Waiting / Called / Serving tickets whose

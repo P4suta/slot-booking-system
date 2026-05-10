@@ -1,3 +1,4 @@
+import { Temporal } from "@js-temporal/polyfill"
 import { Effect } from "effect"
 import {
   type ConcurrencyError,
@@ -6,15 +7,19 @@ import {
   type StorageError,
 } from "../../../domain/errors/Errors.js"
 import type { Lane } from "../../../domain/queue/Lane.js"
-import { head } from "../../../domain/queue/projection.js"
+import { head, nextCallable } from "../../../domain/queue/projection.js"
 import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
 import { applyCall } from "../../../domain/queue/transitions.js"
 import type { TicketId } from "../../../domain/types/EntityId.js"
-import type { Clock } from "../../ports/Clock.js"
+import { Clock } from "../../ports/Clock.js"
 import { TicketRepository } from "../../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../../ports/IdGenerator.js"
 import type { Logger } from "../../ports/Logger.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
+
+/** ADR-0067 EDF grace window — promote a reservation when its
+ *  appointmentAt is within `now + grace`. */
+const DEFAULT_GRACE_MINUTES = 5
 
 /**
  * CallNext — pick the head of the named lane (or the first non-empty
@@ -37,10 +42,19 @@ export const CallNext = (
 > =>
   Effect.gen(function* () {
     const repo = yield* TicketRepository
+    const clock = yield* Clock
     const all = yield* repo.listAll()
     const tickets = new Map<TicketId, Ticket>()
     for (const t of all) tickets.set(t.id, t)
-    const next = head({ tickets }, lane)
+    // When the operator names a lane, head-of-lane wins (ADR-0062 +
+    // ADR-0065 displaySeq order). When the lane is omitted, EDF +
+    // chain selection picks the next callable: a reservation whose
+    // appointmentAt ≤ now+grace pre-empts the priority>walkIn>reservation
+    // chain (ADR-0067).
+    const grace = Temporal.Duration.from({ minutes: DEFAULT_GRACE_MINUTES })
+    const now = yield* clock.nowInstant
+    const next =
+      lane !== undefined ? head({ tickets }, lane) : nextCallable({ tickets }, now, grace)
     if (next === null) return yield* Effect.fail(new QueueEmptyError({}))
     // `repo.load(next.id)` defensively maps a missing aggregate / a
     // non-Waiting load result to QueueEmpty. Both arms cover a race

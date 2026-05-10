@@ -624,6 +624,69 @@ describe("queue lifecycle round-trip", () => {
     if (!result.ok) expect(result.error._tag).toBe("QueueEmpty")
   })
 
+  it("CallNext with explicit lane uses the head of that lane (ADR-0062)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        // Walk-in first, reservation eligible — but explicit "walkIn"
+        // pins the call to the walk-in lane head, bypassing EDF.
+        const wkr = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* IssueTicket({
+          handle: handle("スズキ ジロウ", "5678"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: Temporal.Now.instant().add({ minutes: 2 }),
+        })
+        const called = yield* CallNext("walkIn")
+        expect(called.id).toBe(wkr.id)
+      }),
+    ))
+
+  it("CallNext promotes an eligible reservation past the static priority chain (ADR-0067 EDF)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        // Walk-in lands first; then a reservation whose appointmentAt
+        // is within the 5-min EDF grace window. CallNext (no lane)
+        // must pick the reservation, not the walk-in head.
+        const wkr = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        const apptAt = Temporal.Now.instant().add({ minutes: 2 })
+        const rsv = yield* IssueTicket({
+          handle: handle("スズキ ジロウ", "5678"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptAt,
+        })
+        const called = yield* CallNext()
+        expect(called.id).toBe(rsv.id)
+        expect(called.id).not.toBe(wkr.id)
+      }),
+    ))
+
+  it("CallNext falls back to walkIn when the reservation is outside the EDF grace window", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const wkr = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        // 30min in the future — well outside the 5min grace.
+        const apptAt = Temporal.Now.instant().add({ minutes: 30 })
+        yield* IssueTicket({
+          handle: handle("スズキ ジロウ", "5678"),
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: apptAt,
+        })
+        const called = yield* CallNext()
+        expect(called.id).toBe(wkr.id)
+      }),
+    ))
+
   it("CheckIn on a reservation within the 10-min window succeeds", async () =>
     runScenario(
       Effect.gen(function* () {

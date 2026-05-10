@@ -55,10 +55,12 @@ slots=$(curl -sS "$BASE_URL/api/v1/slots?from=$today&to=$day_after&granularity=3
 slot_count=$(jq '.slots | length' <<<"$slots")
 echo "  -> $slot_count buckets returned"
 
-# Pick a slot that is ~5min in the future so EDF + check-in window
-# both engage. The next-30-min bucket from now satisfies both.
-appt_iso=$(date -u -d '+6 minutes' +%Y-%m-%dT%H:%M:00Z 2>/dev/null \
-  || date -u -v+6M +%Y-%m-%dT%H:%M:00Z)
+# Pick a slot inside both windows: EDF grace = 5min (ADR-0067) and
+# check-in opens at appt - 10min (ADR-0068). +3min lands strictly
+# inside both so the smoke proves the EDF promotion deterministically
+# without timing flakiness from the multi-step pipeline above.
+appt_iso=$(date -u -d '+3 minutes' +%Y-%m-%dT%H:%M:00Z 2>/dev/null \
+  || date -u -v+3M +%Y-%m-%dT%H:%M:00Z)
 echo "smoke-reservation: 3/6 issue reservation at $appt_iso"
 reservation=$(post_json /api/v1/tickets "{
   \"nameKana\": \"スズキ ジロウ\",
