@@ -59,11 +59,12 @@ type ProjectionEntry = {
   readonly seq: number
   readonly lane: "walkIn" | "priority" | "reservation"
   readonly displaySeq: number
+  readonly state: "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
 }
 
 type Projection = {
   readonly ok: boolean
-  readonly v: 3
+  readonly v: 4
   readonly waitingCount: number
   readonly laneCounts: {
     readonly walkIn: number
@@ -138,17 +139,21 @@ describe("HTTP queue flow (property, integration)", () => {
         const final = await parseJson<Projection>(finalRes)
 
         expect(final.ok).toBe(true)
-        expect(final.v).toBe(3)
+        expect(final.v).toBe(4)
         expect(typeof final.waitingCount).toBe("number")
         expect(final.waitingCount).toBeGreaterThanOrEqual(0)
         // Total tickets in the system can never exceed what was
         // actually issued through the API.
         expect(final.waitingCount).toBeLessThanOrEqual(issuedCount)
-        // The waitingPreview is a strict slice of the queue —
-        // never longer than the public limit (10) and never
-        // longer than the live waitingCount.
-        expect(final.waitingPreview.length).toBeLessThanOrEqual(10)
-        expect(final.waitingPreview.length).toBeLessThanOrEqual(final.waitingCount)
+        // ADR-0071: the public waitingPreview exposes every Waiting
+        // ticket (cap removed). The cardinality therefore equals
+        // waitingCount on every projection read.
+        expect(final.waitingPreview.length).toBe(final.waitingCount)
+        // ADR-0071: every entry carries `state`, and every entry
+        // in waitingPreview is in the Waiting state by construction.
+        for (const entry of final.waitingPreview) {
+          expect(entry.state).toBe("Waiting")
+        }
         // Strictly monotonic per-lane displaySeq across the public
         // preview within each lane (ADR-0065).
         const byLane = new Map<string, ProjectionEntry[]>()

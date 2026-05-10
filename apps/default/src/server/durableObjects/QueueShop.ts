@@ -400,7 +400,7 @@ export class QueueShop extends DurableObject<Env> {
   }
 
   /**
-   * Build the anonymous v3 projection payload — staff PII never
+   * Build the anonymous projection payload — staff PII never
    * crosses the WebSocket feed. Mirrors the public `GET /api/v1/queue`
    * shape so the client renders the same view from either source.
    *
@@ -412,8 +412,17 @@ export class QueueShop extends DurableObject<Env> {
    * the payload surfaces `nextReservationDeadline` (the earliest
    * reservation `appointmentAt` among Waiting tickets, or null) so
    * the staff Kanban / customer countdown render without a second
-   * fetch. v2 readers ignore the new fields per ADR-0061's `v`
-   * discriminator forward-compatibility rule.
+   * fetch.
+   *
+   * v4 (ADR-0071, refines ADR-0061): every ProjectionEntry carries
+   * `state` (Waiting / Called / Serving / ...) and `waitingPreview`
+   * exposes every Waiting ticket (cap removed). `state` is public
+   * information (the in-store monitor already shows it) — only the
+   * customer-identifying fields (kana, last4, freeText) remain
+   * staff-only. The expanded preview means `/ticket` can resolve
+   * its own state from the WS feed alone without a follow-up
+   * `ticketByHandle` round-trip on every broadcast, which is what
+   * was consuming `RL_VERIFY` budget under v3.
    */
   private async projectionPayload(): Promise<string> {
     const tickets = await this.listTickets()
@@ -423,6 +432,7 @@ export class QueueShop extends DurableObject<Env> {
       lane: t.lane,
       displaySeq: t.displaySeq,
       appointmentAt: t.appointmentAt,
+      state: t.state,
     })
     const waiting = tickets
       .filter((t) => t.state === "Waiting")
@@ -442,7 +452,7 @@ export class QueueShop extends DurableObject<Env> {
     const nextDeadline = ranked[0]?.appointmentAt ?? null
     return JSON.stringify({
       ok: true,
-      v: 3,
+      v: 4,
       waitingCount: waiting.length,
       laneCounts: {
         walkIn: laneCount("walkIn"),
@@ -451,7 +461,7 @@ export class QueueShop extends DurableObject<Env> {
       },
       calling: calling.map(project),
       serving: serving.map(project),
-      waitingPreview: waiting.slice(0, 10).map(project),
+      waitingPreview: waiting.map(project),
       nextReservationDeadline: nextDeadline !== null ? String(nextDeadline) : null,
     })
   }

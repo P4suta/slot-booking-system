@@ -44,6 +44,7 @@ export type ProjectionEntry = {
   readonly lane: Lane
   readonly displaySeq: number
   readonly appointmentAt: string | null
+  readonly state: "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
 }
 
 export type LaneCounts = {
@@ -53,15 +54,20 @@ export type LaneCounts = {
 }
 
 /**
- * v3 anonymous shop projection (ADR-0062 / ADR-0063 / ADR-0065 /
- * ADR-0066 / ADR-0067). Lane-aware preview with `appointmentAt`,
- * `calling[]` + `serving[]` arrays, and `laneCounts`. The
- * `nextReservationDeadline` mirrors the EDF scheduling target used
- * by the staff Kanban so the client can render the next-due slot
- * chip without consulting `waitingPreview` directly.
+ * v4 anonymous shop projection (ADR-0071, refines ADR-0061).
+ * Every ProjectionEntry carries `state` so `/ticket` can resolve
+ * its own state from the WS feed alone, and `waitingPreview`
+ * exposes every Waiting ticket (cap removed). PII (kana / last4 /
+ * freeText) remains staff-only — `state` is public information
+ * already visible on the in-store monitor.
+ *
+ * v3 (ADR-0062 / ADR-0063 / ADR-0065 / ADR-0066 / ADR-0067) added
+ * lane partitioning, `calling[]` + `serving[]`, `laneCounts`, and
+ * `nextReservationDeadline`. v4 only widens projection coverage
+ * — no v3 field changed shape.
  */
 export type ShopState = {
-  readonly v: 3
+  readonly v: 4
   readonly waitingCount: number
   readonly laneCounts: LaneCounts
   readonly calling: readonly ProjectionEntry[]
@@ -75,10 +81,12 @@ export type ShopState = {
  * calling / serving / waitingPreview のすべてが full Ticket row を
  * carry。 `terminal` は ADR-0069 §Stage 11 で追加された直近 8 件の
  * Served / Cancelled / NoShow ticket スライス (履歴列の source)。
- * `x-staff-token` 付き GET /api/v1/queue で返る。
+ * `x-staff-token` 付き GET /api/v1/queue で返る。 v4 で
+ * `waitingPreview` の cap が外れ、 全 Waiting ticket を返す
+ * (ADR-0071)。
  */
 export type StaffShopState = {
-  readonly v: 3
+  readonly v: 4
   readonly waitingCount: number
   readonly laneCounts: LaneCounts
   readonly calling: readonly Ticket[]

@@ -512,6 +512,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       lane: t.lane,
       displaySeq: t.displaySeq,
       appointmentAt: t.appointmentAt,
+      state: t.state,
     })
     const laneCount = (lane: "walkIn" | "priority" | "reservation") =>
       waiting.filter((t) => t.lane === lane).length
@@ -531,7 +532,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return new Response(
         JSON.stringify({
           ok: true,
-          v: 3,
+          v: 4,
           waitingCount: waiting.length,
           laneCounts: {
             walkIn: laneCount("walkIn"),
@@ -540,7 +541,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
           },
           calling,
           serving,
-          waitingPreview: waiting.slice(0, 20),
+          waitingPreview: waiting,
           terminal: terminalRecent,
           nextReservationDeadline,
         }),
@@ -550,7 +551,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return new Response(
       JSON.stringify({
         ok: true,
-        v: 3,
+        v: 4,
         waitingCount: waiting.length,
         laneCounts: {
           walkIn: laneCount("walkIn"),
@@ -559,7 +560,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         },
         calling: calling.map(project),
         serving: serving.map(project),
-        waitingPreview: waiting.slice(0, 10).map(project),
+        waitingPreview: waiting.map(project),
         nextReservationDeadline,
       }),
       { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
