@@ -25,6 +25,17 @@ export type Ticket = {
   readonly servedAt?: string
   readonly cancelledAt?: string
   readonly markedAt?: string
+  readonly appointmentAt: string | null
+  readonly checkedInAt: string | null
+}
+
+export type SlotEntry = {
+  readonly date: string
+  readonly bucketId: number
+  readonly granularity: 15 | 30 | 60
+  readonly capacity: number
+  readonly taken: number
+  readonly available: number
 }
 
 export type ProjectionEntry = {
@@ -158,12 +169,26 @@ export const issueTicket = async (input: {
   phoneLast4: string
   freeText: string | null
   lane?: Lane
+  appointmentAt?: string
 }): Promise<ApiResult<{ ticket: Ticket }>> =>
   fetchJson(`${baseUrl()}/api/v1/tickets`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   })
+
+export const listSlots = async (input: {
+  from: string
+  to: string
+  granularity: 15 | 30 | 60
+}): Promise<ApiResult<{ slots: readonly SlotEntry[] }>> => {
+  const params = new URLSearchParams({
+    from: input.from,
+    to: input.to,
+    granularity: String(input.granularity),
+  })
+  return fetchJson(`${baseUrl()}/api/v1/slots?${params.toString()}`)
+}
 
 export const myTicket = async (input: {
   ticketId: string
