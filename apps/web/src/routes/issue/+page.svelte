@@ -1,11 +1,12 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
+  import { onMount } from "svelte"
   import { issueTicket, listSlots, type SlotEntry } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
-  import { writeTicketCache } from "$lib/ticketCache.js"
+  import { readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
 
   let nameKana = $state("")
   let phoneLast4 = $state("")
@@ -17,6 +18,19 @@
   let slots: readonly SlotEntry[] = $state([])
   let selectedDate = $state(todayIso())
   let selectedBucketId: number | null = $state(null)
+  // ADR-0069 §Stage 8 — same-handle re-issue would just merge into
+  // the existing ticket and goto /ticket anyway; pre-empt the
+  // round-trip by bouncing to /ticket the moment we see a cache hit.
+  let booting = $state(true)
+
+  onMount(async () => {
+    const cached = readTicketCache()
+    if (cached !== null) {
+      await goto(`/ticket?id=${encodeURIComponent(cached.ticketId)}`)
+      return
+    }
+    booting = false
+  })
 
   const GRANULARITY = 30 as const
 
@@ -196,6 +210,7 @@
   <title>並ぶ — 整理券</title>
 </svelte:head>
 
+{#if !booting}
 <section class="issue">
   <h1>並ぶ</h1>
   <p class="lede">名前と電話番号末尾4桁、 用件 (任意) を入力して列に加わります。</p>
@@ -294,6 +309,7 @@
     </div>
   </details>
 </section>
+{/if}
 
 <style>
   .issue {

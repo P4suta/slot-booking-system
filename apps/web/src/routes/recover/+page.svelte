@@ -1,16 +1,30 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
+  import { onMount } from "svelte"
   import { ticketByHandle } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
   import { toKatakana } from "$lib/kana.js"
-  import { writeTicketCache } from "$lib/ticketCache.js"
+  import { readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
 
   let nameKana = $state("")
   let phoneLast4 = $state("")
   let busy = $state(false)
   let error: { tag: string; code: string; message: string } | null = $state(null)
+  // ADR-0069 §Stage 8 — if the device already holds the customer's
+  // active ticket in localStorage, /recover is a wasted prompt;
+  // bounce straight to /ticket.
+  let booting = $state(true)
+
+  onMount(async () => {
+    const cached = readTicketCache()
+    if (cached !== null) {
+      await goto(`/ticket?id=${encodeURIComponent(cached.ticketId)}`)
+      return
+    }
+    booting = false
+  })
 
   const onNameInput = (event: Event): void => {
     const el = event.currentTarget as HTMLInputElement
@@ -72,36 +86,38 @@
   <meta name="robots" content="noindex" />
 </svelte:head>
 
-<section class="recover">
-  <h1>番号を確認</h1>
-  <p class="lede">
-    お名前 (カタカナ) と電話番号末尾 4 桁を入力すると、 ご自分の番号画面を開けます。
-  </p>
+{#if !booting}
+  <section class="recover">
+    <h1>番号を確認</h1>
+    <p class="lede">
+      お名前 (カタカナ) と電話番号末尾 4 桁を入力すると、 ご自分の番号画面を開けます。
+    </p>
 
-  <form onsubmit={onSubmit}>
-    <label class="field">
-      <span class="label">お名前 (カタカナ)</span>
-      <input
-        type="text"
-        value={nameKana}
-        oninput={onNameInput}
-        required
-        placeholder="ヤマダ タロウ"
-        autocomplete="off"
-      />
-    </label>
+    <form onsubmit={onSubmit}>
+      <label class="field">
+        <span class="label">お名前 (カタカナ)</span>
+        <input
+          type="text"
+          value={nameKana}
+          oninput={onNameInput}
+          required
+          placeholder="ヤマダ タロウ"
+          autocomplete="off"
+        />
+      </label>
 
-    <PhoneOtpInput bind:value={phoneLast4} />
+      <PhoneOtpInput bind:value={phoneLast4} />
 
-    {#if error !== null}
-      <ErrorCard tag={error.tag} code={error.code} message={error.message} />
-    {/if}
+      {#if error !== null}
+        <ErrorCard tag={error.tag} code={error.code} message={error.message} />
+      {/if}
 
-    <Button type="submit" size="lg" fullWidth disabled={busy}>
-      {busy ? "確認中…" : "番号を表示"}
-    </Button>
-  </form>
-</section>
+      <Button type="submit" size="lg" fullWidth disabled={busy}>
+        {busy ? "確認中…" : "番号を表示"}
+      </Button>
+    </form>
+  </section>
+{/if}
 
 <style>
   .recover {
