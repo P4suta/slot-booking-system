@@ -63,6 +63,37 @@
   // is computing.
   const SLOT_CHIP_DUE_MS = 5 * 60 * 1000
 
+  // Single source for state / lane translation across all the
+  // staff-side detail panels (waiting accordion + history accordion).
+  // The customer-facing chips fall through paraglide already; this
+  // helper covers the dl pairs where we render the value text.
+  const stateLabelJa = (s: Ticket["state"]): string => {
+    switch (s) {
+      case "Waiting":
+        return m.state_Waiting()
+      case "Called":
+        return m.state_Called()
+      case "Serving":
+        return m.state_Serving()
+      case "Served":
+        return m.state_Served()
+      case "NoShow":
+        return m.state_NoShow()
+      case "Cancelled":
+        return m.state_Cancelled()
+    }
+  }
+  const laneLabelJa = (l: Lane): string => {
+    switch (l) {
+      case "walkIn":
+        return m.lane_walkIn()
+      case "priority":
+        return m.lane_priority()
+      case "reservation":
+        return m.lane_reservation()
+    }
+  }
+
   const slotChipState = (appointmentAt: string): "due" | "overdue" | "soon" | "future" => {
     const ms = Date.parse(appointmentAt)
     const delta = ms - now
@@ -445,9 +476,7 @@
                 >
                   <div class="ticket-head">
                     <span class="numeral">{t.displaySeq}</span>
-                    <span class="lane lane-{t.lane}">
-                      {t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}
-                    </span>
+                    <span class="lane lane-{t.lane}">{laneLabelJa(t.lane)}</span>
                     {#if t.appointmentAt !== null}
                       <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                         {t.appointmentAt.slice(11, 16)}
@@ -462,14 +491,23 @@
                 {#if expanded.has(t.id)}
                   <div id={`ticket-detail-${t.id}`} class="ticket-detail">
                     <dl>
-                      <dt>state</dt><dd>{t.state}</dd>
-                      <dt>lane</dt><dd>{t.lane}</dd>
-                      <dt>seq</dt><dd>{t.seq}</dd>
-                      <dt>displaySeq</dt><dd>{t.displaySeq}</dd>
-                      <dt>name</dt><dd>{t.nameKana ?? ""}</dd>
-                      <dt>last4</dt><dd>{t.phoneLast4 ?? ""}</dd>
+                      <dt>状態</dt>
+                      <dd>{stateLabelJa(t.state)}</dd>
+                      <dt>レーン</dt>
+                      <dd>{laneLabelJa(t.lane)}</dd>
+                      <dt>受付番号</dt>
+                      <dd>{t.displaySeq}</dd>
+                      <dt>お名前</dt>
+                      <dd>{t.nameKana ?? ""}</dd>
+                      <dt>電話末尾</dt>
+                      <dd>{t.phoneLast4 ?? ""}</dd>
                       {#if t.freeText !== null && t.freeText !== undefined}
-                        <dt>用件</dt><dd class="freetext">{t.freeText}</dd>
+                        <dt>ご相談内容</dt>
+                        <dd class="freetext">{t.freeText}</dd>
+                      {/if}
+                      {#if t.appointmentAt !== null}
+                        <dt>予約時刻</dt>
+                        <dd>{t.appointmentAt.slice(11, 16)}</dd>
                       {/if}
                     </dl>
                     <div class="detail-actions">
@@ -499,7 +537,7 @@
               <div class="ticket" role="group" aria-label="呼び出し中の整理券">
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  <span class="lane lane-{t.lane}">{laneLabelJa(t.lane)}</span>
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
@@ -533,7 +571,7 @@
               <div class="ticket" role="group" aria-label="対応中の整理券">
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  <span class="lane lane-{t.lane}">{laneLabelJa(t.lane)}</span>
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
@@ -575,18 +613,8 @@
                 >
                   <div class="ticket-head">
                     <span class="numeral">{t.displaySeq}</span>
-                    <span class="lane lane-{t.lane}">
-                      {t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}
-                    </span>
-                    <span class="state-badge" data-state={t.state}>
-                      {t.state === "Served"
-                        ? m.state_Served()
-                        : t.state === "Cancelled"
-                          ? m.state_Cancelled()
-                          : t.state === "NoShow"
-                            ? m.state_NoShow()
-                            : t.state}
-                    </span>
+                    <span class="lane lane-{t.lane}">{laneLabelJa(t.lane)}</span>
+                    <span class="state-badge" data-state={t.state}>{stateLabelJa(t.state)}</span>
                   </div>
                   <div class="ticket-body">
                     <span class="kana">{t.nameKana ?? ""}</span>
@@ -596,20 +624,8 @@
                 {#if expanded.has(t.id)}
                   <div id={`history-detail-${t.id}`} class="ticket-detail">
                     <dl>
-                      <dt>状態</dt>
-                      <dd>
-                        {t.state === "Served"
-                          ? m.state_Served()
-                          : t.state === "Cancelled"
-                            ? m.state_Cancelled()
-                            : t.state === "NoShow"
-                              ? m.state_NoShow()
-                              : t.state}
-                      </dd>
-                      <dt>レーン</dt>
-                      <dd>
-                        {t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}
-                      </dd>
+                      <dt>状態</dt><dd>{stateLabelJa(t.state)}</dd>
+                      <dt>レーン</dt><dd>{laneLabelJa(t.lane)}</dd>
                       <dt>受付番号</dt><dd>{t.displaySeq}</dd>
                       <dt>お名前</dt><dd>{t.nameKana ?? ""}</dd>
                       <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
@@ -886,6 +902,12 @@
   }
   .waiting-card {
     position: relative;
+  }
+  /* Reserve a gutter on the card body for the absolutely-positioned
+     checkbox so the lane chip (right edge of `.ticket-head`) never
+     gets visually clipped underneath it. */
+  .waiting-card .ticket-body-button .ticket-head {
+    padding-right: 2.5rem;
   }
   .select-handle {
     position: absolute;
