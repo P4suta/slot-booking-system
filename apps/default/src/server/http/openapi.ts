@@ -114,7 +114,12 @@ export const openApiDocument = {
             },
           },
         },
-        responses: { "201": TICKET_ENVELOPE, "422": ERROR_RESPONSE, "429": ERROR_RESPONSE },
+        responses: {
+          "201": TICKET_ENVELOPE,
+          "200": TICKET_ENVELOPE,
+          "422": ERROR_RESPONSE,
+          "429": ERROR_RESPONSE,
+        },
       },
     },
     "/tickets/{id}/check-in": {
@@ -196,16 +201,20 @@ export const openApiDocument = {
         },
       },
     },
-    "/tickets/me": {
+    "/tickets/by-handle": {
       get: {
         tags: ["customer"],
-        summary: "Customer self-fetch (handle in querystring)",
+        summary: "Customer recovery — look up the active ticket by handle (ADR-0069)",
         parameters: [
-          { in: "query", name: "ticketId", required: true, schema: { type: "string" } },
           { in: "query", name: "nameKana", required: true, schema: { type: "string" } },
           { in: "query", name: "phoneLast4", required: true, schema: { type: "string" } },
         ],
-        responses: { "200": TICKET_ENVELOPE, "403": ERROR_RESPONSE, "404": ERROR_RESPONSE },
+        responses: {
+          "200": TICKET_ENVELOPE,
+          "404": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+          "429": ERROR_RESPONSE,
+        },
       },
     },
     "/tickets/{id}/cancel": {

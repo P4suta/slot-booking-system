@@ -10,8 +10,11 @@ unchanged.
 ## Iron principles (non-negotiable)
 
 1. **Number-tag model** — no accounts, no logins, no email, no SMS,
-   no notifications. The customer holds a `TicketId` plus the
-   `(nameKana, phoneLast4)` handle they typed in.
+   no notifications. The customer's anonymous handle
+   `(nameKana, phoneLast4)` is the active-set primary key
+   (ADR-0069); a fresh issue with the same handle merges to the
+   existing ticket, and `/recover` resolves the ticket by handle
+   alone — no ticketId to remember.
 2. **Minimum PII** — kana name, phone last 4, optional free text.
    Never email, full phone, address, birthday, gender, IP, UA, or
    persistent cookies (ADR-0054).

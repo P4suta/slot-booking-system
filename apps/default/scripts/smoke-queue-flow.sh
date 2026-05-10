@@ -40,7 +40,7 @@ post_json () {
     --data-binary "$body"
 }
 
-echo "smoke-queue: 1/5 issue ticket"
+echo "smoke-queue: 1/6 issue ticket"
 issue_response=$(post_json /api/v1/tickets '{
   "nameKana": "ヤマダ タロウ",
   "phoneLast4": "1234",
@@ -49,19 +49,34 @@ issue_response=$(post_json /api/v1/tickets '{
 ticket_id=$(require_jq "$issue_response" '.ticket.id')
 echo "  -> ticketId = $ticket_id"
 
-echo "smoke-queue: 2/5 staff call-next"
-call_response=$(post_json /api/v1/queue/call-next '{}' \
+echo "smoke-queue: 1b/6 recover by-handle (ADR-0069)"
+by_handle_response=$(curl -sS --get "$BASE_URL/api/v1/tickets/by-handle" \
+  --data-urlencode "nameKana=ヤマダ タロウ" \
+  --data-urlencode "phoneLast4=1234")
+by_handle_id=$(require_jq "$by_handle_response" '.ticket.id')
+[ "$by_handle_id" = "$ticket_id" ] || {
+  echo "smoke-queue: expected by-handle to return $ticket_id, got $by_handle_id" >&2
+  exit 1
+}
+echo "  -> by-handle returned $by_handle_id"
+
+echo "smoke-queue: 2/6 staff call-specific (target our handle's ticket)"
+call_response=$(post_json /api/v1/queue/call-specific "{\"ticketId\":\"$ticket_id\"}" \
   -H "x-staff-token: $STAFF_TOKEN")
 called_id=$(require_jq "$call_response" '.ticket.id')
 called_state=$(require_jq "$call_response" '.ticket.state')
+[ "$called_id" = "$ticket_id" ] || {
+  echo "smoke-queue: expected call-specific to call $ticket_id, got $called_id" >&2
+  exit 1
+}
 [ "$called_state" = "Called" ] || {
   echo "smoke-queue: expected state=Called, got $called_state" >&2
   exit 1
 }
 echo "  -> called $called_id ($called_state)"
 
-echo "smoke-queue: 3/5 staff recall"
-recall_response=$(post_json "/api/v1/tickets/$called_id/recall" '{}' \
+echo "smoke-queue: 3/6 staff recall"
+recall_response=$(post_json "/api/v1/tickets/$ticket_id/recall" '{}' \
   -H "x-staff-token: $STAFF_TOKEN")
 recalled_state=$(require_jq "$recall_response" '.ticket.state')
 [ "$recalled_state" = "Waiting" ] || {
@@ -70,8 +85,8 @@ recalled_state=$(require_jq "$recall_response" '.ticket.state')
 }
 echo "  -> recalled (state=$recalled_state)"
 
-echo "smoke-queue: 4/5 staff call-next (again)"
-call2_response=$(post_json /api/v1/queue/call-next '{}' \
+echo "smoke-queue: 4/6 staff call-specific (again)"
+call2_response=$(post_json /api/v1/queue/call-specific "{\"ticketId\":\"$ticket_id\"}" \
   -H "x-staff-token: $STAFF_TOKEN")
 called2_state=$(require_jq "$call2_response" '.ticket.state')
 [ "$called2_state" = "Called" ] || {
@@ -79,8 +94,8 @@ called2_state=$(require_jq "$call2_response" '.ticket.state')
   exit 1
 }
 
-echo "smoke-queue: 5/5 staff mark-served"
-served_response=$(post_json "/api/v1/tickets/$called_id/served" '{}' \
+echo "smoke-queue: 5/6 staff mark-served"
+served_response=$(post_json "/api/v1/tickets/$ticket_id/served" '{}' \
   -H "x-staff-token: $STAFF_TOKEN")
 served_state=$(require_jq "$served_response" '.ticket.state')
 [ "$served_state" = "Served" ] || {
@@ -89,4 +104,14 @@ served_state=$(require_jq "$served_response" '.ticket.state')
 }
 echo "  -> served"
 
-echo "smoke-queue: OK ($ticket_id Issued -> Called -> Recalled -> Called -> Served)"
+echo "smoke-queue: 6/6 by-handle after Served (handle released)"
+released_response=$(curl -sS -o /dev/null -w '%{http_code}' --get "$BASE_URL/api/v1/tickets/by-handle" \
+  --data-urlencode "nameKana=ヤマダ タロウ" \
+  --data-urlencode "phoneLast4=1234")
+[ "$released_response" = "404" ] || {
+  echo "smoke-queue: expected 404 after handle release, got $released_response" >&2
+  exit 1
+}
+echo "  -> handle released (404)"
+
+echo "smoke-queue: OK ($ticket_id Issued -> Called -> Recalled -> Called -> Served, handle released)"

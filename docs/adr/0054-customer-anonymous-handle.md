@@ -31,3 +31,10 @@ phone last 4" so an attacker who knows one cannot probe the other.
   weakened in future iterations; surfacing finer-grained errors
   would convert the queue into an enumeration oracle for whichever
   factor stayed correct.
+- ADR-0069 promotes `(nameKana, phoneLast4)` to the **active-set
+  primary key** by adding a partial UNIQUE index over
+  `{Waiting, Called, Serving}`. The handle thereby gains a global
+  uniqueness invariant within the active set; terminal states
+  release it. `IssueTicket` becomes idempotent over the handle,
+  and the recovery endpoint `GET /tickets/by-handle` lets a
+  customer look up their ticket without bringing the `ticketId`.

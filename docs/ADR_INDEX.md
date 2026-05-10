@@ -61,11 +61,12 @@ back.
 | [0061](./adr/0061-do-hibernating-websocket.md)      | DO Hibernating WebSocket projection feed                     | accepted |
 | [0062](./adr/0062-lane-partitioning.md)             | Lane partitioning in the queue domain                        | accepted |
 | [0063](./adr/0063-serving-state.md)                 | Serving state — split Called → Serving → Served              | accepted |
-| [0064](./adr/0064-customer-recovery-url.md)         | Customer recovery URL (canonical / cache / share-safe)       | accepted |
+| [0064](./adr/0064-customer-recovery-url.md)         | Customer recovery URL (canonical / cache / share-safe)       | superseded by 0069 |
 | [0065](./adr/0065-operator-grade-queue-actions.md)  | Operator-grade queue actions (CallSpecific / CallBatch / Reorder) | accepted |
 | [0066](./adr/0066-slot-value-object-and-appointment-encoding.md) | Slot value object + appointmentAt encoding | accepted |
 | [0067](./adr/0067-time-aware-lane-chain.md)         | Time-aware lane chain (EDF on reservation head)              | accepted |
 | [0068](./adr/0068-unified-issue-flow-and-door-qr.md) | Unified `/issue` flow + door-QR walk-in entry               | accepted |
+| [0069](./adr/0069-handle-as-active-primary-and-local-cache.md) | Handle as active-set primary key + localStorage cache | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).
