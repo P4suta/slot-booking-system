@@ -1005,24 +1005,39 @@
     border-radius: var(--radius-lg);
     transition: box-shadow 1800ms ease-out;
   }
+  /* dl as a 2-column grid where every row's dt + dd share a
+     baseline. The previous implementation used different fonts
+     for dt (`text-label-sm`) and dd (`text-body-sm`) which fell
+     out of vertical alignment because the line-heights differed.
+     Same font-size + `align-items: baseline` lines them up; the
+     only difference is dt's muted colour. The row gap is wider
+     than the column gap so two-line `freetext` doesn't collide
+     with the next label. */
   .ticket-detail dl {
     margin: 0;
     display: grid;
-    grid-template-columns: auto 1fr;
-    gap: var(--space-1) var(--space-3);
+    grid-template-columns: max-content 1fr;
+    column-gap: var(--space-4);
+    row-gap: var(--space-2);
+    align-items: baseline;
     font: var(--text-body-sm);
   }
   .ticket-detail dt {
     color: var(--color-fg-muted);
-    font: var(--text-label-sm);
+    font: var(--text-body-sm);
+    font-weight: 500;
+    white-space: nowrap;
   }
   .ticket-detail dd {
     margin: 0;
     color: var(--color-fg-primary);
+    font: var(--text-body-sm);
+    font-variant-numeric: tabular-nums;
   }
   .ticket-detail dd.freetext {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    font-variant-numeric: normal;
   }
   .detail-actions {
     display: flex;
