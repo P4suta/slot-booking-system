@@ -1,6 +1,6 @@
 # ADR-0083: DO inside-boundary split — Projector / Broadcaster / AlarmScheduler / WsLifecycle / Dispatcher
 
-- Status: Accepted (Parts 1 — 4)
+- Status: Accepted (Parts 1 — 5, complete)
 - Date: 2026-05-11
 - Stage: C / S11 — S15
 - Refines: ADR-0061 (DO hibernating WebSocket projection feed),
@@ -167,13 +167,32 @@ bidirectional WS exchanges (resume-token negotiation, client
 ping payloads with vector echo) extend `handleMessage` without
 touching the DO.
 
-### Part 5 (S15) — pending
+### Part 5 (S15) — `Dispatcher` + `Persistence/` facade collapse
 
-- S15 `Dispatcher` + `Persistence/` — Mealy-machine command
-  switch + `repository.ts`/`queries.ts` move from
-  `adapters/`.
+The DO's `dispatch` is now three lines: handle look-up (for the
+`IssueTicket` merge case, ADR-0069), `runDispatch` over the
+persistence Layer, and the post-state hook into broadcaster +
+scheduler. The Mealy-machine switch (10 actions → 10 use cases →
+`QueueResult` shape) lives in `Dispatcher.ts`, where it owns the
+`QueueAction` / `QueueResult` types as well. `QueueShop.ts` re-
+exports those types for the worker boundary so the migration is
+invisible to consumers, while dep-cruiser's `no-circular` holds
+(spoke → hub is one-way).
+
+`adapters/DurableObjectTicketRepositoryLive.ts` moves to
+`durableObjects/Persistence/repository.ts`; the layer assembly
+(`Clock + IdGenerator + TicketRepository + Logger`) lives in
+`Persistence/index.ts:persistenceLayer(sql)`. The SQL surface
+the worker exposes outside the use-case path (`listTickets`,
+`getTicketById`, `getByHandle`, `listDecodedWaitingTickets`,
+`lookupActiveIdByHandle`) lives in `Persistence/queries.ts`;
+QueueShop's RPC methods are 1-line forwards.
 
 ## Status
 
-- 2026-05-11 — Parts 1–4 landed (S11 Projector + S12 Broadcaster
-  + S13 AlarmScheduler + S14 WsLifecycle). Part 5 follows.
+- 2026-05-11 — All five parts landed (S11 Projector +
+  S12 Broadcaster + S13 AlarmScheduler + S14 WsLifecycle +
+  S15 Dispatcher + Persistence). `QueueShop.ts` shrank from 706
+  lines (S10 baseline) to ~160 lines; the five spokes are each
+  independently testable, and `dep-cruise --validate` reports
+  zero `no-circular` violations across the new graph.

@@ -1,48 +1,29 @@
 import { DurableObject } from "cloudflare:workers"
-import {
-  type BusinessTimeZone,
-  CallBatch,
-  CallNext,
-  CallSpecific,
-  CancelTicket,
-  CheckIn,
-  type Clock,
-  type ConcurrencyError,
-  type CustomerHandle,
-  codeOf,
-  type DomainError,
-  type EncodedTicket,
-  encodeTicket,
-  type IdGenerator,
-  InstantSchema,
-  IssueTicket,
-  type Lane,
-  type Logger,
-  MarkNoShow,
-  MarkPendingNoShow,
-  MarkServed,
-  type NonEmptyReadonlyArray,
-  Recall,
-  RescheduleTicket,
-  type ShopState as ShopStateWire,
-  type StaffShopState,
-  type StorageError,
-  SystemClockLive,
-  type Ticket,
-  type TicketId,
-  type TicketRepository,
-  TicketSchema,
-  UlidIdGeneratorLive,
+import type {
+  CustomerHandle,
+  EncodedTicket,
+  ShopState as ShopStateWire,
+  StaffShopState,
+  TicketId,
 } from "@booking/core"
-import { Cause, Effect, Layer, Schema } from "effect"
-import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
-import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
+import { Effect } from "effect"
 import { AlarmScheduler } from "./AlarmScheduler.js"
 import { Broadcaster } from "./Broadcaster.js"
+import { type QueueAction, type QueueResult, runDispatch } from "./Dispatcher.js"
 import { ensureDurableObjectSchema } from "./migrations.js"
+import { persistenceLayer } from "./Persistence/index.js"
+import {
+  getByHandle,
+  getTicketById,
+  listDecodedWaitingTickets,
+  listTickets,
+  lookupActiveIdByHandle,
+} from "./Persistence/queries.js"
 import { buildShopState, buildStaffShopState } from "./Projector.js"
 import { WsLifecycle } from "./WsLifecycle.js"
 import { logWsBroadcast } from "./wsLifecycleLog.js"
+
+export type { QueueAction, QueueResult }
 
 type Env = {
   DB: D1Database
@@ -50,70 +31,6 @@ type Env = {
   SERVING_THRESHOLD_MS?: string
   BROADCAST_COALESCE_MS?: string
 }
-
-/**
- * Action dispatched by the worker to the single QueueShop instance.
- * Discriminated union over the use cases; the DO routes each action
- * through the matching `application/usecases/queue/` entry point.
- *
- * Per ADR-0062 / ADR-0065 the operator-grade actions (CallSpecific
- * / CallBatch) join the original five so the action surface stays
- * small (8 total) but each operator intent has a named entry.
- * ADR-0063's StartServing was withdrawn in ADR-0073.
- */
-export type QueueAction =
-  | {
-      type: "IssueTicket"
-      handle: CustomerHandle
-      freeText: string | null
-      lane?: Lane
-      // ISO-8601 instant string. The DO RPC boundary serialises every
-      // arg through structuredClone, which rejects Temporal.Instant —
-      // the conversion to/from `Temporal.Instant` happens inside the
-      // dispatch closure so the wire stays JSON-safe.
-      appointmentAt?: string
-    }
-  | { type: "CallNext"; actor: "staff" | "system"; lane?: Lane }
-  | { type: "CallSpecific"; ticketId: TicketId; actor: "staff" | "system" }
-  | { type: "CallBatch"; ticketIds: NonEmptyReadonlyArray<TicketId>; actor: "staff" | "system" }
-  | { type: "MarkServed"; ticketId: TicketId }
-  | { type: "MarkNoShow"; ticketId: TicketId; actor: "staff" | "system" }
-  | { type: "MarkPendingNoShow"; ticketId: TicketId; actor: "staff" | "system" }
-  | { type: "Recall"; ticketId: TicketId; actor: "staff" | "system" | "customer" }
-  | {
-      type: "CancelTicket"
-      ticketId: TicketId
-      actor: "customer" | "staff"
-      reason: string
-      handle?: CustomerHandle
-    }
-  | { type: "CheckIn"; ticketId: TicketId }
-  | {
-      type: "RescheduleTicket"
-      ticketId: TicketId
-      newAppointmentAt: string
-      granularity: 15 | 30 | 60
-      tz: string
-      capacity: number
-      actor: "customer" | "staff"
-      handle?: CustomerHandle
-    }
-
-/**
- * Result envelope. Single-ticket actions return `ticket`; CallBatch
- * returns `tickets` (the array of every member that landed Called).
- * Failure carries the `_tag + code` pair the boundary surfaces.
- *
- * `merged` (ADR-0069) is set on the single-ticket variant when an
- * IssueTicket call short-circuited to an existing active ticket
- * (handle already held). The HTTP layer surfaces this as 200 OK
- * (vs 201 Created for a fresh issue).
- */
-export type QueueResult =
-  | { ok: true; ticket: EncodedTicket; merged?: boolean }
-  | { ok: true; tickets: readonly EncodedTicket[] }
-  | { ok: true }
-  | { ok: false; error: { _tag: string; code: string } }
 
 const GRACE_TTL_DEFAULT_MIN = 10
 
@@ -175,140 +92,15 @@ export class QueueShop extends DurableObject<Env> {
     })
   }
 
-  private layer() {
-    const repo = DurableObjectTicketRepositoryLive(this.sql)
-    return Layer.mergeAll(SystemClockLive, UlidIdGeneratorLive, repo, WorkersLoggerLive)
-  }
-
   async dispatch(action: QueueAction): Promise<QueueResult> {
-    const layer = this.layer()
-    type DispatchOk = Ticket | readonly Ticket[] | undefined
-    type DispatchErr = DomainError | ConcurrencyError | StorageError
-    type DispatchDeps = Clock | IdGenerator | TicketRepository | Logger
-    let eff: Effect.Effect<DispatchOk, DispatchErr, DispatchDeps>
     // ADR-0069: detect idempotent merge for IssueTicket BEFORE the
     // use case runs. If the active set already holds a ticket with
     // this handle, IssueTicket short-circuits and returns that same
     // ticket — the HTTP layer surfaces this as 200 OK + merged:true.
-    let issueExistedId: string | undefined
-    if (action.type === "IssueTicket") {
-      const row = this.sql
-        .exec(
-          "SELECT id FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','PendingNoShow') LIMIT 1",
-          action.handle.nameKana,
-          action.handle.phoneLast4,
-        )
-        .toArray()[0]
-      issueExistedId = row?.id as string | undefined
-    }
-    switch (action.type) {
-      case "IssueTicket": {
-        const appointmentAt =
-          action.appointmentAt !== undefined
-            ? Schema.decodeUnknownSync(InstantSchema)(action.appointmentAt)
-            : undefined
-        eff = IssueTicket({
-          handle: action.handle,
-          freeText: action.freeText as Ticket["freeText"],
-          ...(action.lane !== undefined ? { lane: action.lane } : {}),
-          ...(appointmentAt !== undefined ? { appointmentAt } : {}),
-        })
-        break
-      }
-      case "CallNext":
-        eff = CallNext(action.lane, action.actor)
-        break
-      case "CallSpecific":
-        eff = CallSpecific(action.ticketId, action.actor)
-        break
-      case "CallBatch":
-        eff = CallBatch(action.ticketIds, action.actor)
-        break
-      case "MarkServed":
-        eff = MarkServed(action.ticketId)
-        break
-      case "MarkNoShow":
-        eff = MarkNoShow(action.ticketId, action.actor)
-        break
-      case "MarkPendingNoShow":
-        eff = MarkPendingNoShow(action.ticketId, action.actor)
-        break
-      case "Recall":
-        eff = Recall(action.ticketId, action.actor)
-        break
-      case "CancelTicket":
-        eff = CancelTicket(action.ticketId, action.actor, action.reason, action.handle)
-        break
-      case "CheckIn":
-        eff = CheckIn(action.ticketId)
-        break
-      case "RescheduleTicket": {
-        const newAppointmentAt = Schema.decodeUnknownSync(InstantSchema)(action.newAppointmentAt)
-        eff = RescheduleTicket({
-          ticketId: action.ticketId,
-          newAppointmentAt,
-          granularity: action.granularity,
-          tz: action.tz as BusinessTimeZone,
-          capacity: action.capacity,
-          actor: action.actor,
-          ...(action.handle !== undefined ? { handle: action.handle } : {}),
-        })
-        break
-      }
-    }
-    const result: QueueResult = await Effect.runPromise(
-      Effect.matchCauseEffect(eff, {
-        onSuccess: (out: DispatchOk): Effect.Effect<QueueResult> => {
-          if (out === undefined) {
-            // CheckIn returns void — the customer-side audit event
-            // does not change the ticket shape the wire surfaces;
-            // the projection broadcast emitted below is enough.
-            return Effect.succeed({ ok: true } satisfies QueueResult)
-          }
-          if (Array.isArray(out)) {
-            const tickets = out as readonly Ticket[]
-            return Effect.succeed({
-              ok: true,
-              tickets: tickets.map(encodeTicket),
-            } satisfies QueueResult)
-          }
-          const ticket = out as Ticket
-          const merged = issueExistedId !== undefined && issueExistedId === ticket.id
-          return Effect.succeed({
-            ok: true,
-            ticket: encodeTicket(ticket),
-            ...(merged ? { merged: true } : {}),
-          } satisfies QueueResult)
-        },
-        onFailure: (cause) => {
-          const fails = cause.reasons.filter(Cause.isFailReason)
-          const first = fails[0]?.error
-          console.error(
-            JSON.stringify({
-              _tag: "DispatchFailure",
-              code: "I_DO_DISPATCH_FAILURE",
-              severity: "infrastructure",
-              actionType: action.type,
-              errorTag: first?._tag ?? "Defect",
-              errorCode: first !== undefined ? codeOf(first) : "E_DEFECT",
-              storageReason: first?._tag === "Storage" ? first.reason : undefined,
-              storageCause:
-                first?._tag === "Storage"
-                  ? first.cause instanceof Error
-                    ? first.cause.message
-                    : String(first.cause)
-                  : undefined,
-            }),
-          )
-          return Effect.succeed({
-            ok: false,
-            error: {
-              _tag: first?._tag ?? "Defect",
-              code: first !== undefined ? codeOf(first) : "E_DEFECT",
-            },
-          } satisfies QueueResult)
-        },
-      }).pipe(Effect.provide(layer)),
+    const issueExistedId =
+      action.type === "IssueTicket" ? lookupActiveIdByHandle(this.sql, action.handle) : undefined
+    const result = await Effect.runPromise(
+      runDispatch(action, issueExistedId).pipe(Effect.provide(persistenceLayer(this.sql))),
     )
     if (result.ok) {
       // The projection is broadcast on success only; failed actions
@@ -353,52 +145,19 @@ export class QueueShop extends DurableObject<Env> {
     }
   }
 
-  /**
-   * Read the full ticket projection. Returns the encoded shape (JSON-
-   * safe) so the worker can pass it back over the structuredClone
-   * boundary without DataCloneError.
-   */
+  /** Read the full ticket projection — JSON-safe encoded shape. */
   listTickets(): Promise<readonly EncodedTicket[]> {
-    const rows = this.sql.exec("SELECT payload FROM tickets ORDER BY seq ASC").toArray()
-    return Promise.resolve(rows.map((r) => JSON.parse(r.payload as string) as EncodedTicket))
+    return Promise.resolve(listTickets(this.sql))
   }
 
-  /**
-   * Single-row lookup by primary key. Used by `/api/v1/tickets/me`
-   * so the customer self-fetch path is O(log N) on the SQLite
-   * `id`-keyed btree rather than O(N) JSON-decode of every ticket
-   * in the table. The encoding shape matches `listTickets`'s element
-   * type — same `JSON.parse(payload)` so the wire is JSON-safe under
-   * structuredClone.
-   *
-   * Returns `null` for an unknown id; the router maps that to the
-   * standard `TicketNotFound` 404.
-   */
+  /** Single-row lookup by id — `null` when unknown. */
   getTicketById(id: TicketId): Promise<EncodedTicket | null> {
-    const rows = this.sql.exec("SELECT payload FROM tickets WHERE id = ? LIMIT 1", id).toArray()
-    const r = rows[0]
-    if (r === undefined) return Promise.resolve(null)
-    return Promise.resolve(JSON.parse(r.payload as string) as EncodedTicket)
+    return Promise.resolve(getTicketById(this.sql, id))
   }
 
-  /**
-   * Active-set handle lookup (ADR-0069). Served off the partial UNIQUE
-   * index `uq_tickets_handle_active`, which makes the predicate
-   * (state IN active × name_kana × phone_last4) an O(log N) index seek
-   * with at most one matching row by construction. Powers the
-   * customer recovery endpoint `GET /api/v1/tickets/by-handle`.
-   */
+  /** Active-set handle lookup (ADR-0069) — `null` when no active match. */
   getByHandle(handle: CustomerHandle): Promise<EncodedTicket | null> {
-    const rows = this.sql
-      .exec(
-        "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','PendingNoShow') LIMIT 1",
-        handle.nameKana,
-        handle.phoneLast4,
-      )
-      .toArray()
-    const r = rows[0]
-    if (r === undefined) return Promise.resolve(null)
-    return Promise.resolve(JSON.parse(r.payload as string) as EncodedTicket)
+    return Promise.resolve(getByHandle(this.sql, handle))
   }
 
   /**
@@ -454,36 +213,21 @@ export class QueueShop extends DurableObject<Env> {
    * `ticketByHandle` round-trip on every broadcast, which is what
    * was consuming `RL_VERIFY` budget under v3.
    */
-  private async computeAnonymousShopState(): Promise<ShopStateWire> {
-    const tickets = await this.listTickets()
-    const decodedWaiting = this.listDecodedWaitingTickets()
-    return buildShopState({
-      tickets,
-      decodedWaiting,
+  private projectorInputs() {
+    return {
+      tickets: listTickets(this.sql),
+      decodedWaiting: listDecodedWaitingTickets(this.sql),
       nowMs: Date.now(),
       servingThresholdMs: Number(this.env.SERVING_THRESHOLD_MS) || 30_000,
-    })
-  }
-
-  private async computeStaffShopState(): Promise<StaffShopState> {
-    const tickets = await this.listTickets()
-    const decodedWaiting = this.listDecodedWaitingTickets()
-    return buildStaffShopState({
-      tickets,
-      decodedWaiting,
-      nowMs: Date.now(),
-      servingThresholdMs: Number(this.env.SERVING_THRESHOLD_MS) || 30_000,
-    })
-  }
-
-  private listDecodedWaitingTickets(): Map<TicketId, Ticket> {
-    const rows = this.sql.exec("SELECT payload FROM tickets WHERE state = 'Waiting'").toArray()
-    const m = new Map<TicketId, Ticket>()
-    for (const r of rows) {
-      const decoded = Schema.decodeUnknownSync(TicketSchema)(JSON.parse(r.payload as string))
-      m.set(decoded.id, decoded)
     }
-    return m
+  }
+
+  private computeAnonymousShopState(): Promise<ShopStateWire> {
+    return Promise.resolve(buildShopState(this.projectorInputs()))
+  }
+
+  private computeStaffShopState(): Promise<StaffShopState> {
+    return Promise.resolve(buildStaffShopState(this.projectorInputs()))
   }
 
   override async alarm(): Promise<void> {
