@@ -45,14 +45,22 @@ export const empty: QueueSnapshot = {
 const cloneTickets = (snap: QueueSnapshot): Map<TicketId, Ticket> => new Map(snap.tickets)
 
 /* -------------------------------------------------------------------------- */
-/* applyEvent — the per-step transition the fold runs.                         */
+/* Per-event transition table — ADR-0079 part 2.                               */
+/*                                                                             */
+/* `transitFromEvent` is the partial function `(prior, event) ↦ next ticket`. */
+/* Returning `null` means "no-op, the snapshot stays put" (out-of-state event, */
+/* missing prior, or idempotency conflict).                                   */
+/*                                                                             */
+/* `applyEvent` is the snapshot-level shell: load → transit → write. The fold */
+/* law `replay(xs ++ ys) ≡ applyMany(replay(xs), ys)` lives in this shape —   */
+/* `transitFromEvent` is the per-step function passed to `Array.reduce`, and  */
+/* the wrap-with-snapshot logic is the same on every step.                    */
 /* -------------------------------------------------------------------------- */
 
-export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapshot => {
-  const tickets = cloneTickets(snap)
+const transitFromEvent = (prior: Ticket | undefined, event: TicketEvent): Ticket | null => {
   switch (event.type) {
-    case "Issued": {
-      const t: Ticket = {
+    case "Issued":
+      return {
         id: event.ticketId,
         seq: event.seq,
         lane: event.lane,
@@ -65,81 +73,61 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
         checkedInAt: null,
         state: "Waiting",
       }
-      tickets.set(event.ticketId, t)
-      return { tickets }
-    }
-    case "Called": {
-      const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Waiting") return snap
-      const next: Called = {
+
+    case "Called":
+      if (prior === undefined || !isWaiting(prior)) return null
+      return {
         ...prior,
         state: "Called",
         calledAt: event.occurredAt,
         calledBy: event.calledBy,
       }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
-    case "Served": {
-      const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Called") return snap
-      const next: Ticket = {
+
+    case "Served":
+      if (prior === undefined || !isCalled(prior)) return null
+      return {
         ...prior,
         state: "Served",
         servedAt: event.occurredAt,
         servedBy: event.servedBy,
       }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
-    case "NoShowed": {
-      const prior = tickets.get(event.ticketId)
-      if (prior === undefined) return snap
-      if (prior.state !== "Called" && prior.state !== "PendingNoShow") return snap
-      const next: Ticket = {
+
+    case "NoShowed":
+      if (prior === undefined || (!isCalled(prior) && !isPendingNoShow(prior))) return null
+      return {
         ...prior,
         state: "NoShow",
         markedAt: event.occurredAt,
         markedBy: event.markedBy,
       }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
-    case "PendingNoShowMarked": {
-      const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Called") return snap
-      const next: PendingNoShow = {
+
+    case "PendingNoShowMarked":
+      if (prior === undefined || !isCalled(prior)) return null
+      return {
         ...prior,
         state: "PendingNoShow",
         markedAt: event.occurredAt,
         markedBy: event.markedBy,
       }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
-    case "Cancelled": {
-      const prior = tickets.get(event.ticketId)
-      if (prior === undefined || prior.state === "Cancelled") return snap
-      const next: Ticket = {
+
+    case "Cancelled":
+      if (prior === undefined || prior.state === "Cancelled") return null
+      return {
         ...prior,
         state: "Cancelled",
         cancelledAt: event.occurredAt,
         cancelledBy: event.cancelledBy,
         reason: event.reason,
       }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
-    case "Recalled": {
-      const prior = tickets.get(event.ticketId)
-      if (prior === undefined) return snap
-      if (prior.state !== "Called" && prior.state !== "PendingNoShow") return snap
+
+    case "Recalled":
+      if (prior === undefined || (!isCalled(prior) && !isPendingNoShow(prior))) return null
       // Drop the Called-only / PendingNoShow-only fields by
       // reconstructing the common shape verbatim — keeping
       // `seq + displaySeq + lane` is the point (the ticket returns
       // to its lane head), but `calledAt` / `calledBy` /
       // `markedAt` must NOT leak into the Waiting variant.
-      const next: Ticket = {
+      return {
         id: prior.id,
         seq: prior.seq,
         lane: prior.lane,
@@ -152,39 +140,46 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
         checkedInAt: prior.checkedInAt,
         state: "Waiting",
       }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
-    case "CheckedIn": {
-      const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Waiting") return snap
+
+    case "CheckedIn":
+      if (prior === undefined || !isWaiting(prior)) return null
       // Idempotent: re-applying CheckedIn keeps the earliest arrival
       // instant. The use case prevents double-fire at the boundary,
       // but the projection is the source of truth for replay.
-      if (prior.checkedInAt !== null) return snap
-      const next: Waiting = { ...prior, checkedInAt: event.occurredAt }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
-    case "Rescheduled": {
-      const prior = tickets.get(event.ticketId)
-      if (prior === undefined) return snap
+      if (prior.checkedInAt !== null) return null
+      return { ...prior, checkedInAt: event.occurredAt }
+
+    case "Rescheduled":
       if (
-        prior.state !== "Waiting" &&
-        prior.state !== "Called" &&
-        prior.state !== "PendingNoShow"
+        prior === undefined ||
+        (!isWaiting(prior) && !isCalled(prior) && !isPendingNoShow(prior))
       ) {
-        return snap
+        return null
       }
       // Lane invariant: only reservation tickets carry an
       // appointmentAt. Walk-in / priority tickets that somehow reach
       // here are ignored — the usecase already gates on lane.
-      if (prior.lane !== "reservation") return snap
-      const next: Ticket = { ...prior, appointmentAt: event.toAppointmentAt }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
+      if (prior.lane !== "reservation") return null
+      return { ...prior, appointmentAt: event.toAppointmentAt }
   }
+}
+
+/**
+ * The per-step transition the fold runs. Snapshot-level shell over
+ * the pure {@link transitFromEvent} partial function: load the
+ * prior ticket, compute the next via the transition table, and
+ * persist it to a new snapshot only when the transition is defined
+ * (i.e. returns non-`null`). The "no-op on bad input" semantics
+ * preserved here is what makes `applyMany` total over arbitrary
+ * event sequences without bubbling decode-time validation errors
+ * into replay.
+ */
+export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapshot => {
+  const next = transitFromEvent(snap.tickets.get(event.ticketId), event)
+  if (next === null) return snap
+  const tickets = cloneTickets(snap)
+  tickets.set(event.ticketId, next)
+  return { tickets }
 }
 
 /**
