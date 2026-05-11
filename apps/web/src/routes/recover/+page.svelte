@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
-  import { onMount } from "svelte"
-  import { ticketByHandle } from "$lib/api.js"
+  import { onDestroy, onMount } from "svelte"
+  import { connectQueueFeed, type QueueFeedHandle, ticketByHandle } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import Help from "$lib/components/Help.svelte"
@@ -19,12 +19,9 @@
   // active ticket in localStorage, /recover is a wasted prompt;
   // bounce straight to /ticket.
   let booting = $state(true)
+  let feed: QueueFeedHandle | undefined
 
   onMount(async () => {
-    // /recover does not subscribe to the projection feed (form-only
-    // page). Mark the WS chip as inactive so the layout doesn't
-    // render a stale "接続中…" inherited from a previous route.
-    wsStatus.set("none")
     // Stage 10: staff session sandbox — staff token in localStorage
     // means an operator is at the keyboard; redirect to /staff so
     // the customer-recovery form does not impersonate a customer view.
@@ -38,6 +35,20 @@
       return
     }
     booting = false
+    // /recover does not consume projection data but the WS chip on
+    // the layout reflects reality only if the page opens a feed.
+    // `onProjection` is a no-op; `onState` mirrors into the store.
+    feed = connectQueueFeed({
+      onProjection: () => undefined,
+      onState: (next) => {
+        wsStatus.set(next)
+      },
+    })
+  })
+
+  onDestroy(() => {
+    feed?.close()
+    wsStatus.set("none")
   })
 
   const onNameInput = (event: Event): void => {

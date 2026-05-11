@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
-  import { onMount } from "svelte"
-  import { issueTicket } from "$lib/api.js"
+  import { onDestroy, onMount } from "svelte"
+  import { connectQueueFeed, issueTicket, type QueueFeedHandle } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import Help from "$lib/components/Help.svelte"
@@ -23,12 +23,9 @@
   // the existing ticket and goto /ticket anyway; pre-empt the
   // round-trip by bouncing to /ticket the moment we see a cache hit.
   let booting = $state(true)
+  let feed: QueueFeedHandle | undefined
 
   onMount(async () => {
-    // /issue does not subscribe to the projection feed (form-only
-    // page). Mark the WS chip as inactive so the layout doesn't
-    // render a stale "接続中…" inherited from a previous route.
-    wsStatus.set("none")
     // Stage 10: staff session sandbox — staff never lands on the
     // customer issue form even by typing the URL.
     if (hasStaffToken()) {
@@ -41,6 +38,21 @@
       return
     }
     booting = false
+    // /issue itself does not need the projection data (it's a
+    // form), but the customer is looking at the layout's WS chip
+    // for reassurance ("通信は大丈夫?"). Open a feed so the chip
+    // tracks reality on this page too. `onProjection` is a no-op.
+    feed = connectQueueFeed({
+      onProjection: () => undefined,
+      onState: (next) => {
+        wsStatus.set(next)
+      },
+    })
+  })
+
+  onDestroy(() => {
+    feed?.close()
+    wsStatus.set("none")
   })
 
   // ひらがな入力を即座にカタカナへ昇格 (UX 配慮)。

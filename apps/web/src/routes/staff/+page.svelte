@@ -41,7 +41,7 @@
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
   let prevWaitingCount: number | null = null
-  let expanded: Set<string> = $state(new Set())
+
   // Cross-column search. Surfaces only as a small magnifier button
   // in the staff page corner; opens a Dialog that hits every column
   // (waiting / calling / serving / done) by name / last-4 /
@@ -101,15 +101,12 @@
   })
 
   /**
-   * Drop the focused ticket id into the expansion set so the card
-   * opens in place, close the search dialog, and scroll the card
-   * into view in the next frame (after Dialog's modal animation
-   * yields the layout).
+   * Close the search dialog and scroll the matching card into
+   * view (the detail panel reveals automatically on hover; the
+   * `.is-search-target` modifier paints a brief highlight so the
+   * operator sees which card matched).
    */
   const focusOnTicket = (id: string): void => {
-    const next = new Set(expanded)
-    next.add(id)
-    expanded = next
     searchDialogOpen = false
     searchQuery = ""
     if (typeof window === "undefined") return
@@ -117,6 +114,8 @@
       const el = document.querySelector(`[data-ticket-id="${id}"]`)
       if (el instanceof HTMLElement) {
         el.scrollIntoView({ behavior: "smooth", block: "center" })
+        el.classList.add("is-search-target")
+        setTimeout(() => el.classList.remove("is-search-target"), 1800)
       }
     }, 80)
   }
@@ -280,20 +279,6 @@
   const onReorderToHead = (ticketId: string) =>
     runAction("reorder", () => reorder(token, { ticketId, afterTicketId: null }), () => showToast("先頭に移動", "info"))
 
-  /* ---------- accordion ---------- */
-  // ADR-0070 follow-up: the previous double-click → Dialog flow was
-  // not discoverable for non-technical staff. Single-click on the
-  // card body now expands an inline detail panel, and multiple
-  // panels can be open at once (Set instead of single Ticket
-  // reference). Selection moved to a dedicated checkbox in B-2 so
-  // the card body click stays unambiguous.
-  const toggleExpanded = (id: string) => {
-    const next = new Set(expanded)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    expanded = next
-  }
-
   /* ---------- lifecycle ---------- */
   onMount(async () => {
     if (authenticated) {
@@ -367,19 +352,12 @@
         </header>
         <div class="cards">
           {#each waiting as t, idx (t.id)}
-            <Card interactive>
+            <Card>
               <div
                 class="ticket waiting-card" data-ticket-id={t.id}
-                data-expanded={expanded.has(t.id) ? "true" : undefined}
                 data-head={idx === 0 ? "true" : undefined}
               >
-                <button
-                  type="button"
-                  class="ticket-body-button"
-                  aria-expanded={expanded.has(t.id)}
-                  aria-controls={`ticket-detail-${t.id}`}
-                  onclick={() => toggleExpanded(t.id)}
-                >
+                <div class="card-content">
                   <div class="ticket-head">
                     <div class="numeral-block">
                       <span class="block-caption">整理券番号</span>
@@ -398,7 +376,7 @@
                       <span class="kana">{t.nameKana ?? ""}</span>
                     </div>
                   </div>
-                </button>
+                </div>
                 <button
                   type="button"
                   class="card-call-action"
@@ -408,29 +386,27 @@
                 >
                   <span class="call-label">呼び出す</span>
                 </button>
-                {#if expanded.has(t.id)}
-                  <div id={`ticket-detail-${t.id}`} class="ticket-detail">
-                    <dl>
-                      <dt>電話末尾</dt>
-                      <dd>{t.phoneLast4 ?? ""}</dd>
-                      {#if t.freeText !== null && t.freeText !== undefined}
-                        <dt>ご相談内容</dt>
-                        <dd class="freetext">{t.freeText}</dd>
-                      {/if}
-                      {#if t.appointmentAt !== null}
-                        <dt>予約時刻</dt>
-                        <dd>{t.appointmentAt.slice(11, 16)}</dd>
-                      {/if}
-                    </dl>
-                    {#if idx > 0}
-                      <div class="detail-actions">
-                        <Button variant="secondary" size="md" onclick={() => onReorderToHead(t.id)} disabled={busy}>
-                          先頭に移動
-                        </Button>
-                      </div>
+                <div class="ticket-detail">
+                  <dl>
+                    <dt>電話末尾</dt>
+                    <dd>{t.phoneLast4 ?? ""}</dd>
+                    {#if t.freeText !== null && t.freeText !== undefined}
+                      <dt>ご相談内容</dt>
+                      <dd class="freetext">{t.freeText}</dd>
                     {/if}
-                  </div>
-                {/if}
+                    {#if t.appointmentAt !== null}
+                      <dt>予約時刻</dt>
+                      <dd>{t.appointmentAt.slice(11, 16)}</dd>
+                    {/if}
+                  </dl>
+                  {#if idx > 0}
+                    <div class="detail-actions">
+                      <Button variant="secondary" size="md" onclick={() => onReorderToHead(t.id)} disabled={busy}>
+                        先頭に移動
+                      </Button>
+                    </div>
+                  {/if}
+                </div>
               </div>
             </Card>
           {/each}
@@ -475,6 +451,17 @@
                 >
                   <span class="call-label">対応を<br />始める</span>
                 </button>
+                <div class="ticket-detail">
+                  <dl>
+                    <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
+                    {#if t.freeText !== null && t.freeText !== undefined}
+                      <dt>ご相談内容</dt><dd class="freetext">{t.freeText}</dd>
+                    {/if}
+                    {#if t.appointmentAt !== null}
+                      <dt>予約時刻</dt><dd>{t.appointmentAt.slice(11, 16)}</dd>
+                    {/if}
+                  </dl>
+                </div>
                 <div class="secondary-actions">
                   <span class="secondary-actions-label">その他の操作</span>
                   <div class="secondary-actions-body">
@@ -530,6 +517,17 @@
                 >
                   <span class="call-label">対応<br />完了</span>
                 </button>
+                <div class="ticket-detail">
+                  <dl>
+                    <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
+                    {#if t.freeText !== null && t.freeText !== undefined}
+                      <dt>ご相談内容</dt><dd class="freetext">{t.freeText}</dd>
+                    {/if}
+                    {#if t.appointmentAt !== null}
+                      <dt>予約時刻</dt><dd>{t.appointmentAt.slice(11, 16)}</dd>
+                    {/if}
+                  </dl>
+                </div>
                 <div class="secondary-actions">
                   <span class="secondary-actions-label">その他の操作</span>
                   <div class="secondary-actions-body">
@@ -551,18 +549,9 @@
         <header><h2>履歴 ({done.length})</h2></header>
         <div class="cards">
           {#each done.slice(0, 12) as t (t.id)}
-            <Card interactive>
-              <div
-                class="ticket history-card" data-ticket-id={t.id}
-                data-expanded={expanded.has(t.id) ? "true" : undefined}
-              >
-                <button
-                  type="button"
-                  class="ticket-body-button"
-                  aria-expanded={expanded.has(t.id)}
-                  aria-controls={`history-detail-${t.id}`}
-                  onclick={() => toggleExpanded(t.id)}
-                >
+            <Card>
+              <div class="ticket history-card" data-ticket-id={t.id}>
+                <div class="card-content">
                   <div class="ticket-head">
                     <div class="numeral-block">
                       <span class="block-caption">整理券番号</span>
@@ -576,22 +565,18 @@
                       <span class="kana">{t.nameKana ?? ""}</span>
                     </div>
                   </div>
-                </button>
-                {#if expanded.has(t.id)}
-                  <div id={`history-detail-${t.id}`} class="ticket-detail">
-                    <dl>
-                      <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
-                      {#if t.freeText !== null && t.freeText !== undefined}
-                        <dt>ご相談内容</dt>
-                        <dd class="freetext">{t.freeText}</dd>
-                      {/if}
-                      {#if t.appointmentAt !== null}
-                        <dt>予約時刻</dt>
-                        <dd>{t.appointmentAt.slice(11, 16)}</dd>
-                      {/if}
-                    </dl>
-                  </div>
-                {/if}
+                </div>
+                <div class="ticket-detail">
+                  <dl>
+                    <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
+                    {#if t.freeText !== null && t.freeText !== undefined}
+                      <dt>ご相談内容</dt><dd class="freetext">{t.freeText}</dd>
+                    {/if}
+                    {#if t.appointmentAt !== null}
+                      <dt>予約時刻</dt><dd>{t.appointmentAt.slice(11, 16)}</dd>
+                    {/if}
+                  </dl>
+                </div>
               </div>
             </Card>
           {/each}
@@ -921,26 +906,15 @@
   .serving-card .secondary-actions {
     grid-column: 1 / -1;
   }
-  .ticket-body-button {
+  /* Card content: head + body stacked. The whole region is
+     non-interactive (= no click handler) so it stays a `<div>`,
+     not a button. The detail panel below is hover-revealed by
+     `.ticket-detail` (see below). */
+  .waiting-card .card-content {
     grid-column: 1;
-    appearance: none;
-    background: transparent;
-    border: 0;
-    padding: 0;
-    margin: 0;
-    text-align: left;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    width: 100%;
-  }
-  .ticket-body-button:focus-visible {
-    outline: 2px solid var(--color-accent-primary);
-    outline-offset: 4px;
-    border-radius: var(--radius-md);
   }
   .card-call-action {
     grid-column: 2;
@@ -990,13 +964,46 @@
       margin-left: var(--space-2);
     }
   }
+  /* Detail panel: hidden by default, revealed on card hover /
+     focus-within. The waiting / calling / serving grids let the
+     detail span both columns; the history card is a 1-col layout
+     so it just stacks below the content. On touch devices the
+     panel stays visible since hover isn't available. */
   .ticket-detail {
-    margin-top: var(--space-3);
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--color-border-subtle);
+    grid-column: 1 / -1;
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+    padding: 0;
+    border-top: 0;
+    transition: opacity 180ms ease, max-height 180ms ease,
+                margin-top 180ms ease, padding-top 180ms ease;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+  }
+  .ticket:hover .ticket-detail,
+  .ticket:focus-within .ticket-detail,
+  .ticket.is-search-target .ticket-detail {
+    opacity: 1;
+    max-height: 24rem;
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border-subtle);
+  }
+  @media (hover: none) {
+    .ticket-detail {
+      opacity: 1;
+      max-height: none;
+      margin-top: var(--space-3);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--color-border-subtle);
+    }
+  }
+  .is-search-target {
+    box-shadow: 0 0 0 2px var(--color-accent-primary);
+    border-radius: var(--radius-lg);
+    transition: box-shadow 1800ms ease-out;
   }
   .ticket-detail dl {
     margin: 0;
@@ -1148,8 +1155,11 @@
   .history-card {
     position: relative;
   }
-  .history-card .ticket-body-button {
+  .history-card .card-content {
     color: var(--color-fg-muted);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
   .state-badge {
     font: var(--text-label-sm);
