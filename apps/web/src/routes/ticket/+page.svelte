@@ -737,29 +737,30 @@
 </section>
 
 <style>
+  /* Mobile single-column stack; desktop ≥ 48rem fans out into a
+     two-column grid where both flip cards are the same width and
+     `align-items: stretch` makes them the same height. With the
+     supporting cards (appointment / actions / banner) spanning
+     both columns below, the hero row reads as two equally-weighted
+     panels — no thin-island feel, no asymmetric padding. */
   .ticket-page {
-    max-width: 28rem;
+    max-width: 32rem;
     margin: var(--space-8) auto;
     padding: 0 var(--space-4);
     display: flex;
     flex-direction: column;
     gap: var(--space-6);
   }
-  /* Mobile: single column stack (numeral → appointment → QR-flip
-     → actions). Desktop ≥ 48rem: 2-column grid so the two big
-     interactive cards (numeral flip + QR flip) sit side-by-side,
-     and the supporting cards span the full width below. With the
-     QR card now flipping to expose the notification opt-in, the
-     two columns balance out — neither side is a thin island. */
   @media (min-width: 48rem) {
     .ticket-page {
-      max-width: 56rem;
-      padding: 0 var(--space-6);
+      max-width: 64rem;
+      padding: 0 var(--space-8);
+      margin: var(--space-12) auto;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      column-gap: var(--space-6);
-      row-gap: var(--space-6);
-      align-items: start;
+      column-gap: var(--space-8);
+      row-gap: var(--space-8);
+      align-items: stretch;
     }
     .ticket-page > .numeral-hero-wrap {
       grid-column: 1;
@@ -784,11 +785,13 @@
      numeral-face with no flip machinery. */
   .numeral-hero-wrap {
     perspective: 1200px;
+    height: 100%;
   }
   .numeral-flip {
     position: relative;
     width: 100%;
-    min-height: 16rem;
+    height: 100%;
+    min-height: 18rem;
     background: transparent;
     border: 0;
     padding: 0;
@@ -828,14 +831,21 @@
   }
   @media (min-width: 48rem) {
     .numeral-flip {
-      min-height: 22rem;
+      min-height: 28rem;
     }
     .numeral-face {
-      padding: var(--space-12) var(--space-6);
+      padding: var(--space-12) var(--space-8);
+      gap: var(--space-3);
     }
     .numeral-face .numeral {
-      font-size: 9rem;
+      font-size: 11rem;
       line-height: 1;
+    }
+    .numeral-face .numeral-label {
+      font: var(--text-label-md);
+    }
+    .numeral-face .state-tag {
+      font: var(--text-body-md);
     }
   }
   .numeral-face[data-state="Called"],
@@ -912,11 +922,14 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+    height: 100%;
+    box-sizing: border-box;
   }
   .qr-flip {
     position: relative;
     width: 100%;
-    min-height: 18rem;
+    flex: 1;
+    min-height: 14rem;
     background: transparent;
     border: 0;
     padding: 0;
@@ -982,8 +995,15 @@
     justify-content: center;
   }
   @media (min-width: 48rem) {
+    .qr-card-wrap {
+      padding: var(--space-10) var(--space-8);
+      gap: var(--space-6);
+    }
     .qr-flip {
-      min-height: 22rem;
+      min-height: 20rem;
+    }
+    .qr img {
+      width: clamp(14rem, 70%, 20rem);
     }
   }
   .actions {
