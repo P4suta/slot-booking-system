@@ -11,7 +11,7 @@ import {
 import { occupancyExcludingSelf, type QueueSnapshot } from "../../../domain/queue/projection.js"
 import { bucketOf, type Slot, type SlotGranularity } from "../../../domain/queue/Slot.js"
 import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
-import { applyReschedule } from "../../../domain/queue/transitions.js"
+import { applyReschedule, type Reschedulable } from "../../../domain/queue/transitions.js"
 import type { TicketId } from "../../../domain/types/EntityId.js"
 import type { BusinessTimeZone } from "../../../domain/value-objects/BusinessTimeZone.js"
 import type { CustomerHandle } from "../../../domain/value-objects/CustomerHandle.js"
@@ -141,10 +141,15 @@ export const RescheduleTicket = (
         }),
       )
     }
-    // After the terminal-state and lane guards above, TypeScript has
-    // narrowed `t` to `Waiting | Called | PendingNoShow` — exactly
-    // what `applyReschedule` accepts.
-    const reschedulable = t
+    // After the terminal-state, lane, and `appointmentAt !== null`
+    // guards above, `t` satisfies the `Reschedulable` refinement —
+    // `Waiting | Called | PendingNoShow` ∩ `{appointmentAt: Instant}`.
+    // TypeScript narrows `t.appointmentAt` to NonNullable but not the
+    // record itself, so the witness cast packages the narrowing as a
+    // structural intersection ahead of the transition (ADR-0080
+    // part 2). The throw the prior implementation kept as a runtime
+    // safety net is gone.
+    const reschedulable = t as Reschedulable
     return yield* applyAndPersist({
       loaded,
       apply: (at, eventId) =>

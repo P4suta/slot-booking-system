@@ -338,19 +338,30 @@ export const applyCheckIn = (
 /* transition trusts the caller and emits the audit pair.                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Refinement intersection (ADR-0080 part 2) — the set of ticket
+ * states that can be rescheduled, narrowed to those carrying a
+ * non-null `appointmentAt`. Lifts the precondition out of a runtime
+ * throw and into the type signature of `applyReschedule`. The lane
+ * invariant (`appointmentAt !== null` ⇔ `lane === "reservation"`)
+ * combined with the active-set restriction means a caller that
+ * reaches this type has already validated both at the boundary.
+ */
+export type Reschedulable = (Waiting | Called | PendingNoShow) & {
+  readonly appointmentAt: Temporal.Instant
+}
+
 export const applyReschedule = (
-  t: Waiting | Called | PendingNoShow,
+  t: Reschedulable,
   newAppointmentAt: Temporal.Instant,
   at: Temporal.Instant,
   eventId: TicketEventId,
   rescheduledBy: Actor = "customer",
 ): ApplyResult => {
-  // Lane invariant: only reservation tickets carry an appointmentAt.
-  // The usecase already gates on lane === "reservation"; the
-  // assertion here is a structural narrowing aid + a runtime
-  // safety net should a future caller bypass the boundary.
-  /* v8 ignore next */
-  if (t.appointmentAt === null) throw new Error("applyReschedule: appointmentAt is null")
+  // Refinement type narrows `appointmentAt` to NonNullable at the
+  // boundary (ADR-0080 part 2). The throw the prior implementation
+  // used as a defensive net is structurally unreachable here — the
+  // use case lifts the null-check into the type before delegating.
   const fromAppointmentAt = t.appointmentAt
   // Preserve `state` exactly — Waiting stays Waiting, Called stays
   // Called. Only `appointmentAt` mutates. The spread preserves the
