@@ -1,10 +1,20 @@
 # ADR-0065: Operator-grade queue actions (CallSpecific / CallBatch / Reorder)
 
-- Status: Accepted
+- Status: Accepted (Reorder portion withdrawn 2026-05-12 by ADR-0072)
 - Date: 2026-05-10
 - Refines: ADR-0050 (queue pivot), ADR-0051 (event-sourced queue),
   ADR-0052 (type-state Ticket), ADR-0059 (event-log SoT),
   ADR-0062 (lane partitioning), ADR-0063 (Serving state)
+- Superseded for Reorder by: ADR-0072 (ticket-number identity persistence)
+
+> **Note (2026-05-12).** Sections referencing `Reorder` /
+> `Reordered` / `applyReorder` / `rebalanceLane` /
+> `ReorderedEventSchema` / `POST /api/v1/queue/reorder` are
+> withdrawn per ADR-0072. The `CallSpecific` and `CallBatch`
+> portions of this ADR remain in force. The original text is kept
+> below as the historical record of the introduction; consult
+> ADR-0072 for the current `displaySeq` contract (append-only,
+> per-lane gaps allowed).
 
 ## Decision
 

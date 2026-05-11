@@ -23,7 +23,6 @@ import {
   dispatchDecodeFailure,
   IssueTicketBodySchema,
   MyTicketQuerySchema,
-  ReorderBodySchema,
   RescheduleBodySchema,
   SlotsQuerySchema,
   StaffCancelBodySchema,
@@ -58,7 +57,6 @@ import type { Env } from "./types.js"
  *   POST  /queue/call-next               staff: call next (body lane?)
  *   POST  /queue/call-specific           staff: call a specific Waiting (ADR-0065)
  *   POST  /queue/call-batch               staff: atomic batch call (ADR-0065)
- *   POST  /queue/reorder                 staff: reorder within lane (ADR-0065)
  *   GET   /queue/feed                    DO Hibernating WebSocket projection feed (v2)
  */
 
@@ -644,31 +642,6 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       await stub(c.env).dispatch({
         type: "CallBatch",
         ticketIds: [head, ...ids.slice(1)] as const,
-        actor: "staff",
-      }),
-    )
-  })
-
-  // POST /api/v1/queue/reorder — staff. Body
-  // `{ ticketId, afterTicketId: TicketId | null }` (ADR-0065). Lane
-  // mismatch surfaces 409 LaneMismatch.
-  app.post("/api/v1/queue/reorder", rateLimitMiddleware("RL_OPERATE"), async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const parsed = await parseJsonBody(c)
-    if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
-    }
-    const decoded = Schema.decodeUnknownResult(ReorderBodySchema)(parsed.raw)
-    if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
-    }
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({
-        type: "Reorder",
-        ticketId: decoded.success.ticketId,
-        afterTicketId: decoded.success.afterTicketId,
         actor: "staff",
       }),
     )

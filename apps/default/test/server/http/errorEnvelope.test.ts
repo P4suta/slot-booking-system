@@ -74,7 +74,7 @@ afterEach(() => {
 })
 
 describe("errorClassRegistry × statusForTag (22/22 matrix)", () => {
-  it("registry has 22 error classes (ADR-0009 + ADR-0065 LaneMismatch + ADR-0066/0068 reservation 4)", () => {
+  it("registry has 22 error classes (ADR-0009 + ADR-0070 LaneMismatch + ADR-0066/0068 reservation 4)", () => {
     expect(errorClassRegistry.length).toBe(22)
     expect(REGISTRY_TAGS.length).toBe(22)
   })

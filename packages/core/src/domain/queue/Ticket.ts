@@ -27,7 +27,7 @@ export type Actor = Schema.Schema.Type<typeof ActorSchema>
  * (ADR-0051). It is the global total-order anchor — audit-side, every
  * event has a `seq`-derivable position. `displaySeq` is the per-lane
  * FIFO position consumed by UI ordering and `head` (ADR-0065): Issue
- * assigns the next per-lane displaySeq, Reorder rebalances it. `lane`
+ * assigns the next per-lane displaySeq. `lane`
  * partitions the queue per ADR-0062.
  *
  * `appointmentAt` (ADR-0066) is the booked slot start instant for

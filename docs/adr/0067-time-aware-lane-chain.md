@@ -131,5 +131,6 @@ lives in.
   ADR-0063); the alarm cutoff is unaffected by `appointmentAt`.
 - A reservation past its window (e.g. customer 30 min late)
   stays in the reservation lane FIFO by `displaySeq`. The
-  operator can `Reorder` (ADR-0065) within the lane or
-  `MarkNoShow` to clear.
+  operator can `CallSpecific` to call the late ticket out of
+  order or `MarkNoShow` to clear (ADR-0072 withdrew the
+  per-lane `Reorder` action).

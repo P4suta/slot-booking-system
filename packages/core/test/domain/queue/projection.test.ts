@@ -32,7 +32,6 @@ import {
   applyMarkNoShow,
   applyMarkServed,
   applyRecall,
-  applyReorder,
   applyStartServing,
 } from "../../../src/domain/queue/transitions.js"
 import { newTicketEventId, newTicketId, type TicketId } from "../../../src/domain/types/EntityId.js"
@@ -411,45 +410,6 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     expect(globalPositionOf(snap, target.ticket.id)).toBe(0)
   })
 
-  it("Reorder skips peers in other lanes when computing the rebalance set", () => {
-    // rebalanceLane's lane filter: peers in different lanes (here
-    // priority) must NOT participate in the walkIn rebalance even
-    // though they share the snapshot.
-    const w1 = issue(1, { lane: "walkIn", displaySeq: 1 })
-    const w2 = issue(2, { lane: "walkIn", displaySeq: 2 })
-    const p1 = issue(3, { lane: "priority", displaySeq: 5 })
-    const reorder = applyReorder(w2.ticket as Waiting, {
-      afterTicketId: null,
-      at: at("2026-05-08T09:10:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const snap = replay([w1.event, w2.event, p1.event, reorder.event])
-    const walkIn = waitingTickets(snap, "walkIn").map((t) => t.id)
-    expect(walkIn).toEqual([w2.ticket.id, w1.ticket.id])
-    // priority lane is untouched.
-    const priority = waitingTickets(snap, "priority").map((t) => t.id)
-    expect(priority).toEqual([p1.ticket.id])
-    expect((snap.tickets.get(p1.ticket.id) as Waiting).displaySeq).toBe(5)
-  })
-
-  it("Reorder event with afterTicketId === null preserves displaySeq when target is already lane-head", () => {
-    // rebalanceLane's `if (peer.displaySeq !== nextDisplaySeq)` else
-    // branch: when the rebuilt order already matches the existing
-    // displaySeq, the snapshot map gets a no-op set (the same row).
-    const a = issue(1, { lane: "walkIn", displaySeq: 1 })
-    const b = issue(2, { lane: "walkIn", displaySeq: 2 })
-    const reorder = applyReorder(a.ticket as Waiting, {
-      afterTicketId: null,
-      at: at("2026-05-08T09:10:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const snap = replay([a.event, b.event, reorder.event])
-    const got = waitingTickets(snap, "walkIn")
-    expect(got.map((t) => t.id)).toEqual([a.ticket.id, b.ticket.id])
-    expect(got[0]?.displaySeq).toBe(1)
-    expect(got[1]?.displaySeq).toBe(2)
-  })
-
   it("callingTickets returns only Called variants, sorted by displaySeq", () => {
     const a = issue(1)
     const b = issue(2)
@@ -546,65 +506,6 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
   })
 })
 
-describe("Reorder rebalances lane-internal displaySeq", () => {
-  it("Reorder(target, null) makes target the lane head with displaySeq 1, others shift", () => {
-    const a = issue(1, { lane: "walkIn", displaySeq: 1 })
-    const b = issue(2, { lane: "walkIn", displaySeq: 2 })
-    const c = issue(3, { lane: "walkIn", displaySeq: 3 })
-    const reorder = applyReorder(c.ticket as Waiting, {
-      afterTicketId: null,
-      at: at("2026-05-08T09:10:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const snap = replay([a.event, b.event, c.event, reorder.event])
-    const order = waitingTickets(snap, "walkIn").map((t) => t.id)
-    expect(order).toEqual([c.ticket.id, a.ticket.id, b.ticket.id])
-    const moved = snap.tickets.get(c.ticket.id) as Waiting
-    expect(moved.displaySeq).toBe(1)
-  })
-
-  it("Reorder(target, after) inserts target right after the named peer", () => {
-    const a = issue(1, { lane: "walkIn", displaySeq: 1 })
-    const b = issue(2, { lane: "walkIn", displaySeq: 2 })
-    const c = issue(3, { lane: "walkIn", displaySeq: 3 })
-    const reorder = applyReorder(c.ticket as Waiting, {
-      afterTicketId: a.ticket.id,
-      at: at("2026-05-08T09:10:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const snap = replay([a.event, b.event, c.event, reorder.event])
-    const order = waitingTickets(snap, "walkIn").map((t) => t.id)
-    expect(order).toEqual([a.ticket.id, c.ticket.id, b.ticket.id])
-  })
-
-  it("Reorder preserves the ticket's seq even when displaySeq changes", () => {
-    const a = issue(1, { lane: "walkIn", displaySeq: 1 })
-    const b = issue(2, { lane: "walkIn", displaySeq: 2 })
-    const reorder = applyReorder(b.ticket as Waiting, {
-      afterTicketId: null,
-      at: at("2026-05-08T09:10:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const snap = replay([a.event, b.event, reorder.event])
-    const moved = snap.tickets.get(b.ticket.id) as Waiting
-    expect(moved.seq).toBe(b.ticket.seq)
-    expect(moved.displaySeq).toBe(1)
-  })
-
-  it("Reorder with unknown afterTicketId is a no-op", () => {
-    const a = issue(1, { lane: "walkIn", displaySeq: 1 })
-    const b = issue(2, { lane: "walkIn", displaySeq: 2 })
-    const reorder = applyReorder(b.ticket as Waiting, {
-      afterTicketId: newTicketId(),
-      at: at("2026-05-08T09:10:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const snap = replay([a.event, b.event, reorder.event])
-    const order = waitingTickets(snap, "walkIn").map((t) => t.id)
-    expect(order).toEqual([a.ticket.id, b.ticket.id])
-  })
-})
-
 describe("applyEvent ignores no-op transitions", () => {
   it("a Called event for a non-Waiting ticket leaves the snapshot unchanged", () => {
     const ghostId = newTicketId()
@@ -675,40 +576,6 @@ describe("applyEvent ignores no-op transitions", () => {
       recordedAt: at("2026-05-08T09:00:00Z"),
       type: "ServingStarted" as const,
       servingStartedBy: "staff" as const,
-    }
-    expect(applyEvent(empty, ghostEv).tickets.size).toBe(0)
-  })
-
-  it("a Reordered event for a non-Waiting ticket is a no-op", () => {
-    const a = issue(1)
-    const ca = applyCall(a.ticket as Waiting, {
-      at: at("2026-05-08T09:05:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const reorderEv = {
-      id: newTicketEventId(),
-      ticketId: a.ticket.id,
-      version: 1 as const,
-      occurredAt: at("2026-05-08T09:06:00Z"),
-      recordedAt: at("2026-05-08T09:06:00Z"),
-      type: "Reordered" as const,
-      afterTicketId: null,
-      reorderedBy: "staff" as const,
-    }
-    const snap = replay([a.event, ca.event, reorderEv])
-    expect(snap.tickets.get(a.ticket.id)?.state).toBe("Called")
-  })
-
-  it("a Reordered event for an unknown ticket is a no-op", () => {
-    const ghostEv = {
-      id: newTicketEventId(),
-      ticketId: newTicketId(),
-      version: 1 as const,
-      occurredAt: at("2026-05-08T09:00:00Z"),
-      recordedAt: at("2026-05-08T09:00:00Z"),
-      type: "Reordered" as const,
-      afterTicketId: null,
-      reorderedBy: "staff" as const,
     }
     expect(applyEvent(empty, ghostEv).tickets.size).toBe(0)
   })

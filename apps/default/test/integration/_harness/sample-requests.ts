@@ -112,19 +112,6 @@ export const startServing = (ticketId: string, staffHeaders: Record<string, stri
     headers: staffHeaders,
   })
 
-export const reorder = (
-  body: { ticketId: string; afterTicketId: string | null },
-  staffHeaders: Record<string, string>,
-) =>
-  buildRequest("/api/v1/queue/reorder", {
-    method: "POST",
-    headers: { "content-type": "application/json", ...staffHeaders },
-    body: JSON.stringify({
-      ticketId: body.ticketId,
-      afterTicketId: body.afterTicketId,
-    }),
-  })
-
 export const markServed = (ticketId: string, staffHeaders: Record<string, string>) =>
   buildRequest(`/api/v1/tickets/${ticketId}/served`, {
     method: "POST",

@@ -109,21 +109,6 @@ export const RecalledEventSchema = Schema.Struct({
 export type RecalledEvent = Schema.Schema.Type<typeof RecalledEventSchema>
 
 /**
- * Operator moved a `Waiting` ticket to a new position within its
- * lane (ADR-0065). `afterTicketId === null` means "lane head";
- * otherwise the target sits immediately after the named ticket.
- * The projection rebalances lane 内 displaySeq to a contiguous
- * `1..N` after applying the event.
- */
-export const ReorderedEventSchema = Schema.Struct({
-  ...TicketEventBaseFields,
-  type: Schema.Literal("Reordered"),
-  afterTicketId: Schema.NullOr(TicketIdSchema),
-  reorderedBy: ActorSchema,
-})
-export type ReorderedEvent = Schema.Schema.Type<typeof ReorderedEventSchema>
-
-/**
  * Customer-issued check-in for a reservation ticket (ADR-0068).
  * Fired when the customer hits the 「到着しました」 button on
  * `/ticket` after `now ≥ appointmentAt - 10min`. The transition is
@@ -174,7 +159,6 @@ export const TicketEventSchema = Schema.Union([
   NoShowedEventSchema,
   CancelledEventSchema,
   RecalledEventSchema,
-  ReorderedEventSchema,
   CheckedInEventSchema,
   RescheduledEventSchema,
 ])
@@ -190,7 +174,6 @@ export const ALL_TICKET_EVENT_TYPES: readonly TicketEventType[] = [
   "NoShowed",
   "Cancelled",
   "Recalled",
-  "Reordered",
   "CheckedIn",
   "Rescheduled",
 ] as const

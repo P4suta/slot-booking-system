@@ -10,7 +10,6 @@ import {
   applyMarkNoShow,
   applyMarkServed,
   applyRecall,
-  applyReorder,
   applyStartServing,
   guardActive,
   invalidTransition,
@@ -320,45 +319,6 @@ describe("applyRecall", () => {
   })
 })
 
-describe("applyReorder", () => {
-  it("emits a Reordered event with afterTicketId", () => {
-    const a = issued()
-    const otherId = newTicketId()
-    const { ticket, event } = applyReorder(a, {
-      afterTicketId: otherId,
-      at: at("2026-05-08T09:02:00Z"),
-      eventId: newTicketEventId(),
-    })
-    expect(ticket.state).toBe("Waiting")
-    expect(event.type).toBe("Reordered")
-    if (event.type === "Reordered") {
-      expect(event.afterTicketId).toBe(otherId)
-      expect(event.reorderedBy).toBe("staff")
-    }
-  })
-
-  it("emits a Reordered event with afterTicketId === null for lane-head insertion", () => {
-    const { event } = applyReorder(issued(), {
-      afterTicketId: null,
-      at: at("2026-05-08T09:02:00Z"),
-      eventId: newTicketEventId(),
-    })
-    if (event.type === "Reordered") {
-      expect(event.afterTicketId).toBeNull()
-    }
-  })
-
-  it("respects an explicit reorderedBy actor", () => {
-    const { event } = applyReorder(issued(), {
-      afterTicketId: null,
-      at: at("2026-05-08T09:02:00Z"),
-      eventId: newTicketEventId(),
-      reorderedBy: "system",
-    })
-    if (event.type === "Reordered") expect(event.reorderedBy).toBe("system")
-  })
-})
-
 describe("applyCheckIn", () => {
   it("transitions Waiting → Waiting and sets checkedInAt", () => {
     const w = issued()
@@ -401,7 +361,6 @@ describe("invalidTransition", () => {
     expect(invalidTransition("Served", "CallSpecific").command).toBe("CallSpecific")
     expect(invalidTransition("Cancelled", "CallBatch").command).toBe("CallBatch")
     expect(invalidTransition("Waiting", "StartServing").command).toBe("StartServing")
-    expect(invalidTransition("Called", "Reorder").command).toBe("Reorder")
   })
 
   it("accepts CheckIn as a command name (ADR-0068)", () => {

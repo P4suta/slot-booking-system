@@ -17,11 +17,9 @@ import type { TicketEvent } from "./TicketEvent.js"
  *
  * Per ADR-0062 the queue is partitioned into lanes (`walkIn /
  * priority / reservation`); per ADR-0065 each ticket carries a
- * per-lane `displaySeq` that operators control via `Reorder`. The
- * derived helpers below read both: `head(snap)` consumes lanes in the
- * preferred-chain order, `headOfLane` consumes a single lane, and
- * `Reordered` events rebalance lane 内 `displaySeq` to a contiguous
- * `1..N` after each operator move.
+ * per-lane `displaySeq` assigned at Issue time. The derived helpers
+ * below read both: `head(snap)` consumes lanes in the preferred-chain
+ * order, `headOfLane` consumes a single lane.
  *
  * The replay is a **monoid homomorphism** over the free monoid on
  * events: `replay(xs ++ ys) = applyMany(replay(xs), ys)`. The
@@ -37,53 +35,6 @@ export const empty: QueueSnapshot = {
 }
 
 const cloneTickets = (snap: QueueSnapshot): Map<TicketId, Ticket> => new Map(snap.tickets)
-
-/* -------------------------------------------------------------------------- */
-/* Lane-aware Reorder rebalance                                                */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Rebalance the lane's Waiting tickets so `displaySeq` is contiguous
- * `1..N` after re-inserting `target` immediately after `afterTicketId`
- * (or at the lane head when `afterTicketId === null`). Tickets in
- * non-Waiting states keep their existing `displaySeq` — only Waiting
- * peers participate in the reorder.
- *
- * If `afterTicketId` does not name a Waiting ticket in the target's
- * lane the rebalance is a no-op (the projection stays total under
- * any event sequence; the boundary is the use case's responsibility).
- */
-const rebalanceLane = (
-  tickets: Map<TicketId, Ticket>,
-  target: Waiting,
-  afterTicketId: TicketId | null,
-): void => {
-  const lane = target.lane
-  const peers: Waiting[] = []
-  for (const t of tickets.values()) {
-    if (t.state === "Waiting" && t.lane === lane) peers.push(t)
-  }
-  peers.sort((a, b) => a.displaySeq - b.displaySeq)
-  const rest = peers.filter((p) => p.id !== target.id)
-  let insertIndex: number
-  if (afterTicketId === null) {
-    insertIndex = 0
-  } else {
-    const found = rest.findIndex((p) => p.id === afterTicketId)
-    if (found === -1) return
-    insertIndex = found + 1
-  }
-  const rebuilt = [...rest.slice(0, insertIndex), target, ...rest.slice(insertIndex)]
-  let nextDisplaySeq = 1
-  for (const peer of rebuilt) {
-    if (peer.displaySeq !== nextDisplaySeq) {
-      tickets.set(peer.id, { ...peer, displaySeq: nextDisplaySeq })
-    } else {
-      tickets.set(peer.id, peer)
-    }
-    nextDisplaySeq += 1
-  }
-}
 
 /* -------------------------------------------------------------------------- */
 /* applyEvent — the per-step transition the fold runs.                         */
@@ -203,12 +154,6 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
         state: "Waiting",
       }
       tickets.set(event.ticketId, next)
-      return { tickets }
-    }
-    case "Reordered": {
-      const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Waiting") return snap
-      rebalanceLane(tickets, prior, event.afterTicketId)
       return { tickets }
     }
     case "CheckedIn": {

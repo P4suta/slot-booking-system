@@ -455,8 +455,8 @@
         if (stored === null) return
         // ADR-0071 — v4 projection carries `state` on every entry,
         // so the common transition path (Waiting position shuffle,
-        // appointmentAt edit, lane reorder) rides the WS feed
-        // directly with no HTTP follow-up. A `ticketByHandle()`
+        // appointmentAt edit) rides the WS feed directly with no
+        // HTTP follow-up. A `ticketByHandle()`
         // round-trip is only spent on two rare boundaries:
         //   1. Waiting → Called   — we need a fresh `calledAt`
         //                            instant to drive the chime /

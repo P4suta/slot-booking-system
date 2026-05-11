@@ -20,7 +20,6 @@ import {
   MarkServed,
   type NonEmptyReadonlyArray,
   Recall,
-  Reorder,
   RescheduleTicket,
   reservationsByDeadline,
   StartServing,
@@ -49,9 +48,9 @@ type Env = {
  * through the matching `application/usecases/queue/` entry point.
  *
  * Per ADR-0062 / ADR-0063 / ADR-0065 the operator-grade actions
- * (CallSpecific / CallBatch / StartServing / Reorder) join the
- * original five so the action surface stays small (10 total) but
- * each operator intent has a named entry.
+ * (CallSpecific / CallBatch / StartServing) join the original
+ * five so the action surface stays small (9 total) but each
+ * operator intent has a named entry.
  */
 export type QueueAction =
   | {
@@ -72,12 +71,6 @@ export type QueueAction =
   | { type: "MarkServed"; ticketId: TicketId }
   | { type: "MarkNoShow"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "Recall"; ticketId: TicketId; actor: "staff" | "system" }
-  | {
-      type: "Reorder"
-      ticketId: TicketId
-      afterTicketId: TicketId | null
-      actor: "staff" | "system"
-    }
   | {
       type: "CancelTicket"
       ticketId: TicketId
@@ -207,9 +200,6 @@ export class QueueShop extends DurableObject<Env> {
         break
       case "Recall":
         eff = Recall(action.ticketId, action.actor)
-        break
-      case "Reorder":
-        eff = Reorder(action.ticketId, action.afterTicketId, action.actor)
         break
       case "CancelTicket":
         eff = CancelTicket(action.ticketId, action.actor, action.reason, action.handle)

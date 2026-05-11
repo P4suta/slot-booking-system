@@ -223,11 +223,10 @@ export class InsufficientCapabilityError extends Schema.TaggedErrorClass<Insuffi
 }
 
 /**
- * A `Reorder` command targets two tickets whose lanes differ. Per
- * ADR-0065, reorder is restricted to within a single lane — moving
- * a ticket across lanes is a `Lane` mutation, not a reorder, and is
- * not currently exposed (an explicit operator action would be a
- * separate ADR).
+ * A `RescheduleTicket` command targets a ticket whose lane is not
+ * `reservation`. Per ADR-0070 reschedule applies only to
+ * reservation-lane tickets — walk-in / priority tickets carry no
+ * `appointmentAt` and the boundary check rejects them.
  */
 export class LaneMismatchError extends Schema.TaggedErrorClass<LaneMismatchError>()(
   "LaneMismatch",

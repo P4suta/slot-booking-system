@@ -446,16 +446,6 @@ export const startServing = async (
     headers: staffHeaders(token),
   })
 
-export const reorder = async (
-  token: string,
-  body: { ticketId: string; afterTicketId: string | null },
-): Promise<ApiResult<{ ticket: Ticket }>> =>
-  fetchJson(`${baseUrl()}/api/v1/queue/reorder`, {
-    method: "POST",
-    headers: staffHeaders(token),
-    body: JSON.stringify(body),
-  })
-
 export const markServed = async (
   token: string,
   ticketId: string,

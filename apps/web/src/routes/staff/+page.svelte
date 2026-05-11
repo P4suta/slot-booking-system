@@ -11,7 +11,6 @@
     type QueueFeedHandle,
     type QueueFeedState,
     recall,
-    reorder,
     staffCancel,
     staffShopState,
     startServing,
@@ -292,9 +291,6 @@
   const onStaffCancel = (ticketId: string) =>
     runAction("cancel", () => staffCancel(token, ticketId, "staff-cancel"), () => showToast("キャンセル", "warning"))
 
-  const onReorderToHead = (ticketId: string) =>
-    runAction("reorder", () => reorder(token, { ticketId, afterTicketId: null }), () => showToast("先頭に移動", "info"))
-
   /* ---------- lifecycle ---------- */
   onMount(async () => {
     if (authenticated) {
@@ -416,13 +412,6 @@
                       <dd>{t.appointmentAt.slice(11, 16)}</dd>
                     {/if}
                   </dl>
-                  {#if idx > 0}
-                    <div class="detail-actions">
-                      <Button variant="secondary" size="md" onclick={() => onReorderToHead(t.id)} disabled={busy}>
-                        先頭に移動
-                      </Button>
-                    </div>
-                  {/if}
                 </div>
               </div>
             </Card>
@@ -1055,11 +1044,6 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     font-variant-numeric: normal;
-  }
-  .detail-actions {
-    display: flex;
-    gap: var(--space-2);
-    flex-wrap: wrap;
   }
   .ticket-head {
     display: flex;

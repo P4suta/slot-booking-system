@@ -12,7 +12,6 @@ import {
   MarkNoShow,
   MarkServed,
   Recall,
-  Reorder,
   RescheduleTicket,
   StartServing,
 } from "../../../../src/application/usecases/queue/index.js"
@@ -522,90 +521,6 @@ describe("queue lifecycle round-trip", () => {
         const r = yield* eitherEffect(CallBatch(["tkt_00000000000000000000000000" as never]))
         expect(r.ok).toBe(false)
         if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
-      }),
-    ))
-
-  it("Reorder moves a Waiting ticket to lane head (afterTicketId = null)", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const a = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        const b = yield* IssueTicket({ handle: handle("サトウ ハナコ", "5678"), freeText: null })
-        const reordered = yield* Reorder(b.id, null)
-        expect(reordered.state).toBe("Waiting")
-        // a was originally first; b moves ahead of it.
-        expect(reordered.id).toBe(b.id)
-        expect(a.id).not.toBe(reordered.id)
-      }),
-    ))
-
-  it("Reorder accepts an after-ticket in the same lane", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const a = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        const b = yield* IssueTicket({ handle: handle("サトウ ハナコ", "5678"), freeText: null })
-        const c = yield* IssueTicket({ handle: handle("タナカ ジロウ", "9999"), freeText: null })
-        const out = yield* Reorder(c.id, a.id)
-        expect(out.state).toBe("Waiting")
-        expect(b.id).not.toBe(out.id)
-      }),
-    ))
-
-  it("Reorder against a Called ticket yields InvalidStateTransition", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const t1 = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        yield* CallNext()
-        const r = yield* eitherEffect(Reorder(t1.id, null))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("InvalidStateTransition")
-      }),
-    ))
-
-  it("Reorder against a terminal ticket yields the matching Already* error", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const h = handle("ヤマダ タロウ", "1234")
-        const t1 = yield* IssueTicket({ handle: h, freeText: null })
-        yield* CancelTicket(t1.id, "customer", "x", h)
-        const r = yield* eitherEffect(Reorder(t1.id, null))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
-      }),
-    ))
-
-  it("Reorder on a non-existent ticket yields TicketNotFound", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const r = yield* eitherEffect(Reorder("tkt_00000000000000000000000000" as never, null))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
-      }),
-    ))
-
-  it("Reorder with an unknown afterTicketId yields TicketNotFound", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const t1 = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        const r = yield* eitherEffect(Reorder(t1.id, "tkt_00000000000000000000000099" as never))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
-      }),
-    ))
-
-  it("Reorder against a peer in a different lane yields LaneMismatch", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        // a lands in walkIn (default), b lands in priority. Reordering
-        // a after b crosses lanes — ADR-0065 forbids it.
-        const a = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        const b = yield* IssueTicket({
-          handle: handle("サトウ ハナコ", "5678"),
-          freeText: null,
-          lane: "priority",
-        })
-        const r = yield* eitherEffect(Reorder(a.id, b.id))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("LaneMismatch")
       }),
     ))
 
