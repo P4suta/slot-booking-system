@@ -101,6 +101,13 @@ markdownlint:
 
 lint: lint-biome lint-eslint markdownlint
 
+# Auto-fix the mechanically-correctable lint issues across the tree.
+# Same auto-fix pass the `lefthook` pre-commit hook applies against
+# staged files (Biome `--write` + ESLint `--fix`); invoke explicitly
+# when picking up a branch with bulk lint drift or when staging a
+# multi-file refactor where pre-commit's per-file scope is awkward.
+fix: lint-biome-fix lint-eslint-fix
+
 # Spell-check across the whole working tree. `typos` is fast
 # enough (~50 ms cold) to run on every gate. Exit non-zero on any
 # misspelling; the project's `_typos.toml` carries the

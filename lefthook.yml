@@ -2,11 +2,17 @@
 #
 # Layered cadence:
 #   pre-commit  — fast, runs only against staged files where possible.
-#                 Biome + typos + actionlint + yamllint guards. Heavy
+#                 Biome + ESLint + typos + actionlint + comment-bans.
+#                 Biome / ESLint run with `--write` / `--fix` so
+#                 mechanically-fixable issues are patched + re-staged
+#                 transparently (`stage_fixed: true`); only the
+#                 non-fixable residue fails the commit. Heavy
 #                 type-checking and tests are deferred to pre-push.
 #   commit-msg  — conventional-commit format check via `committed`.
 #   pre-push    — full pipeline: tsc, vitest, dependency-cruiser,
-#                 comment-bans + strict-code greps.
+#                 comment-bans + strict-code greps. Read-only verify
+#                 (CI parity) — auto-fix would race the commit being
+#                 pushed.
 #
 # **Warnings fail commits**: every linter is invoked with the strictest
 # exit-code policy it offers. Biome via `--error-on-warnings`, ESLint
@@ -37,7 +43,12 @@ pre-commit:
       run: actionlint {staged_files}
     biome-staged:
       glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,json}"
-      run: scripts/dev-exec.ts ./node_modules/.bin/biome check --error-on-warnings --no-errors-on-unmatched {staged_files}
+      run: scripts/dev-exec.ts ./node_modules/.bin/biome check --write --error-on-warnings --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+    eslint-staged:
+      glob: "**/*.{ts,tsx,js,mjs,cjs,svelte}"
+      run: scripts/dev-exec.ts ./node_modules/.bin/eslint --cache --cache-location node_modules/.cache/.eslintcache --fix --max-warnings 0 {staged_files}
+      stage_fixed: true
     comment-bans-staged:
       glob: "**/*.{ts,tsx,js,mjs,cjs,svelte,md,sql,yaml,yml,toml}"
       run: scripts/lint/comment-bans.ts {staged_files}
