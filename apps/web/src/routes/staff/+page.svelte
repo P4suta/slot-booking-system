@@ -445,30 +445,36 @@
         <div class="cards">
           {#each calling as t (t.id)}
             <Card>
-              <div class="ticket" role="group" aria-label="呼び出し中の整理券" data-ticket-id={t.id}>
-                <div class="ticket-head">
-                  <div class="numeral-block">
-                    <span class="block-caption">整理券番号</span>
-                    <span class="numeral">{t.displaySeq}</span>
+              <div class="ticket calling-card" role="group" aria-label="呼び出し中の整理券" data-ticket-id={t.id}>
+                <div class="card-content">
+                  <div class="ticket-head">
+                    <div class="numeral-block">
+                      <span class="block-caption">整理券番号</span>
+                      <span class="numeral">{t.displaySeq}</span>
+                    </div>
+                    {#if t.appointmentAt !== null}
+                      <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                        <span class="slot-chip-label">予約</span>
+                        <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
+                      </span>
+                    {/if}
                   </div>
-                  {#if t.appointmentAt !== null}
-                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                      <span class="slot-chip-label">予約</span>
-                      <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
-                    </span>
-                  {/if}
-                </div>
-                <div class="ticket-body">
-                  <div class="kana-block">
-                    <span class="block-caption">お名前</span>
-                    <span class="kana">{t.nameKana ?? ""}</span>
+                  <div class="ticket-body">
+                    <div class="kana-block">
+                      <span class="block-caption">お名前</span>
+                      <span class="kana">{t.nameKana ?? ""}</span>
+                    </div>
                   </div>
                 </div>
-                <div class="primary-action-row">
-                  <Button variant="primary" size="md" fullWidth onclick={() => onStartServing(t.id)} disabled={busy}>
-                    対応を始める
-                  </Button>
-                </div>
+                <button
+                  type="button"
+                  class="card-call-action"
+                  aria-label="対応を始める"
+                  onclick={() => onStartServing(t.id)}
+                  disabled={busy}
+                >
+                  <span class="call-label">対応を<br />始める</span>
+                </button>
                 <div class="secondary-actions">
                   <span class="secondary-actions-label">その他の操作</span>
                   <div class="secondary-actions-body">
@@ -494,30 +500,36 @@
         <div class="cards">
           {#each servingList as t (t.id)}
             <Card>
-              <div class="ticket" role="group" aria-label="対応中の整理券" data-ticket-id={t.id}>
-                <div class="ticket-head">
-                  <div class="numeral-block">
-                    <span class="block-caption">整理券番号</span>
-                    <span class="numeral">{t.displaySeq}</span>
+              <div class="ticket serving-card" role="group" aria-label="対応中の整理券" data-ticket-id={t.id}>
+                <div class="card-content">
+                  <div class="ticket-head">
+                    <div class="numeral-block">
+                      <span class="block-caption">整理券番号</span>
+                      <span class="numeral">{t.displaySeq}</span>
+                    </div>
+                    {#if t.appointmentAt !== null}
+                      <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                        <span class="slot-chip-label">予約</span>
+                        <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
+                      </span>
+                    {/if}
                   </div>
-                  {#if t.appointmentAt !== null}
-                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                      <span class="slot-chip-label">予約</span>
-                      <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
-                    </span>
-                  {/if}
-                </div>
-                <div class="ticket-body">
-                  <div class="kana-block">
-                    <span class="block-caption">お名前</span>
-                    <span class="kana">{t.nameKana ?? ""}</span>
+                  <div class="ticket-body">
+                    <div class="kana-block">
+                      <span class="block-caption">お名前</span>
+                      <span class="kana">{t.nameKana ?? ""}</span>
+                    </div>
                   </div>
                 </div>
-                <div class="primary-action-row">
-                  <Button variant="primary" size="md" fullWidth onclick={() => onMarkServed(t.id)} disabled={busy}>
-                    対応完了
-                  </Button>
-                </div>
+                <button
+                  type="button"
+                  class="card-call-action"
+                  aria-label="対応完了"
+                  onclick={() => onMarkServed(t.id)}
+                  disabled={busy}
+                >
+                  <span class="call-label">対応<br />完了</span>
+                </button>
                 <div class="secondary-actions">
                   <span class="secondary-actions-label">その他の操作</span>
                   <div class="secondary-actions-body">
@@ -875,17 +887,39 @@
     flex-direction: column;
     gap: var(--space-2);
   }
-  /* Waiting card is a 2-column grid: the left column carries the
-     accordion trigger button (= the whole card body, single click
-     opens the detail panel inline). The right column is a
-     `.card-call-action` whose width animates from 0 to ~6rem on
-     hover / focus / touch — the card "morphs" into a call surface
-     instead of having a separate floating call button. */
-  .waiting-card {
+  /* Waiting / calling / serving cards share a 2-column grid: the
+     left column is the card content (number + name + slot chip),
+     the right column is the primary call-to-action button morphed
+     to the card edge. On waiting cards the button width animates
+     from 0 on hover / focus / head; on calling and serving it's
+     always pinned because those columns are urgent and there is
+     typically only one card to act on. */
+  .waiting-card,
+  .calling-card,
+  .serving-card {
     position: relative;
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: stretch;
+  }
+  .calling-card .card-content,
+  .serving-card .card-content {
+    grid-column: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .calling-card .card-call-action,
+  .serving-card .card-call-action {
+    width: 6.5rem;
+    padding: 0 var(--space-3);
+    margin-left: var(--space-3);
+    line-height: 1.2;
+    text-align: center;
+  }
+  .calling-card .secondary-actions,
+  .serving-card .secondary-actions {
+    grid-column: 1 / -1;
   }
   .ticket-body-button {
     grid-column: 1;
