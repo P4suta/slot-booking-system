@@ -2,7 +2,6 @@
   import { onDestroy, onMount } from "svelte"
   import {
     type ApiResult,
-    callBatch,
     callNext,
     callSpecific,
     connectQueueFeed,
@@ -42,7 +41,6 @@
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
   let prevWaitingCount: number | null = null
-  let selected: Set<string> = $state(new Set())
   let expanded: Set<string> = $state(new Set())
   // Cross-column search. Surfaces only as a small magnifier button
   // in the staff page corner; opens a Dialog that hits every column
@@ -90,8 +88,6 @@
   }
 
   /* ---------- derived ---------- */
-  const selectionCount = $derived(selected.size)
-
   const searchHits: Ticket[] = $derived.by(() => {
     const q = searchQuery.trim().toLowerCase()
     if (q.length === 0) return []
@@ -241,7 +237,6 @@
     calling = []
     servingList = []
     done = []
-    selected = new Set()
     prevWaitingCount = null
     error = null
   }
@@ -267,21 +262,6 @@
       },
     )
 
-  const onCallBatch = () => {
-    const ids = Array.from(selected)
-    if (ids.length === 0) return
-    void runAction(
-      "call-batch",
-      () => callBatch(token, ids),
-      () => {
-        showToast(`${ids.length} 件をまとめて呼び出しました`, "info")
-        selected = new Set()
-      },
-    )
-  }
-
-
-
   const onStartServing = (ticketId: string) =>
     runAction("start-serving", () => startServing(token, ticketId), () => showToast("対応中に切り替えました", "success"))
 
@@ -299,18 +279,6 @@
 
   const onReorderToHead = (ticketId: string) =>
     runAction("reorder", () => reorder(token, { ticketId, afterTicketId: null }), () => showToast("先頭に移動", "info"))
-
-  /* ---------- selection ---------- */
-  // Checkbox is now the selection affordance (the card body is the
-  // accordion trigger). A plain checkbox change toggles; the
-  // additive shift-modifier from the dblclick era is gone, but
-  // multi-select still works because each checkbox is independent.
-  const toggleSelect = (id: string) => {
-    const next = new Set(selected)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    selected = next
-  }
 
   /* ---------- accordion ---------- */
   // ADR-0070 follow-up: the previous double-click → Dialog flow was
@@ -402,16 +370,9 @@
             <Card interactive>
               <div
                 class="ticket waiting-card" data-ticket-id={t.id}
-                data-selected={selected.has(t.id) ? "true" : undefined}
                 data-expanded={expanded.has(t.id) ? "true" : undefined}
+                data-head={idx === 0 ? "true" : undefined}
               >
-                <label class="select-handle" aria-label="呼び出し対象として選択">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(t.id)}
-                    onchange={() => toggleSelect(t.id)}
-                  />
-                </label>
                 <button
                   type="button"
                   class="ticket-body-button"
@@ -503,11 +464,21 @@
                     <span class="kana">{t.nameKana ?? ""}</span>
                   </div>
                 </div>
-                <div class="row">
-                  <Button variant="primary" size="md" onclick={() => onStartServing(t.id)} disabled={busy}>対応を始める</Button>
-                  <Button variant="secondary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>すぐ完了</Button>
-                  <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>来なかった</Button>
-                  <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>待機に戻す</Button>
+                <div class="primary-action-row">
+                  <Button variant="primary" size="md" fullWidth onclick={() => onStartServing(t.id)} disabled={busy}>
+                    対応を始める
+                  </Button>
+                </div>
+                <div class="secondary-actions">
+                  <span class="secondary-actions-label">その他の操作</span>
+                  <div class="secondary-actions-body">
+                    <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>
+                      来なかった
+                    </Button>
+                    <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>
+                      待機に戻す
+                    </Button>
+                  </div>
                 </div>
               </div>
             </Card>
@@ -542,9 +513,18 @@
                     <span class="kana">{t.nameKana ?? ""}</span>
                   </div>
                 </div>
-                <div class="row">
-                  <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>対応完了</Button>
-                  <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>対応を中止</Button>
+                <div class="primary-action-row">
+                  <Button variant="primary" size="md" fullWidth onclick={() => onMarkServed(t.id)} disabled={busy}>
+                    対応完了
+                  </Button>
+                </div>
+                <div class="secondary-actions">
+                  <span class="secondary-actions-label">その他の操作</span>
+                  <div class="secondary-actions-body">
+                    <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>
+                      対応を中止
+                    </Button>
+                  </div>
                 </div>
               </div>
             </Card>
@@ -609,15 +589,6 @@
         </div>
       </section>
     </div>
-
-    <!-- bottom action bar -->
-    {#if selectionCount > 0}
-      <footer class="action-bar">
-        <span>{selectionCount} 件選択</span>
-        <Button variant="primary" onclick={onCallBatch} disabled={busy}>{selectionCount} 件呼ぶ</Button>
-        <Button variant="ghost" onclick={() => (selected = new Set())}>選択解除</Button>
-      </footer>
-    {/if}
 
     <!-- cross-column search dialog -->
     <Dialog
@@ -904,15 +875,10 @@
     flex-direction: column;
     gap: var(--space-2);
   }
-  .ticket[data-selected="true"] {
-    outline: 2px solid var(--color-accent-primary);
-    outline-offset: 2px;
-    border-radius: var(--radius-md);
-  }
   /* Waiting card is a 2-column grid: the left column carries the
-     accordion trigger button (= the whole card body, single
-     click opens the detail panel inline). The right column is a
-     `.card-call-action` whose width animates from 0 to ~7rem on
+     accordion trigger button (= the whole card body, single click
+     opens the detail panel inline). The right column is a
+     `.card-call-action` whose width animates from 0 to ~6rem on
      hover / focus / touch — the card "morphs" into a call surface
      instead of having a separate floating call button. */
   .waiting-card {
@@ -921,27 +887,12 @@
     grid-template-columns: 1fr auto;
     align-items: stretch;
   }
-  .select-handle {
-    position: absolute;
-    top: 50%;
-    left: var(--space-3);
-    transform: translateY(-50%);
-    display: inline-flex;
-    align-items: center;
-    z-index: 2;
-  }
-  .select-handle input[type="checkbox"] {
-    width: 1.5rem;
-    height: 1.5rem;
-    cursor: pointer;
-    accent-color: var(--color-accent-primary);
-  }
   .ticket-body-button {
     grid-column: 1;
     appearance: none;
     background: transparent;
     border: 0;
-    padding: 0 0 0 calc(1.5rem + var(--space-3) + var(--space-3));
+    padding: 0;
     margin: 0;
     text-align: left;
     color: inherit;
@@ -981,7 +932,8 @@
     white-space: nowrap;
   }
   .waiting-card:hover .card-call-action,
-  .waiting-card:focus-within .card-call-action {
+  .waiting-card:focus-within .card-call-action,
+  .waiting-card[data-head="true"] .card-call-action {
     width: 6rem;
     padding: 0 var(--space-3);
     margin-left: var(--space-3);
@@ -1110,6 +1062,46 @@
     gap: var(--space-2);
     flex-wrap: wrap;
   }
+  .primary-action-row {
+    display: flex;
+  }
+  /* Secondary actions on calling / serving cards: 「来なかった」「待機に
+     戻す」 etc. are uncommon — hidden by default, revealed when the
+     card is focused (mouse hover or keyboard focus). Touch devices
+     don't have hover, so `@media (hover: none)` keeps them visible
+     alongside the primary action. */
+  .secondary-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: opacity 180ms ease, max-height 180ms ease;
+    pointer-events: none;
+  }
+  .ticket:hover .secondary-actions,
+  .ticket:focus-within .secondary-actions {
+    opacity: 1;
+    max-height: 8rem;
+    pointer-events: auto;
+  }
+  .secondary-actions-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+  }
+  .secondary-actions-body {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  @media (hover: none) {
+    .secondary-actions {
+      opacity: 1;
+      max-height: none;
+      pointer-events: auto;
+    }
+  }
   .empty {
     color: var(--color-fg-muted);
     font: var(--text-body-sm);
@@ -1143,21 +1135,6 @@
   .state-badge[data-state="NoShow"] {
     background: oklch(95% 0.07 25);
     color: var(--color-state-danger);
-  }
-  .action-bar {
-    position: fixed;
-    bottom: var(--space-4);
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--color-bg-raised);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-pill);
-    box-shadow: var(--shadow-lg);
-    padding: var(--space-3) var(--space-5);
-    display: flex;
-    gap: var(--space-3);
-    align-items: center;
-    z-index: 100;
   }
   .detail,
   .help {

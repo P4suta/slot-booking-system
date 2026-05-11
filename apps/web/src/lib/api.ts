@@ -437,16 +437,6 @@ export const callSpecific = async (
     body: JSON.stringify({ ticketId }),
   })
 
-export const callBatch = async (
-  token: string,
-  ticketIds: readonly string[],
-): Promise<ApiResult<{ tickets: readonly Ticket[] }>> =>
-  fetchJson(`${baseUrl()}/api/v1/queue/call-batch`, {
-    method: "POST",
-    headers: staffHeaders(token),
-    body: JSON.stringify({ ticketIds }),
-  })
-
 export const startServing = async (
   token: string,
   ticketId: string,
