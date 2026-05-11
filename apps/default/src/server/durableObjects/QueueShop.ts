@@ -35,6 +35,7 @@ import {
   type TicketRepository,
   TicketSchema,
   UlidIdGeneratorLive,
+  VectorClock,
 } from "@booking/core"
 import { Cause, Effect, Layer, Schema } from "effect"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
@@ -501,7 +502,7 @@ export class QueueShop extends DurableObject<Env> {
     const ranked = reservationsByDeadline({ tickets: decodedWaitingTickets })
     const nextDeadline = ranked[0]?.appointmentAt ?? null
     return {
-      v: 4 as const,
+      v: 6 as const,
       waitingCount: waiting.length,
       callableNowCount: waiting.filter(callable).length,
       laneCounts: {
@@ -529,6 +530,13 @@ export class QueueShop extends DurableObject<Env> {
 
   private lastBroadcastSnapshot: ShopStateWire | null = null
   private coalesceTimer: ReturnType<typeof setTimeout> | undefined
+  // Wire v6 (ADR-0081) — VectorClock advances once per broadcast so
+  // the client can detect snapshot/delta gaps. The DO is single-writer
+  // so one site id suffices; future multi-replica designs (read-only
+  // mirrors / disaster-recovery clones) can extend this without
+  // changing the wire shape.
+  private static readonly SITE_ID = "queueShop"
+  private broadcastVector = VectorClock.empty()
 
   private async sendProjectionTo(ws: WebSocket): Promise<void> {
     try {
@@ -538,7 +546,13 @@ export class QueueShop extends DurableObject<Env> {
       // recently, otherwise a fresh snapshot is computed.
       const snapshot = this.lastBroadcastSnapshot ?? (await this.computeShopState())
       this.lastBroadcastSnapshot = snapshot
-      const msg: FeedMessage = { v: 5, kind: "snapshot", snapshot }
+      const msg: FeedMessage = {
+        v: 6,
+        kind: "snapshot",
+        at: this.broadcastVector,
+        capability: "anonymous",
+        snapshot,
+      }
       ws.send(JSON.stringify(msg))
     } catch (err) {
       // The socket may have been closed between accept + send; the
@@ -577,8 +591,16 @@ export class QueueShop extends DurableObject<Env> {
     }
     const started = Date.now()
     let payload: string
+    const prevVector = this.broadcastVector
+    const nextVector = VectorClock.tick(prevVector, QueueShop.SITE_ID)
     if (this.lastBroadcastSnapshot === null) {
-      const msg: FeedMessage = { v: 5, kind: "snapshot", snapshot: next }
+      const msg: FeedMessage = {
+        v: 6,
+        kind: "snapshot",
+        at: nextVector,
+        capability: "anonymous",
+        snapshot: next,
+      }
       payload = JSON.stringify(msg)
     } else {
       const delta = computeShopStateDelta(this.lastBroadcastSnapshot, next)
@@ -586,9 +608,17 @@ export class QueueShop extends DurableObject<Env> {
         this.lastBroadcastSnapshot = next
         return
       }
-      const msg: FeedMessage = { v: 5, kind: "delta", delta }
+      const msg: FeedMessage = {
+        v: 6,
+        kind: "delta",
+        at: nextVector,
+        since: prevVector,
+        capability: "anonymous",
+        delta,
+      }
       payload = JSON.stringify(msg)
     }
+    this.broadcastVector = nextVector
     this.lastBroadcastSnapshot = next
     let failed = 0
     for (const ws of sockets) {

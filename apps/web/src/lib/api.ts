@@ -68,7 +68,7 @@ type LaneCounts = {
  * — no v3 field changed shape.
  */
 export type ShopState = {
-  readonly v: 4
+  readonly v: 6
   readonly waitingCount: number
   readonly callableNowCount: number
   readonly laneCounts: LaneCounts
@@ -89,7 +89,7 @@ export type ShopState = {
  * (ADR-0071)。
  */
 export type StaffShopState = {
-  readonly v: 4
+  readonly v: 6
   readonly waitingCount: number
   readonly callableNowCount: number
   readonly laneCounts: LaneCounts
@@ -411,19 +411,19 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
       if (event.data === "pong") return
       try {
         const parsed: unknown = JSON.parse(event.data)
-        // ADR-0075 v5 envelope: { v: 5, kind: "snapshot"|"delta", ... }
-        // Anything else (legacy v4 raw payload) falls through to the
-        // consumer unchanged so a deploy that downgrades the server
-        // doesn't break the client.
-        if (typeof parsed === "object" && parsed !== null && (parsed as { v?: unknown }).v === 5) {
+        // ADR-0081 v6 envelope: { v: 6, kind, at, capability, ... }.
+        // Earlier envelopes (v4 / v5) are explicitly rejected — the
+        // user spec waived backward compatibility for the lattice
+        // overhaul.
+        if (typeof parsed === "object" && parsed !== null && (parsed as { v?: unknown }).v === 6) {
           const env = parsed as
-            | { v: 5; kind: "snapshot"; snapshot: ShopState }
-            | { v: 5; kind: "delta"; delta: ShopStateDelta }
+            | { v: 6; kind: "snapshot"; snapshot: ShopState }
+            | { v: 6; kind: "delta"; delta: ShopStateDelta }
           if (env.kind === "snapshot") {
             localShopState = env.snapshot
             callbacks.onProjection(env.snapshot)
           } else if (localShopState !== null) {
-            localShopState = applyShopStateDelta(localShopState, env.delta) as ShopState
+            localShopState = applyShopStateDelta(localShopState, env.delta)
             callbacks.onProjection(localShopState)
           } else {
             // delta arrived before snapshot — request a fresh

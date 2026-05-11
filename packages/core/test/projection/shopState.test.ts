@@ -21,7 +21,7 @@ const entry = (
 })
 
 const baseSnap = (): ShopState => ({
-  v: 4,
+  v: 6,
   waitingCount: 0,
   callableNowCount: 0,
   laneCounts: { walkIn: 0, priority: 0, reservation: 0 },

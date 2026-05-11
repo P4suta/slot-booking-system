@@ -562,7 +562,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return new Response(
         JSON.stringify({
           ok: true,
-          v: 4,
+          v: 6,
           waitingCount: waiting.length,
           callableNowCount,
           laneCounts: {
@@ -583,7 +583,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return new Response(
       JSON.stringify({
         ok: true,
-        v: 4,
+        v: 6,
         waitingCount: waiting.length,
         callableNowCount,
         laneCounts: {

@@ -1,13 +1,20 @@
 /**
- * ShopState — the anonymous projection wire shape (ADR-0061 / 0071 /
- * 0075). The server JSON.stringifies this shape; the client mirrors it
- * locally and merges deltas in place. The type lives in core so both
- * sides reach for the same source of truth.
+ * ShopState — the projection wire shape (ADR-0061 / 0071 / 0075 /
+ * 0081). Wire envelope v6 carries a {@link VectorClock} for
+ * snapshot/delta gap detection and a `capability` discriminator
+ * that selects between the anonymous (PII-free) and staff
+ * (PII-bearing) frame variants. The server JSON.stringifies this
+ * shape; the client mirrors it locally and merges deltas in place.
  *
- * `state` discriminator on each entry is intentionally `string` rather
- * than `TicketState` to avoid a cycle through `TicketEvent`/`Ticket`
- * for what is, on the wire, just a tag the client passes through.
+ * `ProjectionEntry.state` is the {@link TicketState} literal union
+ * (ADR-0081 part 2) — the prior `string` typing slipped through
+ * any future state addition without a compile-time check.
  */
+import type { VectorClock } from "../algorithms/VectorClock.js"
+import type { TicketState } from "../domain/queue/Ticket.js"
+
+export type FrameCapability = "anonymous" | "staff"
+
 export type LaneCounts = {
   readonly walkIn: number
   readonly priority: number
@@ -20,11 +27,11 @@ export type ProjectionEntry = {
   readonly lane: "walkIn" | "priority" | "reservation"
   readonly displaySeq: number
   readonly appointmentAt: string | null
-  readonly state: string
+  readonly state: TicketState
 }
 
 export type ShopState = {
-  readonly v: 4
+  readonly v: 6
   readonly waitingCount: number
   readonly callableNowCount: number
   readonly laneCounts: LaneCounts
@@ -59,14 +66,30 @@ export type ShopStateDelta = {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Wire envelope (ADR-0075). v5 wraps either a full snapshot (sent on WS      */
-/* connect or when the DO has no prior snapshot to diff against) or a delta   */
-/* (sent on subsequent dispatches). The client picks branch by `kind`.        */
+/* Wire envelope v6 (ADR-0081). Each frame carries a VectorClock so the      */
+/* client can detect snapshot/delta gaps; `capability` selects the per-      */
+/* socket frame variant (anonymous = PII-free, staff = PII-bearing). The     */
+/* `since` vector on a delta is the server's clock at the prior frame —     */
+/* a client whose locally-observed vector is incomparable knows it has      */
+/* missed an update and asks for a resync via socket close-and-reopen.      */
 /* -------------------------------------------------------------------------- */
 
 export type FeedMessage =
-  | { readonly v: 5; readonly kind: "snapshot"; readonly snapshot: ShopState }
-  | { readonly v: 5; readonly kind: "delta"; readonly delta: ShopStateDelta }
+  | {
+      readonly v: 6
+      readonly kind: "snapshot"
+      readonly at: VectorClock
+      readonly capability: FrameCapability
+      readonly snapshot: ShopState
+    }
+  | {
+      readonly v: 6
+      readonly kind: "delta"
+      readonly at: VectorClock
+      readonly since: VectorClock
+      readonly capability: FrameCapability
+      readonly delta: ShopStateDelta
+    }
 
 const sameLaneCounts = (a: LaneCounts, b: LaneCounts): boolean =>
   a.walkIn === b.walkIn && a.priority === b.priority && a.reservation === b.reservation
@@ -169,7 +192,7 @@ export const computeShopStateDelta = (prev: ShopState, next: ShopState): ShopSta
  * `applyDelta(prev, computeDelta(prev, next)) ≡ next`.
  */
 export const applyShopStateDelta = (snap: ShopState, delta: ShopStateDelta): ShopState => ({
-  v: 4,
+  v: 6,
   waitingCount: delta.waitingCount ?? snap.waitingCount,
   callableNowCount: delta.callableNowCount ?? snap.callableNowCount,
   laneCounts: delta.laneCounts ?? snap.laneCounts,

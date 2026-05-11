@@ -64,7 +64,7 @@ type ProjectionEntry = {
 
 type Projection = {
   readonly ok: boolean
-  readonly v: 4
+  readonly v: 6
   readonly waitingCount: number
   readonly laneCounts: {
     readonly walkIn: number
