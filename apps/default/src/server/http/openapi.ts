@@ -360,10 +360,11 @@ export const openApiDocument = {
               "application/json": {
                 schema: {
                   type: "object",
-                  required: ["ok", "waitingCount"],
+                  required: ["ok", "waitingCount", "callableNowCount"],
                   properties: {
                     ok: { const: true },
                     waitingCount: { type: "integer", minimum: 0 },
+                    callableNowCount: { type: "integer", minimum: 0 },
                     serving: { oneOf: [{ type: "null" }, TICKET_SCHEMA] },
                     waitingPreview: { type: "array", items: TICKET_SCHEMA },
                   },

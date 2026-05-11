@@ -20,4 +20,6 @@ export type Env = {
   readonly SLOT_DEFAULT_CAPACITY?: string
   readonly SLOT_DEFAULT_GRANULARITY?: string
   readonly EDF_GRACE_MINUTES?: string
+  readonly BUSINESS_HOURS_START_MIN?: string
+  readonly BUSINESS_HOURS_END_MIN?: string
 }

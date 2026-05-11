@@ -12,7 +12,10 @@
   import { hasStaffToken, readTicketCache } from "$lib/ticketCache.js"
   import { wsStatus } from "$lib/wsStatus.js"
 
-  let waitingCount = $state(0)
+  // 「現在待っている人」 — 予約済み未来分は除外、 walk-in / priority と
+  // appointmentAt が 5 分以内に迫った reservation だけを数える。
+  // 予約者視点で「自分が並ぶときの実待機」 を反映する。
+  let callableNowCount = $state(0)
   let activeCount = $state(0)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
@@ -63,7 +66,7 @@
   }
 
   const refresh = (data: ShopState): void => {
-    waitingCount = data.waitingCount
+    callableNowCount = data.callableNowCount
     activeCount = data.calling.length + data.serving.length
   }
 
@@ -131,7 +134,7 @@
       >
         <div class="summary-face summary-face-front">
           <span class="summary-caption">待ち人数</span>
-          <span class="summary-value">{waitingCount}</span>
+          <span class="summary-value">{callableNowCount}</span>
           <span class="summary-unit">人</span>
         </div>
         <div class="summary-face summary-face-back">

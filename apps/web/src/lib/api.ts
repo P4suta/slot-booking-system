@@ -69,6 +69,7 @@ type LaneCounts = {
 export type ShopState = {
   readonly v: 4
   readonly waitingCount: number
+  readonly callableNowCount: number
   readonly laneCounts: LaneCounts
   readonly calling: readonly ProjectionEntry[]
   readonly serving: readonly ProjectionEntry[]
@@ -88,6 +89,7 @@ export type ShopState = {
 export type StaffShopState = {
   readonly v: 4
   readonly waitingCount: number
+  readonly callableNowCount: number
   readonly laneCounts: LaneCounts
   readonly calling: readonly Ticket[]
   readonly serving: readonly Ticket[]

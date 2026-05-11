@@ -47,15 +47,28 @@ describe("slotTime helpers", () => {
   })
 
   describe("slotInstantOf", () => {
-    it("encodes date + bucket as ISO Z", () => {
-      expect(slotInstantOf("2026-05-11", 28, 30)).toBe("2026-05-11T14:00:00.000Z")
-      expect(slotInstantOf("2026-12-31", 0, 30)).toBe("2026-12-31T00:00:00.000Z")
+    it("encodes a JST wall-clock pick as the corresponding UTC instant", () => {
+      // 14:00 JST = 05:00 UTC (UTC+9, no DST).
+      expect(slotInstantOf("2026-05-11", 28, 30)).toBe("2026-05-11T05:00:00.000Z")
+      // 09:00 JST = 00:00 UTC same date — first business-hour bucket.
+      expect(slotInstantOf("2026-05-11", 18, 30)).toBe("2026-05-11T00:00:00.000Z")
     })
 
-    it("round-trips through parseSlotInstant", () => {
-      const iso = slotInstantOf("2026-07-04", 35, 30) // 17:30
+    it("crosses the date boundary when the JST wall-clock is below the offset", () => {
+      // 00:00 JST on 2026-12-31 = 15:00 UTC on 2026-12-30.
+      expect(slotInstantOf("2026-12-31", 0, 30)).toBe("2026-12-30T15:00:00.000Z")
+    })
+
+    it("round-trips through parseSlotInstant for an in-hours bucket", () => {
+      const iso = slotInstantOf("2026-07-04", 28, 30) // 14:00 JST
       const parsed = parseSlotInstant(iso, 30)
-      expect(parsed).toEqual({ date: "2026-07-04", bucketId: 35 })
+      expect(parsed).toEqual({ date: "2026-07-04", bucketId: 28 })
+    })
+
+    it("round-trips through parseSlotInstant for a near-midnight bucket (date crossover)", () => {
+      const iso = slotInstantOf("2026-07-04", 0, 30) // 00:00 JST
+      const parsed = parseSlotInstant(iso, 30)
+      expect(parsed).toEqual({ date: "2026-07-04", bucketId: 0 })
     })
   })
 
@@ -67,29 +80,31 @@ describe("slotTime helpers", () => {
       expect(parseSlotInstant("not-an-iso", 30)).toBeNull()
     })
 
-    it("returns null when the minute value is not aligned to the granularity", () => {
-      // 14:15 with granularity 30 is misaligned
-      expect(parseSlotInstant("2026-05-11T14:15:00.000Z", 30)).toBeNull()
-      // 14:15 with granularity 15 is aligned
-      expect(parseSlotInstant("2026-05-11T14:15:00.000Z", 15)).toEqual({
+    it("returns null when the JST minute value is not aligned to the granularity", () => {
+      // UTC 05:15 → JST 14:15 → 14*60+15 = 855 min. 855 % 30 = 15 ≠ 0.
+      expect(parseSlotInstant("2026-05-11T05:15:00.000Z", 30)).toBeNull()
+      // 14:15 JST aligned for 15-min granularity → bucket 57.
+      expect(parseSlotInstant("2026-05-11T05:15:00.000Z", 15)).toEqual({
         date: "2026-05-11",
         bucketId: 57,
       })
     })
 
-    it("parses well-formed ISO into date + bucket", () => {
-      expect(parseSlotInstant("2026-05-11T14:00:00.000Z", 30)).toEqual({
+    it("parses a UTC ISO into the JST wall-clock date + bucket", () => {
+      // UTC 05:00 → JST 14:00 → bucket 28.
+      expect(parseSlotInstant("2026-05-11T05:00:00.000Z", 30)).toEqual({
         date: "2026-05-11",
         bucketId: 28,
       })
-      expect(parseSlotInstant("2026-05-11T09:30:00.000Z", 30)).toEqual({
+      // UTC 00:30 → JST 09:30 → bucket 19.
+      expect(parseSlotInstant("2026-05-11T00:30:00.000Z", 30)).toEqual({
         date: "2026-05-11",
         bucketId: 19,
       })
     })
 
-    it("tolerates ISO variants without ms (still Z-suffixed instants)", () => {
-      expect(parseSlotInstant("2026-05-11T14:00:00Z", 30)).toEqual({
+    it("tolerates ISO variants without milliseconds", () => {
+      expect(parseSlotInstant("2026-05-11T05:00:00Z", 30)).toEqual({
         date: "2026-05-11",
         bucketId: 28,
       })

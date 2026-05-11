@@ -483,6 +483,7 @@ export class QueueShop extends DurableObject<Env> {
       ok: true,
       v: 4,
       waitingCount: waiting.length,
+      callableNowCount: waiting.filter(isCallableNow).length,
       laneCounts: {
         walkIn: laneCount("walkIn"),
         priority: laneCount("priority"),

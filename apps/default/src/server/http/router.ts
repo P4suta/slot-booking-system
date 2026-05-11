@@ -394,9 +394,18 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       readonly taken: number
       readonly available: number
     }[] = []
+    // Business-hours window (default 09:00–17:00 in the business
+    // TZ). The slot grid never advertises off-hours buckets so the
+    // customer-facing picker only shows slots staff can actually
+    // honour. Override per-deployment via env if a shop runs other
+    // hours.
+    const businessStartMin = Number(c.env.BUSINESS_HOURS_START_MIN) || 9 * 60
+    const businessEndMin = Number(c.env.BUSINESS_HOURS_END_MIN) || 17 * 60
+    const startBucket = Math.ceil(businessStartMin / granularity)
+    const endBucket = Math.floor(businessEndMin / granularity)
     let cursor = from
     while (cursor.toString() <= to.toString()) {
-      for (let b = 0; b * granularity < 24 * 60; b += 1) {
+      for (let b = startBucket; b < endBucket; b += 1) {
         const slot: Slot = {
           date: cursor,
           bucketId: b as never,
@@ -494,6 +503,20 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const serving = tickets
       .filter((t) => t.state === "Serving")
       .sort((a, b) => a.displaySeq - b.displaySeq)
+    // "Callable now" partition: walk-in + priority always, reservation
+    // only inside the 5-min grace before appointmentAt. Mirrors
+    // QueueShop.shopState's `isCallableNow` so the landing headline
+    // number matches the staff card's call-button enabled state.
+    const nowMs = Date.now()
+    const RESERVATION_GRACE_MS = 5 * 60 * 1000
+    const isCallableNow = (t: (typeof tickets)[number]): boolean => {
+      if (t.lane !== "reservation") return true
+      if (t.appointmentAt === null) return true
+      const atMs = Date.parse(t.appointmentAt)
+      if (Number.isNaN(atMs)) return true
+      return atMs - RESERVATION_GRACE_MS <= nowMs
+    }
+    const callableNowCount = waiting.filter(isCallableNow).length
     // ADR-0069 §Stage 11 — staff 履歴 column needs the recent terminal
     // tickets so an operator can see what just finished. `seq` is
     // monotone over the queue's lifetime, so sorting desc + slicing 8
@@ -532,6 +555,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
           ok: true,
           v: 4,
           waitingCount: waiting.length,
+          callableNowCount,
           laneCounts: {
             walkIn: laneCount("walkIn"),
             priority: laneCount("priority"),
@@ -551,6 +575,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         ok: true,
         v: 4,
         waitingCount: waiting.length,
+        callableNowCount,
         laneCounts: {
           walkIn: laneCount("walkIn"),
           priority: laneCount("priority"),
