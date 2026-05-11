@@ -29,6 +29,7 @@
  * (Stage 23) reads the same stream.
  */
 import { Schema } from "effect"
+import { emitStructuredLog } from "./devLogTap.js"
 
 /**
  * Maximum events accepted in a single POST body. The web reporter
@@ -79,10 +80,6 @@ export const emitClientReport = (report: ClientReport, traceId: string | null): 
       event,
       traceId,
     })
-    if (severity === "error") {
-      console.error(line)
-    } else {
-      console.warn(line)
-    }
+    emitStructuredLog(severity === "error" ? "error" : "warn", line)
   }
 }

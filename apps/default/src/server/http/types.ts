@@ -1,3 +1,4 @@
+import type { DevLogStream } from "../durableObjects/DevLogStream.js"
 import type { QueueShop } from "../durableObjects/QueueShop.js"
 
 /**
@@ -9,6 +10,7 @@ import type { QueueShop } from "../durableObjects/QueueShop.js"
 export type Env = {
   readonly DB: D1Database
   readonly QUEUE_SHOP: DurableObjectNamespace<QueueShop>
+  readonly DEV_LOG_STREAM: DurableObjectNamespace<DevLogStream>
   readonly DEPLOYMENT_NAME: string
   readonly DEPLOYMENT_TIMEZONE?: string
   readonly IS_DEV?: string

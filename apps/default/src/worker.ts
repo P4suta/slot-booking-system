@@ -5,10 +5,13 @@ import { makeD1AuditLogger } from "./server/adapters/D1AuditLoggerLive.js"
 import { makeD1PiiPurger } from "./server/adapters/D1PiiPurgerLive.js"
 import { makeRuntimeModeLayer } from "./server/adapters/RuntimeModeLive.js"
 import { WorkersLoggerLive } from "./server/adapters/WorkersLoggerLive.js"
+import { isDevMode } from "./server/http/errorEnvelope.js"
 import { buildQueueApi } from "./server/http/router.js"
 import type { Env } from "./server/http/types.js"
+import { __setDevLogPublisher } from "./server/obs/devLogTap.js"
 import { chooseExporter } from "./server/observability/otelConfig.js"
 
+export { DevLogStream } from "./server/durableObjects/DevLogStream.js"
 export { QueueShop } from "./server/durableObjects/QueueShop.js"
 
 const TWO_YEARS = Duration.days(365 * 2)
@@ -26,6 +29,24 @@ const queueApi = buildQueueApi()
  */
 const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
+    // Stage 22b cont. / ADR-0091 — wire the dev-log relay on every
+    // fetch when the deployment is in dev mode. The publisher
+    // captures every structured-log line emitted during the
+    // request (HttpRequest / HttpEnvelope / ClientReport /
+    // WorkersLoggerLive output) and RPCs it into the DevLogStream
+    // DO's in-memory ring so any client attached to
+    // `/api/v1/__/dev/log-stream` sees it live. Setting the
+    // publisher on every fetch is cheap (one closure + one stub
+    // lookup) and tolerates module-state staleness across isolate
+    // reuse without conditional re-bind logic.
+    if (isDevMode(env)) {
+      const devLogStub = env.DEV_LOG_STREAM.get(env.DEV_LOG_STREAM.idFromName("main"))
+      __setDevLogPublisher((entry) => {
+        void devLogStub.publishLog(entry)
+      })
+    } else {
+      __setDevLogPublisher(null)
+    }
     const url = new URL(request.url)
     if (url.pathname === "/healthz") {
       return new Response(JSON.stringify({ ok: true }), {

@@ -1,4 +1,5 @@
 import type { DomainError } from "@booking/core"
+import { emitStructuredLog } from "../obs/devLogTap.js"
 import { currentTraceId } from "./traceIdHeader.js"
 
 /**
@@ -149,11 +150,13 @@ export const __setEnvelopeLogTap = (next: ((entry: HttpEnvelopeLog) => void) | n
 export const logHttpEnvelope = (entry: Omit<HttpEnvelopeLog, "traceId">): void => {
   const traceId = currentTraceId()
   const full: HttpEnvelopeLog = { ...entry, traceId }
-  // `console.warn` is in biome's noConsole allow-list (warn/error are
-  // the structured-log levels we use repo-wide); the JSON-line shape
-  // mirrors `WorkersLoggerLive` so the operator dashboard can filter
-  // on `_tag` / `errorTag` without per-source regex.
-  console.warn(
+  // The JSON-line shape mirrors `WorkersLoggerLive` so the
+  // operator dashboard can filter on `_tag` / `errorTag` without
+  // per-source regex. `emitStructuredLog` (devLogTap.ts) routes
+  // the line through `console.warn` and, when `IS_DEV=1`, the
+  // DevLogStream relay.
+  emitStructuredLog(
+    "warn",
     JSON.stringify({
       _tag: "HttpEnvelope",
       code: "I_HTTP_ENVELOPE",

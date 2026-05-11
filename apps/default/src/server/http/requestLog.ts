@@ -1,5 +1,6 @@
 import type { TraceId } from "@booking/core"
 import type { Context, Next } from "hono"
+import { emitStructuredLog } from "../obs/devLogTap.js"
 import { currentTraceId, TRACE_ID_HEADER } from "./traceIdHeader.js"
 
 /**
@@ -63,8 +64,10 @@ export const requestLog = async (c: Context, next: Next): Promise<void> => {
     })
   }
 
-  // biome-ignore lint/suspicious/noConsole: structured worker log sink (mirrors WorkersLoggerLive)
-  console.info(
+  // `emitStructuredLog` (devLogTap.ts) routes through console.info
+  // and, when `IS_DEV=1`, the DevLogStream relay.
+  emitStructuredLog(
+    "info",
     JSON.stringify({
       _tag: "HttpRequest",
       code: "I_HTTP_REQUEST",

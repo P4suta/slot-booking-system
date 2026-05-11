@@ -51,6 +51,7 @@ import {
   StaffCancelBodySchema,
 } from "./boundarySchemas.js"
 import type { RouteContext, RouteDescriptor } from "./dispatchRoute.js"
+import { isDevMode } from "./errorEnvelope.js"
 import { openApiDocument } from "./openapi.js"
 import { parseJsonBody } from "./parseJsonBody.js"
 import { currentTraceId } from "./traceIdHeader.js"
@@ -861,6 +862,29 @@ const route_clientError: RouteDescriptor = {
   },
 }
 
+// GET /api/v1/__/dev/log-stream — WebSocket relay of every
+// structured-log line the worker emits (S22b cont. /
+// ADR-0091). Gated on `IS_DEV === "1"`; production deploys see
+// a 404 so the surface is not even discoverable. The worker
+// root (`worker.ts`) registers a publisher on every fetch when
+// the same flag is set, so by the time the subscriber attaches
+// the ring is already being fed.
+const route_devLogStream: RouteDescriptor = {
+  method: "GET",
+  path: "/api/v1/__/dev/log-stream",
+  handle: (c: RouteContext) => {
+    if (!isDevMode(c.env)) {
+      return new Response("Not Found", { status: 404 })
+    }
+    if (c.req.header("upgrade") !== "websocket") {
+      return c.text("Expected websocket upgrade", 426)
+    }
+    const id = c.env.DEV_LOG_STREAM.idFromName("main")
+    const obj = c.env.DEV_LOG_STREAM.get(id)
+    return obj.fetch(c.req.raw)
+  },
+}
+
 // 18. GET /api/v1/openapi.json — OpenAPI 3.1 document
 const route_openapi: RouteDescriptor = {
   method: "GET",
@@ -931,6 +955,7 @@ export const ROUTES: readonly RouteDescriptor[] = [
   route_lateAcknowledge,
   route_noComeConfirm,
   route_clientError,
+  route_devLogStream,
   route_openapi,
   route_queueFeed,
 ]

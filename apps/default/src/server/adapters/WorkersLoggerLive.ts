@@ -1,5 +1,6 @@
 import { getCurrentTraceId, Logger, type LogPayload } from "@booking/core"
 import { Effect, Layer, Option } from "effect"
+import { emitStructuredLog } from "../obs/devLogTap.js"
 
 /**
  * Cloudflare Workers logger. Each `info` / `warn` / `error` call
@@ -49,10 +50,7 @@ const decoratedEmit =
       const withTrace: LogPayload =
         payload.traceId !== undefined || traceId === undefined ? payload : { ...payload, traceId }
       const line = JSON.stringify({ ...withTrace, "otel.span.active": spanActive })
-      // biome-ignore lint/suspicious/noConsole: workers log sink
-      if (level === "info") console.info(line)
-      else if (level === "warn") console.warn(line)
-      else console.error(line)
+      emitStructuredLog(level, line)
     })
 
 export const WorkersLoggerLive: Layer.Layer<Logger> = Layer.succeed(

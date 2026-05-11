@@ -22,6 +22,18 @@ migrations_dir = "migrations"
 name = "QUEUE_SHOP"
 class_name = "QueueShop"
 
+# Stage 22b cont. / ADR-0091 — DEV-only structured-log relay.
+# `worker.ts` registers a publisher on every fetch when
+# `IS_DEV === "1"` so every structured-log line emitted from
+# `WorkersLoggerLive` / `requestLog` / `errorEnvelope` /
+# `clientReport` is RPC'd to this DO's in-memory ring + fanned
+# out to any client attached to `/api/v1/__/dev/log-stream`.
+# Production deploys leave `IS_DEV=0` so the binding exists but
+# never traffics; the DO sleeps and costs nothing.
+[[durable_objects.bindings]]
+name = "DEV_LOG_STREAM"
+class_name = "DevLogStream"
+
 # Cloudflare rate-limit bindings (production only — Miniflare leaves
 # the binding undefined and the middleware fails open under
 # `wrangler dev --local`). namespace_id is opaque to the binding;
@@ -57,6 +69,10 @@ new_sqlite_classes = ["DaySchedule"]
 tag = "v2"
 new_sqlite_classes = ["QueueShop"]
 deleted_classes = ["DaySchedule"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["DevLogStream"]
 
 [vars]
 DEPLOYMENT_NAME = "default"
