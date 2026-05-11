@@ -1,10 +1,10 @@
 # ADR-0083: DO inside-boundary split — Projector / Broadcaster / AlarmScheduler / WsLifecycle / Dispatcher
 
-- Status: Accepted (Part 1)
+- Status: Accepted (Part 1 + Part 2)
 - Date: 2026-05-11
 - Stage: C / S11 — S15
 - Refines: ADR-0061 (DO hibernating WebSocket projection feed),
-  ADR-0053 (single-writer DO)
+  ADR-0053 (single-writer DO), ADR-0075 (delta broadcast)
 
 ## Decision
 
@@ -83,10 +83,37 @@ Schema/structural equivalence is a maintenance burden — the
 additions to `TicketSchema` surface as runtime decoding failures
 in the existing integration tests.
 
-### Parts 2–5 (S12 — S15) — pending
+### Part 2 (S12) — `Broadcaster` + per-capability frame variant
 
-- S12 `Broadcaster` — coalescing window + per-capability frame
-  variant (`{anonymous | staff}` payloads, staff PII over WS).
+Move every broadcast-side concern off `QueueShop`:
+
+- `Broadcaster` class holds two prior-snapshot caches
+  (`lastAnon: ShopState | null`, `lastStaff: StaffShopState |
+  null`) and a single coalescing timer. `publish()` arms the
+  timer; `fire()` builds both variants, advances the shared
+  `VectorClock`, and fans out per-socket using the capability tag
+  attached at WS upgrade time. Empty diffs on both sides are
+  no-op fan-outs (no vector advance, no send).
+- WS upgrade goes through the Hono router's `requireStaff` guard
+  *before* the DO. On success the router rewrites the URL with
+  `?capability=staff`; the DO reads the query, accepts the
+  socket with the tag `cap:staff` (`ctx.acceptWebSocket(ws,
+  [tag])`), and the Cloudflare runtime preserves the tag across
+  hibernation. The fan-out reads `ctx.getTags(ws)` per socket
+  and selects the matching payload.
+- The staff frame extends each `ProjectionEntry` with the PII
+  fields (`nameKana`, `phoneLast4`, `freeText`); the anonymous
+  frame stays unchanged. PII is built in `buildStaffShopState`
+  and never crosses the anonymous payload boundary —
+  `Broadcaster` does not derive one from the other but invokes
+  the two builders independently, so a regression that leaks PII
+  into the anonymous shape would have to corrupt the builder
+  itself.
+- Wire `FeedMessage` is now a 4-variant discriminated union over
+  `capability ∈ {"anonymous","staff"}` × `kind ∈ {"snapshot","delta"}`.
+
+### Parts 3–5 (S13 — S15) — pending
+
 - S13 `AlarmScheduler` — `MinHeap`-backed multi-kind TTL with
   cold-start Floyd O(n) rehydrate from `tickets WHERE state =
   'PendingNoShow'`.
@@ -99,4 +126,5 @@ in the existing integration tests.
 ## Status
 
 - 2026-05-11 — Part 1 (S11 / `Projector` + `EncodedTicket` pivot)
-  landed. Parts 2–5 follow in the same sprint.
+  + Part 2 (S12 / `Broadcaster` + per-capability frame) landed.
+  Parts 3–5 follow in the same sprint.

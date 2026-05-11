@@ -843,17 +843,26 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   // GET /api/v1/queue/feed — DO Hibernating WebSocket projection
   // feed. Replaces the 2 s SSE polling loop with a server-push
   // stream the QueueShop DO emits on every successful dispatch.
-  // The router forwards the upgrade unchanged; the DO's `fetch`
-  // handles the `Upgrade: websocket` exchange + acceptWebSocket so
-  // the actor can hibernate between events without dropping live
-  // connections (ADR-0061).
-  app.get("/api/v1/queue/feed", (c) => {
+  // The router verifies staff credentials before forwarding the
+  // upgrade and rewrites the URL with `?capability=staff` so the
+  // DO can tag the accepted socket. Anonymous upgrades pass
+  // through untagged and receive the PII-free frame variant
+  // (ADR-0061 / ADR-0083 capability fan-out).
+  app.get("/api/v1/queue/feed", async (c) => {
     if (c.req.header("upgrade") !== "websocket") {
       return c.text("Expected websocket upgrade", 426)
     }
+    const guard = await requireStaff(c)
+    const upgradeUrl = new URL(c.req.raw.url)
+    if (guard.ok) {
+      upgradeUrl.searchParams.set("capability", "staff")
+    } else {
+      upgradeUrl.searchParams.delete("capability")
+    }
     const id = c.env.QUEUE_SHOP.idFromName("shop")
     const obj = c.env.QUEUE_SHOP.get(id)
-    return obj.fetch(c.req.raw)
+    const forwarded = new Request(upgradeUrl, c.req.raw)
+    return obj.fetch(forwarded)
   })
 
   return app

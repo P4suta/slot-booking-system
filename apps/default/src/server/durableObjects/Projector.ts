@@ -31,6 +31,8 @@ import {
   type Lane,
   reservationsByDeadline,
   type ShopState as ShopStateWire,
+  type StaffProjectionEntry,
+  type StaffShopState,
   type Ticket,
   type TicketId,
 } from "@booking/core"
@@ -49,6 +51,18 @@ const projectEntry = (t: EncodedTicket) => ({
   displaySeq: t.displaySeq,
   appointmentAt: t.appointmentAt,
   state: t.state,
+})
+
+const projectStaffEntry = (t: EncodedTicket): StaffProjectionEntry => ({
+  id: t.id,
+  seq: t.seq,
+  lane: t.lane,
+  displaySeq: t.displaySeq,
+  appointmentAt: t.appointmentAt,
+  state: t.state,
+  nameKana: t.nameKana,
+  phoneLast4: t.phoneLast4,
+  freeText: t.freeText,
 })
 
 const apptMs = (t: EncodedTicket): number => {
@@ -104,6 +118,64 @@ export const buildShopState = (inputs: ProjectorInputs): ShopStateWire => {
     serving: serving.map(projectEntry),
     pendingNoShow: pendingNoShow.map(projectEntry),
     waitingPreview: waiting.map(projectEntry),
+    nextReservationDeadline: nextDeadline !== null ? String(nextDeadline) : null,
+  }
+}
+
+/**
+ * Staff-frame variant of {@link buildShopState}. Identical partition
+ * + sort semantics; each projection entry carries the PII fields
+ * (`nameKana`, `phoneLast4`, `freeText`) so the staff WebSocket
+ * feed can render the operator-facing dashboard without a separate
+ * REST round-trip.
+ */
+export const buildStaffShopState = (inputs: ProjectorInputs): StaffShopState => {
+  const { tickets, decodedWaiting, nowMs, servingThresholdMs } = inputs
+  const callable = (t: EncodedTicket): boolean => isCallableNow(t, nowMs)
+  const waiting = tickets
+    .filter((t) => t.state === "Waiting")
+    .sort((a, b) => {
+      const aCall = callable(a)
+      const bCall = callable(b)
+      if (aCall !== bCall) return aCall ? -1 : 1
+      if (!aCall) {
+        const d = apptMs(a) - apptMs(b)
+        if (d !== 0) return d
+      }
+      return a.displaySeq - b.displaySeq
+    })
+  const calledAll = tickets
+    .filter((t): t is EncodedCalledTicket => t.state === "Called")
+    .sort((a, b) => a.displaySeq - b.displaySeq)
+  const calling = calledAll.filter((t) => {
+    const calledMs = Date.parse(t.calledAt)
+    if (Number.isNaN(calledMs)) return true
+    return calledMs + servingThresholdMs > nowMs
+  })
+  const serving = calledAll.filter((t) => {
+    const calledMs = Date.parse(t.calledAt)
+    if (Number.isNaN(calledMs)) return false
+    return calledMs + servingThresholdMs <= nowMs
+  })
+  const pendingNoShow = tickets
+    .filter((t) => t.state === "PendingNoShow")
+    .sort((a, b) => a.displaySeq - b.displaySeq)
+  const laneCount = (lane: Lane) => waiting.filter((t) => t.lane === lane).length
+  const ranked = reservationsByDeadline({ tickets: decodedWaiting })
+  const nextDeadline = ranked[0]?.appointmentAt ?? null
+  return {
+    v: 6 as const,
+    waitingCount: waiting.length,
+    callableNowCount: waiting.filter(callable).length,
+    laneCounts: {
+      walkIn: laneCount("walkIn"),
+      priority: laneCount("priority"),
+      reservation: laneCount("reservation"),
+    },
+    calling: calling.map(projectStaffEntry),
+    serving: serving.map(projectStaffEntry),
+    pendingNoShow: pendingNoShow.map(projectStaffEntry),
+    waitingPreview: waiting.map(projectStaffEntry),
     nextReservationDeadline: nextDeadline !== null ? String(nextDeadline) : null,
   }
 }

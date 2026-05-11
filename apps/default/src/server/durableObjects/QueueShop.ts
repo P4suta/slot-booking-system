@@ -10,15 +10,12 @@ import {
   type ConcurrencyError,
   type CustomerHandle,
   codeOf,
-  computeShopStateDelta,
   type DomainError,
   type EncodedTicket,
   encodeTicket,
-  type FeedMessage,
   type IdGenerator,
   InstantSchema,
   IssueTicket,
-  isEmptyShopStateDelta,
   type Lane,
   type Logger,
   MarkNoShow,
@@ -28,6 +25,7 @@ import {
   Recall,
   RescheduleTicket,
   type ShopState as ShopStateWire,
+  type StaffShopState,
   type StorageError,
   SystemClockLive,
   type Ticket,
@@ -35,13 +33,13 @@ import {
   type TicketRepository,
   TicketSchema,
   UlidIdGeneratorLive,
-  VectorClock,
 } from "@booking/core"
 import { Cause, Effect, Layer, Schema } from "effect"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
+import { Broadcaster, CAPABILITY_TAG_PREFIX } from "./Broadcaster.js"
 import { ensureDurableObjectSchema } from "./migrations.js"
-import { buildShopState } from "./Projector.js"
+import { buildShopState, buildStaffShopState } from "./Projector.js"
 import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecycleLog.js"
 
 type Env = {
@@ -129,10 +127,29 @@ const GRACE_TTL_DEFAULT_MIN = 10
  */
 export class QueueShop extends DurableObject<Env> {
   private readonly sql: SqlStorage
+  private readonly broadcaster: Broadcaster
+
+  // Wire v6 (ADR-0081) — VectorClock advances once per broadcast so
+  // the client can detect snapshot/delta gaps. The DO is single-writer
+  // so one site id suffices; future multi-replica designs (read-only
+  // mirrors / disaster-recovery clones) can extend this without
+  // changing the wire shape.
+  private static readonly SITE_ID = "queueShop"
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env)
     this.sql = state.storage.sql
+    this.broadcaster = new Broadcaster({
+      siteId: QueueShop.SITE_ID,
+      getWebSockets: () => this.ctx.getWebSockets(),
+      getTags: (ws) => this.ctx.getTags(ws),
+      coalesceMs: Number(env.BROADCAST_COALESCE_MS) || 100,
+      buildAnonymous: () => this.computeAnonymousShopState(),
+      buildStaff: () => this.computeStaffShopState(),
+      onBroadcast: (sockets, ms, bytes, failed) => {
+        logWsBroadcast(sockets, ms, bytes, failed)
+      },
+    })
     void state.blockConcurrencyWhile(() => {
       ensureDurableObjectSchema(this.sql)
       return Promise.resolve()
@@ -278,7 +295,7 @@ export class QueueShop extends DurableObject<Env> {
       // The projection is broadcast on success only; failed actions
       // do not change shop state, so re-emitting the same payload
       // would just churn the wire without adding information.
-      await this.broadcastProjection()
+      await this.broadcaster.publish()
       // Re-arm the grace TTL alarm to the earliest PendingNoShow
       // deadline still in flight (ADR-0074). A no-op when the active
       // set has none.
@@ -350,10 +367,18 @@ export class QueueShop extends DurableObject<Env> {
     if (request.headers.get("upgrade") !== "websocket") {
       return new Response("Expected websocket upgrade", { status: 426 })
     }
+    // Capability negotiation: the Hono router verifies the staff JWT
+    // before forwarding the upgrade and rewrites the URL to
+    // `?capability=staff` when verification succeeds. An absent or
+    // unrecognised value defaults to `anonymous` (PII-free).
+    const url = new URL(request.url)
+    const capability = url.searchParams.get("capability") === "staff" ? "staff" : "anonymous"
     const pair = new WebSocketPair()
     const client = pair[0]
     const server = pair[1]
-    this.ctx.acceptWebSocket(server)
+    // Attach the capability tag so per-socket fan-out can pick the
+    // right frame variant (Broadcaster.fire reads ctx.getTags(ws)).
+    this.ctx.acceptWebSocket(server, [`${CAPABILITY_TAG_PREFIX}${capability}`])
     // Auto-respond "pong" to client keepalive "ping" frames so the
     // DO stays hibernated for the keepalive traffic. Without this,
     // every 30s ping wakes the actor; with it, the runtime handles
@@ -363,7 +388,7 @@ export class QueueShop extends DurableObject<Env> {
     logWsAccept()
     // Send the current projection on connect so the new client has
     // full state immediately rather than waiting for the next mutation.
-    await this.sendProjectionTo(server)
+    await this.broadcaster.connect(server, capability)
     return new Response(null, { status: 101, webSocket: client })
   }
 
@@ -423,10 +448,21 @@ export class QueueShop extends DurableObject<Env> {
    * `ticketByHandle` round-trip on every broadcast, which is what
    * was consuming `RL_VERIFY` budget under v3.
    */
-  private async computeShopState(): Promise<ShopStateWire> {
+  private async computeAnonymousShopState(): Promise<ShopStateWire> {
     const tickets = await this.listTickets()
     const decodedWaiting = this.listDecodedWaitingTickets()
     return buildShopState({
+      tickets,
+      decodedWaiting,
+      nowMs: Date.now(),
+      servingThresholdMs: Number(this.env.SERVING_THRESHOLD_MS) || 30_000,
+    })
+  }
+
+  private async computeStaffShopState(): Promise<StaffShopState> {
+    const tickets = await this.listTickets()
+    const decodedWaiting = this.listDecodedWaitingTickets()
+    return buildStaffShopState({
       tickets,
       decodedWaiting,
       nowMs: Date.now(),
@@ -442,110 +478,6 @@ export class QueueShop extends DurableObject<Env> {
       m.set(decoded.id, decoded)
     }
     return m
-  }
-
-  private lastBroadcastSnapshot: ShopStateWire | null = null
-  private coalesceTimer: ReturnType<typeof setTimeout> | undefined
-  // Wire v6 (ADR-0081) — VectorClock advances once per broadcast so
-  // the client can detect snapshot/delta gaps. The DO is single-writer
-  // so one site id suffices; future multi-replica designs (read-only
-  // mirrors / disaster-recovery clones) can extend this without
-  // changing the wire shape.
-  private static readonly SITE_ID = "queueShop"
-  private broadcastVector = VectorClock.empty()
-
-  private async sendProjectionTo(ws: WebSocket): Promise<void> {
-    try {
-      // New connects always receive a full snapshot — the client has
-      // no prior state to merge a delta against. The cached
-      // `lastBroadcastSnapshot` is reused if the DO has broadcast
-      // recently, otherwise a fresh snapshot is computed.
-      const snapshot = this.lastBroadcastSnapshot ?? (await this.computeShopState())
-      this.lastBroadcastSnapshot = snapshot
-      const msg: FeedMessage = {
-        v: 6,
-        kind: "snapshot",
-        at: this.broadcastVector,
-        capability: "anonymous",
-        snapshot,
-      }
-      ws.send(JSON.stringify(msg))
-    } catch (err) {
-      // The socket may have been closed between accept + send; the
-      // runtime evicts it from `ctx.getWebSockets()` on the next
-      // tick. The send failure is therefore expected during normal
-      // disconnect, but the operator dashboard still wants the
-      // signal so a regression that drops every on-connect frame is
-      // attributable.
-      logWsError(`on-connect send failed: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-
-  /**
-   * Fan out the current projection to every attached WebSocket
-   * (ADR-0075). Coalesces dispatches inside `BROADCAST_COALESCE_MS`
-   * (default 100 ms) into a single broadcast; if a prior snapshot
-   * exists the wire payload is the diff against it. Called from
-   * {@link dispatch} after a successful state change.
-   */
-  private broadcastProjection(): Promise<void> {
-    if (this.coalesceTimer !== undefined) return Promise.resolve()
-    const coalesceMs = Number(this.env.BROADCAST_COALESCE_MS) || 100
-    this.coalesceTimer = setTimeout(() => {
-      this.coalesceTimer = undefined
-      void this.fireBroadcast()
-    }, coalesceMs)
-    return Promise.resolve()
-  }
-
-  private async fireBroadcast(): Promise<void> {
-    const sockets = this.ctx.getWebSockets()
-    const next = await this.computeShopState()
-    if (sockets.length === 0) {
-      this.lastBroadcastSnapshot = next
-      return
-    }
-    const started = Date.now()
-    let payload: string
-    const prevVector = this.broadcastVector
-    const nextVector = VectorClock.tick(prevVector, QueueShop.SITE_ID)
-    if (this.lastBroadcastSnapshot === null) {
-      const msg: FeedMessage = {
-        v: 6,
-        kind: "snapshot",
-        at: nextVector,
-        capability: "anonymous",
-        snapshot: next,
-      }
-      payload = JSON.stringify(msg)
-    } else {
-      const delta = computeShopStateDelta(this.lastBroadcastSnapshot, next)
-      if (isEmptyShopStateDelta(delta)) {
-        this.lastBroadcastSnapshot = next
-        return
-      }
-      const msg: FeedMessage = {
-        v: 6,
-        kind: "delta",
-        at: nextVector,
-        since: prevVector,
-        capability: "anonymous",
-        delta,
-      }
-      payload = JSON.stringify(msg)
-    }
-    this.broadcastVector = nextVector
-    this.lastBroadcastSnapshot = next
-    let failed = 0
-    for (const ws of sockets) {
-      try {
-        ws.send(payload)
-      } catch (err) {
-        failed += 1
-        logWsError(`broadcast send failed: ${err instanceof Error ? err.message : String(err)}`)
-      }
-    }
-    logWsBroadcast(sockets.length, Date.now() - started, payload.length, failed)
   }
 
   override async alarm(): Promise<void> {

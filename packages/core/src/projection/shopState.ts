@@ -66,6 +66,48 @@ export type ShopStateDelta = {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Staff frame variant — PII fields layered on top of the anonymous           */
+/* projection entry. The wire envelope carries one capability tag per         */
+/* connected socket; per-socket fan-out (S12) chooses between the             */
+/* anonymous (PII-free) and the staff (PII-bearing) payload variants.         */
+/* -------------------------------------------------------------------------- */
+
+export type StaffProjectionEntry = ProjectionEntry & {
+  readonly nameKana: string
+  readonly phoneLast4: string
+  readonly freeText: string | null
+}
+
+export type StaffArrayDelta = {
+  readonly added?: readonly StaffProjectionEntry[]
+  readonly removed?: readonly string[]
+  readonly updated?: readonly StaffProjectionEntry[]
+}
+
+export type StaffShopState = {
+  readonly v: 6
+  readonly waitingCount: number
+  readonly callableNowCount: number
+  readonly laneCounts: LaneCounts
+  readonly calling: readonly StaffProjectionEntry[]
+  readonly serving: readonly StaffProjectionEntry[]
+  readonly pendingNoShow: readonly StaffProjectionEntry[]
+  readonly waitingPreview: readonly StaffProjectionEntry[]
+  readonly nextReservationDeadline: string | null
+}
+
+export type StaffShopStateDelta = {
+  readonly waitingCount?: number
+  readonly callableNowCount?: number
+  readonly laneCounts?: LaneCounts
+  readonly nextReservationDeadline?: string | null
+  readonly calling?: StaffArrayDelta
+  readonly serving?: StaffArrayDelta
+  readonly pendingNoShow?: StaffArrayDelta
+  readonly waitingPreview?: StaffArrayDelta
+}
+
+/* -------------------------------------------------------------------------- */
 /* Wire envelope v6 (ADR-0081). Each frame carries a VectorClock so the      */
 /* client can detect snapshot/delta gaps; `capability` selects the per-      */
 /* socket frame variant (anonymous = PII-free, staff = PII-bearing). The     */
@@ -79,16 +121,31 @@ export type FeedMessage =
       readonly v: 6
       readonly kind: "snapshot"
       readonly at: VectorClock
-      readonly capability: FrameCapability
+      readonly capability: "anonymous"
       readonly snapshot: ShopState
+    }
+  | {
+      readonly v: 6
+      readonly kind: "snapshot"
+      readonly at: VectorClock
+      readonly capability: "staff"
+      readonly snapshot: StaffShopState
     }
   | {
       readonly v: 6
       readonly kind: "delta"
       readonly at: VectorClock
       readonly since: VectorClock
-      readonly capability: FrameCapability
+      readonly capability: "anonymous"
       readonly delta: ShopStateDelta
+    }
+  | {
+      readonly v: 6
+      readonly kind: "delta"
+      readonly at: VectorClock
+      readonly since: VectorClock
+      readonly capability: "staff"
+      readonly delta: StaffShopStateDelta
     }
 
 const sameLaneCounts = (a: LaneCounts, b: LaneCounts): boolean =>
@@ -216,6 +273,135 @@ export const applyShopStateDelta = (snap: ShopState, delta: ShopStateDelta): Sho
 
 /** Whether a delta carries any actual changes. */
 export const isEmptyShopStateDelta = (d: ShopStateDelta): boolean =>
+  d.waitingCount === undefined &&
+  d.callableNowCount === undefined &&
+  d.laneCounts === undefined &&
+  d.nextReservationDeadline === undefined &&
+  d.calling === undefined &&
+  d.serving === undefined &&
+  d.pendingNoShow === undefined &&
+  d.waitingPreview === undefined
+
+/* -------------------------------------------------------------------------- */
+/* Staff frame helpers — mirror the anonymous variant's delta semantics.     */
+/* PII fields participate in the structural equality so a kana correction    */
+/* surfaces as an `updated` entry rather than a no-op.                        */
+/* -------------------------------------------------------------------------- */
+
+const sameStaffProjectionEntry = (a: StaffProjectionEntry, b: StaffProjectionEntry): boolean =>
+  sameProjectionEntry(a, b) &&
+  a.nameKana === b.nameKana &&
+  a.phoneLast4 === b.phoneLast4 &&
+  a.freeText === b.freeText
+
+const staffArrayDelta = (
+  prev: readonly StaffProjectionEntry[],
+  next: readonly StaffProjectionEntry[],
+): StaffArrayDelta | undefined => {
+  const prevById = new Map(prev.map((t) => [t.id, t] as const))
+  const nextById = new Map(next.map((t) => [t.id, t] as const))
+  const added: StaffProjectionEntry[] = []
+  const removed: string[] = []
+  const updated: StaffProjectionEntry[] = []
+  for (const t of next) {
+    const prior = prevById.get(t.id)
+    if (prior === undefined) {
+      added.push(t)
+    } else if (!sameStaffProjectionEntry(prior, t)) {
+      updated.push(t)
+    }
+  }
+  for (const id of prevById.keys()) {
+    if (!nextById.has(id)) removed.push(id)
+  }
+  if (added.length === 0 && removed.length === 0 && updated.length === 0) return undefined
+  const out: {
+    added?: StaffProjectionEntry[]
+    removed?: string[]
+    updated?: StaffProjectionEntry[]
+  } = {}
+  if (added.length > 0) out.added = added
+  if (removed.length > 0) out.removed = removed
+  if (updated.length > 0) out.updated = updated
+  return out
+}
+
+const applyStaffArrayDelta = (
+  prev: readonly StaffProjectionEntry[],
+  delta: StaffArrayDelta,
+): readonly StaffProjectionEntry[] => {
+  const removed = new Set(delta.removed ?? [])
+  const updatedById = new Map((delta.updated ?? []).map((t) => [t.id, t] as const))
+  const merged: StaffProjectionEntry[] = []
+  for (const t of prev) {
+    if (removed.has(t.id)) continue
+    merged.push(updatedById.get(t.id) ?? t)
+  }
+  for (const t of delta.added ?? []) merged.push(t)
+  merged.sort((a, b) => a.displaySeq - b.displaySeq)
+  return merged
+}
+
+export const computeStaffShopStateDelta = (
+  prev: StaffShopState,
+  next: StaffShopState,
+): StaffShopStateDelta => {
+  const out: {
+    waitingCount?: number
+    callableNowCount?: number
+    laneCounts?: LaneCounts
+    nextReservationDeadline?: string | null
+    calling?: StaffArrayDelta
+    serving?: StaffArrayDelta
+    pendingNoShow?: StaffArrayDelta
+    waitingPreview?: StaffArrayDelta
+  } = {}
+  if (prev.waitingCount !== next.waitingCount) out.waitingCount = next.waitingCount
+  if (prev.callableNowCount !== next.callableNowCount) {
+    out.callableNowCount = next.callableNowCount
+  }
+  if (!sameLaneCounts(prev.laneCounts, next.laneCounts)) out.laneCounts = next.laneCounts
+  if (prev.nextReservationDeadline !== next.nextReservationDeadline) {
+    out.nextReservationDeadline = next.nextReservationDeadline
+  }
+  const callingDelta = staffArrayDelta(prev.calling, next.calling)
+  if (callingDelta !== undefined) out.calling = callingDelta
+  const servingDelta = staffArrayDelta(prev.serving, next.serving)
+  if (servingDelta !== undefined) out.serving = servingDelta
+  const pendingDelta = staffArrayDelta(prev.pendingNoShow, next.pendingNoShow)
+  if (pendingDelta !== undefined) out.pendingNoShow = pendingDelta
+  const previewDelta = staffArrayDelta(prev.waitingPreview, next.waitingPreview)
+  if (previewDelta !== undefined) out.waitingPreview = previewDelta
+  return out
+}
+
+export const applyStaffShopStateDelta = (
+  snap: StaffShopState,
+  delta: StaffShopStateDelta,
+): StaffShopState => ({
+  v: 6,
+  waitingCount: delta.waitingCount ?? snap.waitingCount,
+  callableNowCount: delta.callableNowCount ?? snap.callableNowCount,
+  laneCounts: delta.laneCounts ?? snap.laneCounts,
+  nextReservationDeadline:
+    delta.nextReservationDeadline === undefined
+      ? snap.nextReservationDeadline
+      : delta.nextReservationDeadline,
+  calling:
+    delta.calling === undefined ? snap.calling : applyStaffArrayDelta(snap.calling, delta.calling),
+  serving:
+    delta.serving === undefined ? snap.serving : applyStaffArrayDelta(snap.serving, delta.serving),
+  pendingNoShow:
+    delta.pendingNoShow === undefined
+      ? snap.pendingNoShow
+      : applyStaffArrayDelta(snap.pendingNoShow, delta.pendingNoShow),
+  waitingPreview:
+    delta.waitingPreview === undefined
+      ? snap.waitingPreview
+      : applyStaffArrayDelta(snap.waitingPreview, delta.waitingPreview),
+})
+
+export const isEmptyStaffShopStateDelta = (d: StaffShopStateDelta): boolean =>
   d.waitingCount === undefined &&
   d.callableNowCount === undefined &&
   d.laneCounts === undefined &&
