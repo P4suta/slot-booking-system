@@ -425,7 +425,8 @@
                     </div>
                     {#if t.appointmentAt !== null}
                       <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                        {t.appointmentAt.slice(11, 16)}
+                        <span class="slot-chip-label">予約</span>
+                        <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
                       </span>
                     {/if}
                   </div>
@@ -490,7 +491,8 @@
                   </div>
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                      {t.appointmentAt.slice(11, 16)}
+                      <span class="slot-chip-label">予約</span>
+                      <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
                     </span>
                   {/if}
                 </div>
@@ -501,10 +503,10 @@
                   </div>
                 </div>
                 <div class="row">
-                  <Button variant="primary" size="md" onclick={() => onStartServing(t.id)} disabled={busy}>対応開始</Button>
-                  <Button variant="secondary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
-                  <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>不在</Button>
-                  <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>取消</Button>
+                  <Button variant="primary" size="md" onclick={() => onStartServing(t.id)} disabled={busy}>対応を始める</Button>
+                  <Button variant="secondary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>すぐ完了</Button>
+                  <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>来なかった</Button>
+                  <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>待機に戻す</Button>
                 </div>
               </div>
             </Card>
@@ -528,7 +530,8 @@
                   </div>
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                      {t.appointmentAt.slice(11, 16)}
+                      <span class="slot-chip-label">予約</span>
+                      <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
                     </span>
                   {/if}
                 </div>
@@ -539,8 +542,8 @@
                   </div>
                 </div>
                 <div class="row">
-                  <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
-                  <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>キャンセル</Button>
+                  <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>対応完了</Button>
+                  <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>対応を中止</Button>
                 </div>
               </div>
             </Card>
@@ -919,15 +922,16 @@
   }
   .select-handle {
     position: absolute;
-    top: var(--space-2);
-    left: var(--space-2);
+    top: 50%;
+    left: var(--space-3);
+    transform: translateY(-50%);
     display: inline-flex;
     align-items: center;
     z-index: 2;
   }
   .select-handle input[type="checkbox"] {
-    width: 1.25rem;
-    height: 1.25rem;
+    width: 1.5rem;
+    height: 1.5rem;
     cursor: pointer;
     accent-color: var(--color-accent-primary);
   }
@@ -936,7 +940,7 @@
     appearance: none;
     background: transparent;
     border: 0;
-    padding: 0 0 0 calc(1.25rem + var(--space-3));
+    padding: 0 0 0 calc(1.5rem + var(--space-3) + var(--space-3));
     margin: 0;
     text-align: left;
     color: inherit;
@@ -1042,11 +1046,22 @@
     color: var(--color-fg-primary);
   }
   .slot-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-1);
     font: var(--text-mono-sm);
     color: var(--color-fg-secondary);
     background: var(--color-bg-subtle);
     border-radius: var(--radius-pill);
     padding: var(--space-1) var(--space-3);
+  }
+  .slot-chip-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+    font-family: inherit;
+  }
+  .slot-chip-time {
+    font-variant-numeric: tabular-nums;
   }
   .slot-chip[data-state="soon"] {
     color: oklch(40% 0.13 65);
