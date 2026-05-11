@@ -1,25 +1,20 @@
-import { Effect } from "effect"
+import type { Effect } from "effect"
 import type { ConcurrencyError, DomainError, StorageError } from "../../../domain/errors/Errors.js"
 import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
-import {
-  applyMarkNoShow,
-  guardActive,
-  invalidTransition,
-} from "../../../domain/queue/transitions.js"
+import { applyMarkNoShow } from "../../../domain/queue/transitions.js"
 import type { TicketId } from "../../../domain/types/EntityId.js"
 import type { Clock } from "../../ports/Clock.js"
 import type { TicketRepository } from "../../ports/EventSourcedRepository.js"
 import type { IdGenerator } from "../../ports/IdGenerator.js"
 import type { Logger } from "../../ports/Logger.js"
-import { loadOrTicketNotFound } from "../_authenticate.js"
-import { applyAndPersist } from "../_withUseCaseEnv.js"
+import { runCommand } from "../_withUseCaseEnv.js"
 
 /**
  * MarkNoShow — Called | PendingNoShow → NoShow. Per ADR-0074 the
- * staff "来なかった" path goes through PendingNoShow first; this
- * use case is reached either by the DO alarm sweep when a
- * PendingNoShow's TTL elapses or by a system / admin override.
- * The actor field records who.
+ * staff "来なかった" path goes through PendingNoShow first; this use
+ * case is reached either by the DO alarm sweep when a
+ * PendingNoShow's TTL elapses or by a system / admin override. The
+ * actor field records who.
  */
 export const MarkNoShow = (
   ticketId: TicketId,
@@ -29,21 +24,11 @@ export const MarkNoShow = (
   DomainError | ConcurrencyError | StorageError,
   Clock | IdGenerator | TicketRepository | Logger
 > =>
-  Effect.gen(function* () {
-    const loaded = yield* loadOrTicketNotFound(ticketId)
-    const terminal = guardActive(loaded.state)
-    if (terminal !== null) return yield* Effect.fail(terminal)
-    if (loaded.state.state !== "Called" && loaded.state.state !== "PendingNoShow") {
-      return yield* Effect.fail(invalidTransition(loaded.state.state, "MarkNoShow"))
-    }
-    const source = loaded.state
-    return yield* applyAndPersist({
-      loaded,
-      apply: (at, eventId) => applyMarkNoShow(source, at, eventId, actor),
-      log: {
-        tag: "MarkNoShow",
-        code: "I_USECASE_MARK_NO_SHOW",
-        data: { ticketId, actor },
-      },
-    })
+  runCommand({
+    ticketId,
+    command: "MarkNoShow",
+    from: ["Called", "PendingNoShow"],
+    apply: (source, at, eventId) => applyMarkNoShow(source, at, eventId, actor),
+    code: "I_USECASE_MARK_NO_SHOW",
+    data: { ticketId, actor },
   })

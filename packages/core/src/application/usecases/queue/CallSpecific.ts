@@ -14,7 +14,9 @@ import { applyAndPersist } from "../_withUseCaseEnv.js"
  * CallSpecific — call a specific Waiting ticket regardless of lane
  * head / FIFO position (ADR-0065). Sibling of {@link CallNext}; both
  * route through {@link applyCall}, but the entry point names the
- * intent in the audit log.
+ * intent in the audit log. Kept off the {@link runCommand} Kleisli
+ * combinator only so the lane is logged alongside the ticket id;
+ * everything else mirrors that template.
  */
 export const CallSpecific = (
   ticketId: TicketId,
