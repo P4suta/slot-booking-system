@@ -72,6 +72,20 @@ export const NoShowedEventSchema = Schema.Struct({
 })
 export type NoShowedEvent = Schema.Schema.Type<typeof NoShowedEventSchema>
 
+/**
+ * Staff-driven `Called → PendingNoShow` transition (ADR-0074). The
+ * staff member hits 「来なかった」 — the ticket enters a grace
+ * window during which the customer can choose 「遅れる」 (Recall or
+ * Reschedule) or 「来ない」 (Cancel). After `markedAt + GRACE_TTL_MIN`
+ * the DO alarm sweeps the ticket into `NoShow`.
+ */
+export const PendingNoShowMarkedEventSchema = Schema.Struct({
+  ...TicketEventBaseFields,
+  type: Schema.Literal("PendingNoShowMarked"),
+  markedBy: ActorSchema,
+})
+export type PendingNoShowMarkedEvent = Schema.Schema.Type<typeof PendingNoShowMarkedEventSchema>
+
 export const CancelledEventSchema = Schema.Struct({
   ...TicketEventBaseFields,
   type: Schema.Literal("Cancelled"),
@@ -144,6 +158,7 @@ export const TicketEventSchema = Schema.Union([
   CalledEventSchema,
   ServedEventSchema,
   NoShowedEventSchema,
+  PendingNoShowMarkedEventSchema,
   CancelledEventSchema,
   RecalledEventSchema,
   CheckedInEventSchema,
@@ -158,6 +173,7 @@ export const ALL_TICKET_EVENT_TYPES: readonly TicketEventType[] = [
   "Called",
   "Served",
   "NoShowed",
+  "PendingNoShowMarked",
   "Cancelled",
   "Recalled",
   "CheckedIn",

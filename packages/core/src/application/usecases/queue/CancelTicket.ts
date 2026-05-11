@@ -12,12 +12,12 @@ import { authenticateCustomer, loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * CancelTicket — Waiting | Called → Cancelled. Both customer (with
- * handle) and staff (no handle, capability already verified
- * upstream) call into this use case; the actor field records who.
- * ADR-0073 dropped the Serving variant, so the source narrows to
- * the two pre-terminal states the wire actually carries; the
- * `reason` field captures the operational context.
+ * CancelTicket — Waiting | Called | PendingNoShow → Cancelled.
+ * Both customer (with handle) and staff (no handle, capability
+ * already verified upstream) call into this use case; the actor
+ * field records who. PendingNoShow is the source for the customer
+ * 「来ない」 response inside the grace window (ADR-0074); Waiting /
+ * Called are the standard self-cancel / staff-cancel paths.
  *
  * Customer path performs handle verification through
  * `authenticateCustomer`; staff path skips it and just loads.
@@ -44,13 +44,18 @@ export const CancelTicket = (
     /* v8 ignore next */
     if (terminal !== null) return yield* Effect.fail(terminal)
     // `guardActive` short-circuits on the three terminal states
-    // (Cancelled / Served / NoShow); the two remaining variants
-    // (Waiting, Called) are both accepted by `applyCancel`. TypeScript
-    // can't narrow the union from the runtime `guardActive` check
-    // alone, so a defensive state-tag re-check feeds the narrowing
-    // required by `applyCancel`'s `Waiting | Called` input.
-    /* v8 ignore next 6 */
-    if (loaded.state.state !== "Waiting" && loaded.state.state !== "Called") {
+    // (Cancelled / Served / NoShow); the three remaining variants
+    // (Waiting, Called, PendingNoShow) are all accepted by
+    // `applyCancel`. TypeScript can't narrow the union from the
+    // runtime `guardActive` check alone, so a defensive state-tag
+    // re-check feeds the narrowing required by `applyCancel`'s
+    // `Waiting | Called | PendingNoShow` input.
+    /* v8 ignore next 7 */
+    if (
+      loaded.state.state !== "Waiting" &&
+      loaded.state.state !== "Called" &&
+      loaded.state.state !== "PendingNoShow"
+    ) {
       return yield* Effect.fail(invalidTransition(loaded.state.state, "Cancel"))
     }
     const cancellable = loaded.state

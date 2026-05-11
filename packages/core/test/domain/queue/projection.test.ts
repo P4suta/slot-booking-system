@@ -15,6 +15,7 @@ import {
   headOfLane,
   nextDisplaySeqInLane,
   occupancyExcludingSelf,
+  pendingNoShowTickets,
   positionOf,
   replay,
   reservationsByDeadline,
@@ -29,6 +30,7 @@ import {
   applyCheckIn,
   applyIssue,
   applyMarkNoShow,
+  applyMarkPendingNoShow,
   applyMarkServed,
   applyRecall,
 } from "../../../src/domain/queue/transitions.js"
@@ -598,6 +600,21 @@ describe("Cancelled fold (projection coverage)", () => {
     expect(applyEvent(empty, ghostEv).tickets.size).toBe(0)
   })
 
+  it("a PendingNoShowMarked event for a non-Called ticket is a no-op", () => {
+    const a = issue(1)
+    const evt = {
+      id: newTicketEventId(),
+      ticketId: a.ticket.id,
+      version: 1 as const,
+      occurredAt: at("2026-05-08T09:01:00Z"),
+      recordedAt: at("2026-05-08T09:01:00Z"),
+      type: "PendingNoShowMarked" as const,
+      markedBy: "staff" as const,
+    }
+    const snap = replay([a.event, evt])
+    expect(snap.tickets.get(a.ticket.id)?.state).toBe("Waiting")
+  })
+
   it("Issue → Called → MarkNoShow projects to NoShow", () => {
     const a = issue(1)
     const call = applyCall(a.ticket as Waiting, {
@@ -612,6 +629,95 @@ describe("Cancelled fold (projection coverage)", () => {
     )
     const snap = replay([a.event, call.event, ns.event])
     expect(snap.tickets.get(a.ticket.id)?.state).toBe("NoShow")
+  })
+})
+
+describe("PendingNoShow fold (ADR-0074)", () => {
+  it("Issue → Called → PendingNoShowMarked projects to PendingNoShow", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const ev = applyMarkPendingNoShow(
+      call.ticket as Called,
+      at("2026-05-08T09:08:00Z"),
+      newTicketEventId(),
+    )
+    const snap = replay([a.event, call.event, ev.event])
+    const t = snap.tickets.get(a.ticket.id)
+    expect(t?.state).toBe("PendingNoShow")
+    if (t?.state === "PendingNoShow") expect(t.markedBy).toBe("staff")
+  })
+
+  it("PendingNoShow → NoShow via NoShowed event (TTL system path)", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const pending = applyMarkPendingNoShow(
+      call.ticket as Called,
+      at("2026-05-08T09:08:00Z"),
+      newTicketEventId(),
+    )
+    const noshow = applyMarkNoShow(
+      pending.ticket as never,
+      at("2026-05-08T09:18:00Z"),
+      newTicketEventId(),
+      "system",
+    )
+    const snap = replay([a.event, call.event, pending.event, noshow.event])
+    expect(snap.tickets.get(a.ticket.id)?.state).toBe("NoShow")
+  })
+
+  it("PendingNoShow → Waiting via Recalled event (customer late path)", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const pending = applyMarkPendingNoShow(
+      call.ticket as Called,
+      at("2026-05-08T09:08:00Z"),
+      newTicketEventId(),
+    )
+    const recall = applyRecall(
+      pending.ticket as never,
+      at("2026-05-08T09:12:00Z"),
+      newTicketEventId(),
+      "customer",
+    )
+    const snap = replay([a.event, call.event, pending.event, recall.event])
+    expect(snap.tickets.get(a.ticket.id)?.state).toBe("Waiting")
+  })
+
+  it("pendingNoShowTickets returns only PendingNoShow, sorted by displaySeq", () => {
+    const a = issue(1, { lane: "walkIn", displaySeq: 2 })
+    const b = issue(2, { lane: "walkIn", displaySeq: 1 })
+    const c = issue(3, { lane: "walkIn", displaySeq: 3 })
+    const ca = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const cb = applyCall(b.ticket as Waiting, {
+      at: at("2026-05-08T09:06:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const pa = applyMarkPendingNoShow(
+      ca.ticket as Called,
+      at("2026-05-08T09:08:00Z"),
+      newTicketEventId(),
+    )
+    const pb = applyMarkPendingNoShow(
+      cb.ticket as Called,
+      at("2026-05-08T09:09:00Z"),
+      newTicketEventId(),
+    )
+    const snap = replay([a.event, b.event, c.event, ca.event, cb.event, pa.event, pb.event])
+    const ids = pendingNoShowTickets(snap).map((t) => t.id)
+    expect(ids).toEqual([b.ticket.id, a.ticket.id])
+    expect(pendingNoShowTickets(snap, "priority").map((t) => t.id)).toEqual([])
   })
 })
 

@@ -6,7 +6,7 @@ import * as req from "../_harness/sample-requests.js"
 
 /**
  * ADR-0069 — the `tickets` table carries a partial UNIQUE index
- * `(name_kana, phone_last4) WHERE state IN ('Waiting','Called')`
+ * `(name_kana, phone_last4) WHERE state IN ('Waiting','Called','PendingNoShow')`
  * as the physical safety net behind core's idempotent IssueTicket.
  *
  * Core is the first line of defence: a second issue with the same
@@ -36,7 +36,7 @@ describe("ADR-0069 handle UNIQUE index — physical guarantee", () => {
     const ddl = rows[0]?.sql as string | undefined
     expect(typeof ddl).toBe("string")
     expect(ddl ?? "").toMatch(/UNIQUE/i)
-    expect(ddl ?? "").toMatch(/WHERE state IN \('Waiting', 'Called'\)/i)
+    expect(ddl ?? "").toMatch(/WHERE state IN \('Waiting', 'Called', 'PendingNoShow'\)/i)
   })
 
   it("a direct INSERT of a colliding active row hits SQLITE_CONSTRAINT", async () => {

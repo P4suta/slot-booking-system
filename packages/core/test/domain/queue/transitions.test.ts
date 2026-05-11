@@ -1,13 +1,14 @@
 import { Temporal } from "@js-temporal/polyfill"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import type { Called, Waiting } from "../../../src/domain/queue/Ticket.js"
+import type { Called, PendingNoShow, Waiting } from "../../../src/domain/queue/Ticket.js"
 import {
   applyCall,
   applyCancel,
   applyCheckIn,
   applyIssue,
   applyMarkNoShow,
+  applyMarkPendingNoShow,
   applyMarkServed,
   applyRecall,
   guardActive,
@@ -316,5 +317,91 @@ describe("invalidTransition", () => {
 
   it("accepts CheckIn as a command name (ADR-0068)", () => {
     expect(invalidTransition("Called", "CheckIn").command).toBe("CheckIn")
+  })
+
+  it("accepts MarkPendingNoShow as a command name (ADR-0074)", () => {
+    expect(invalidTransition("Waiting", "MarkPendingNoShow").command).toBe("MarkPendingNoShow")
+  })
+})
+
+describe("applyMarkPendingNoShow (ADR-0074)", () => {
+  const called = (): Called => {
+    const { ticket } = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    return ticket as Called
+  }
+
+  it("transitions Called → PendingNoShow with markedAt + markedBy", () => {
+    const { ticket, event } = applyMarkPendingNoShow(
+      called(),
+      at("2026-05-08T09:08:00Z"),
+      newTicketEventId(),
+    )
+    expect(ticket.state).toBe("PendingNoShow")
+    expect(event.type).toBe("PendingNoShowMarked")
+    if (ticket.state === "PendingNoShow") {
+      expect(ticket.markedBy).toBe("staff")
+      expect(ticket.calledAt.toString()).toBe(at("2026-05-08T09:05:00Z").toString())
+    }
+  })
+
+  it("honours an explicit markedBy actor", () => {
+    const { ticket } = applyMarkPendingNoShow(
+      called(),
+      at("2026-05-08T09:08:00Z"),
+      newTicketEventId(),
+      "system",
+    )
+    if (ticket.state === "PendingNoShow") expect(ticket.markedBy).toBe("system")
+  })
+})
+
+describe("PendingNoShow source extensions (ADR-0074)", () => {
+  const pendingNoShow = (): PendingNoShow => {
+    const c = applyCall(issued(), {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    }).ticket as Called
+    const { ticket } = applyMarkPendingNoShow(c, at("2026-05-08T09:08:00Z"), newTicketEventId())
+    return ticket as PendingNoShow
+  }
+
+  it("applyMarkNoShow accepts PendingNoShow (TTL system path)", () => {
+    const { ticket, event } = applyMarkNoShow(
+      pendingNoShow(),
+      at("2026-05-08T09:18:00Z"),
+      newTicketEventId(),
+      "system",
+    )
+    expect(ticket.state).toBe("NoShow")
+    expect(event.type).toBe("NoShowed")
+  })
+
+  it("applyRecall accepts PendingNoShow (customer 「遅れる」 walk-in path)", () => {
+    const { ticket, event } = applyRecall(
+      pendingNoShow(),
+      at("2026-05-08T09:12:00Z"),
+      newTicketEventId(),
+      "customer",
+    )
+    expect(ticket.state).toBe("Waiting")
+    expect(event.type).toBe("Recalled")
+  })
+
+  it("applyCancel accepts PendingNoShow (customer 「来ない」 path)", () => {
+    const { ticket } = applyCancel(
+      pendingNoShow(),
+      at("2026-05-08T09:12:00Z"),
+      newTicketEventId(),
+      "customer",
+      "no-come",
+    )
+    expect(ticket.state).toBe("Cancelled")
+  })
+
+  it("guardActive treats PendingNoShow as active (returns null)", () => {
+    expect(guardActive(pendingNoShow())).toBeNull()
   })
 })

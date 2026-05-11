@@ -10,6 +10,7 @@ import {
   CheckIn,
   IssueTicket,
   MarkNoShow,
+  MarkPendingNoShow,
   MarkServed,
   Recall,
   RescheduleTicket,
@@ -423,6 +424,93 @@ describe("queue lifecycle round-trip", () => {
         const out = yield* CallBatch([a.id, b.id])
         expect(out).toHaveLength(2)
         expect(out.every((t) => t.state === "Called")).toBe(true)
+      }),
+    ))
+
+  it("MarkPendingNoShow transitions Called → PendingNoShow (ADR-0074)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* CallNext()
+        const pending = yield* MarkPendingNoShow(t1.id)
+        expect(pending.state).toBe("PendingNoShow")
+      }),
+    ))
+
+  it("MarkPendingNoShow on a Waiting ticket yields InvalidStateTransition", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        const r = yield* eitherEffect(MarkPendingNoShow(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("InvalidStateTransition")
+      }),
+    ))
+
+  it("MarkPendingNoShow on a Cancelled ticket yields AlreadyCancelled", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null })
+        yield* CancelTicket(t1.id, "customer", "x", h)
+        const r = yield* eitherEffect(MarkPendingNoShow(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
+      }),
+    ))
+
+  it("MarkPendingNoShow on a non-existent ticket yields TicketNotFound", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const r = yield* eitherEffect(MarkPendingNoShow("tkt_00000000000000000000000000" as never))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
+      }),
+    ))
+
+  it("MarkNoShow accepts a PendingNoShow source (TTL system path)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* CallNext()
+        yield* MarkPendingNoShow(t1.id)
+        const ns = yield* MarkNoShow(t1.id, "system")
+        expect(ns.state).toBe("NoShow")
+      }),
+    ))
+
+  it("Recall accepts a PendingNoShow source (customer 「遅れる」 walk-in path)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* CallNext()
+        yield* MarkPendingNoShow(t1.id)
+        const w = yield* Recall(t1.id, "customer")
+        expect(w.state).toBe("Waiting")
+      }),
+    ))
+
+  it("CancelTicket accepts a PendingNoShow source (customer 「来ない」 path)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null })
+        yield* CallNext()
+        yield* MarkPendingNoShow(t1.id)
+        const c = yield* CancelTicket(t1.id, "customer", "no-come", h)
+        expect(c.state).toBe("Cancelled")
       }),
     ))
 

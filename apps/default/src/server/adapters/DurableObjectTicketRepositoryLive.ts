@@ -347,7 +347,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           // the active set holds no ticket with the supplied handle.
           const rows = sql
             .exec(
-              "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called') LIMIT 1",
+              "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','PendingNoShow') LIMIT 1",
               handle.nameKana,
               handle.phoneLast4,
             )

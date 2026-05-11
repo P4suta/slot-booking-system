@@ -15,7 +15,7 @@ export type Env = {
   readonly OTEL_EXPORTER_URL?: string
   readonly OTEL_EXPORTER_KEY?: string
   readonly STAFF_SESSION_SECRET?: string
-  readonly NO_SHOW_TIMEOUT_SECONDS?: string
+  readonly GRACE_TTL_MIN?: string
   readonly ALLOWED_ORIGINS?: string
   readonly SLOT_DEFAULT_CAPACITY?: string
   readonly SLOT_DEFAULT_GRANULARITY?: string

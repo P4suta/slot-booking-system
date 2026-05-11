@@ -2,7 +2,7 @@ import { Effect } from "effect"
 import type { ConcurrencyError, DomainError, StorageError } from "../../../domain/errors/Errors.js"
 import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
 import {
-  applyMarkNoShow,
+  applyMarkPendingNoShow,
   guardActive,
   invalidTransition,
 } from "../../../domain/queue/transitions.js"
@@ -15,13 +15,14 @@ import { loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * MarkNoShow — Called | PendingNoShow → NoShow. Per ADR-0074 the
- * staff "来なかった" path goes through PendingNoShow first; this
- * use case is reached either by the DO alarm sweep when a
- * PendingNoShow's TTL elapses or by a system / admin override.
- * The actor field records who.
+ * MarkPendingNoShow — Called → PendingNoShow (ADR-0074). The
+ * staff-facing 「来なかった」 button: the ticket enters a grace
+ * window during which the customer can choose 「遅れる」 (Recall
+ * for walk-in/priority, Reschedule for reservation) or 「来ない」
+ * (Cancel). The DO alarm sweeps any PendingNoShow whose
+ * `markedAt + GRACE_TTL_MIN` has elapsed into terminal NoShow.
  */
-export const MarkNoShow = (
+export const MarkPendingNoShow = (
   ticketId: TicketId,
   actor: Actor = "staff",
 ): Effect.Effect<
@@ -33,16 +34,16 @@ export const MarkNoShow = (
     const loaded = yield* loadOrTicketNotFound(ticketId)
     const terminal = guardActive(loaded.state)
     if (terminal !== null) return yield* Effect.fail(terminal)
-    if (loaded.state.state !== "Called" && loaded.state.state !== "PendingNoShow") {
-      return yield* Effect.fail(invalidTransition(loaded.state.state, "MarkNoShow"))
+    if (loaded.state.state !== "Called") {
+      return yield* Effect.fail(invalidTransition(loaded.state.state, "MarkPendingNoShow"))
     }
-    const source = loaded.state
+    const called = loaded.state
     return yield* applyAndPersist({
       loaded,
-      apply: (at, eventId) => applyMarkNoShow(source, at, eventId, actor),
+      apply: (at, eventId) => applyMarkPendingNoShow(called, at, eventId, actor),
       log: {
-        tag: "MarkNoShow",
-        code: "I_USECASE_MARK_NO_SHOW",
+        tag: "MarkPendingNoShow",
+        code: "I_USECASE_MARK_PENDING_NO_SHOW",
         data: { ticketId, actor },
       },
     })

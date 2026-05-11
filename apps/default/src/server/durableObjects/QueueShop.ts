@@ -17,6 +17,7 @@ import {
   type Lane,
   type Logger,
   MarkNoShow,
+  MarkPendingNoShow,
   MarkServed,
   type NonEmptyReadonlyArray,
   Recall,
@@ -38,7 +39,7 @@ import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecyc
 
 type Env = {
   DB: D1Database
-  NO_SHOW_TIMEOUT_SECONDS?: string
+  GRACE_TTL_MIN?: string
   SERVING_THRESHOLD_MS?: string
 }
 
@@ -69,6 +70,7 @@ export type QueueAction =
   | { type: "CallBatch"; ticketIds: NonEmptyReadonlyArray<TicketId>; actor: "staff" | "system" }
   | { type: "MarkServed"; ticketId: TicketId }
   | { type: "MarkNoShow"; ticketId: TicketId; actor: "staff" | "system" }
+  | { type: "MarkPendingNoShow"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "Recall"; ticketId: TicketId; actor: "staff" | "system" }
   | {
       type: "CancelTicket"
@@ -116,16 +118,17 @@ export type QueueResult =
 
 const encodeTicket = (t: Ticket): EncodedTicket => Schema.encodeUnknownSync(TicketSchema)(t)
 
-const NO_SHOW_TIMEOUT_DEFAULT_SECONDS = 300
+const GRACE_TTL_DEFAULT_MIN = 10
 
 /**
  * QueueShop — the single-writer Durable Object actor (ADR-0053).
  * One instance per deployment, keyed by `idFromName("shop")`. The
  * actor model serialises every concurrent write so the FIFO queue
  * is consistent without locks; the DO's local SQLite is the
- * canonical event log + projection. The alarm tick fires the no-show
- * sweep (`Called` tickets older than `NO_SHOW_TIMEOUT_SECONDS` →
- * `NoShow`) and drains the outbox to D1.
+ * canonical event log + projection. The alarm tick fires the
+ * grace-period TTL sweep (PendingNoShow tickets whose
+ * `markedAt + GRACE_TTL_MIN` has elapsed → NoShow, ADR-0074)
+ * and reschedules itself to the next earliest deadline.
  */
 export class QueueShop extends DurableObject<Env> {
   private readonly sql: SqlStorage
@@ -158,7 +161,7 @@ export class QueueShop extends DurableObject<Env> {
     if (action.type === "IssueTicket") {
       const row = this.sql
         .exec(
-          "SELECT id FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called') LIMIT 1",
+          "SELECT id FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','PendingNoShow') LIMIT 1",
           action.handle.nameKana,
           action.handle.phoneLast4,
         )
@@ -193,6 +196,9 @@ export class QueueShop extends DurableObject<Env> {
         break
       case "MarkNoShow":
         eff = MarkNoShow(action.ticketId, action.actor)
+        break
+      case "MarkPendingNoShow":
+        eff = MarkPendingNoShow(action.ticketId, action.actor)
         break
       case "Recall":
         eff = Recall(action.ticketId, action.actor)
@@ -276,6 +282,10 @@ export class QueueShop extends DurableObject<Env> {
       // do not change shop state, so re-emitting the same payload
       // would just churn the wire without adding information.
       await this.broadcastProjection()
+      // Re-arm the grace TTL alarm to the earliest PendingNoShow
+      // deadline still in flight (ADR-0074). A no-op when the active
+      // set has none.
+      await this.scheduleNextAlarm()
     }
     return result
   }
@@ -318,7 +328,7 @@ export class QueueShop extends DurableObject<Env> {
   getByHandle(handle: CustomerHandle): Promise<EncodedTicket | null> {
     const rows = this.sql
       .exec(
-        "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called') LIMIT 1",
+        "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','PendingNoShow') LIMIT 1",
         handle.nameKana,
         handle.phoneLast4,
       )
@@ -481,6 +491,9 @@ export class QueueShop extends DurableObject<Env> {
       if (Number.isNaN(calledMs)) return false
       return calledMs + SERVING_THRESHOLD_MS <= nowMs
     })
+    const pendingNoShow = tickets
+      .filter((t) => t.state === "PendingNoShow")
+      .sort((a, b) => a.displaySeq - b.displaySeq)
     const laneCount = (lane: Lane) => waiting.filter((t) => t.lane === lane).length
     // Decode just the waiting subset to drive the EDF deadline read;
     // the rest of the payload stays in encoded form to keep the wire
@@ -500,6 +513,7 @@ export class QueueShop extends DurableObject<Env> {
       },
       calling: calling.map(project),
       serving: serving.map(project),
+      pendingNoShow: pendingNoShow.map(project),
       waitingPreview: waiting.map(project),
       nextReservationDeadline: nextDeadline !== null ? String(nextDeadline) : null,
     })
@@ -553,12 +567,10 @@ export class QueueShop extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     const startedAt = Date.now()
-    const timeoutSeconds = Number(
-      this.env.NO_SHOW_TIMEOUT_SECONDS ?? NO_SHOW_TIMEOUT_DEFAULT_SECONDS,
-    )
-    const cutoff = new Date(Date.now() - timeoutSeconds * 1000).toISOString()
+    const ttlMs = (Number(this.env.GRACE_TTL_MIN) || GRACE_TTL_DEFAULT_MIN) * 60_000
+    const cutoff = new Date(Date.now() - ttlMs).toISOString()
     const stale = this.sql
-      .exec("SELECT id FROM tickets WHERE state = 'Called' AND called_at <= ?", cutoff)
+      .exec("SELECT id FROM tickets WHERE state = 'PendingNoShow' AND marked_at <= ?", cutoff)
       .toArray()
     let succeeded = 0
     let failed = 0
@@ -598,5 +610,30 @@ export class QueueShop extends DurableObject<Env> {
         ms: Date.now() - startedAt,
       }),
     )
+    // Re-arm for the next earliest deadline (= the PendingNoShow we
+    // just couldn't sweep yet, or `null` when the active set is
+    // empty).
+    await this.scheduleNextAlarm()
+  }
+
+  /**
+   * Re-arm the DO alarm to the earliest PendingNoShow's
+   * `markedAt + GRACE_TTL_MIN`. No-op when no PendingNoShow ticket
+   * is active. Called at every dispatch epilogue and at the end of
+   * the alarm sweep itself.
+   */
+  private async scheduleNextAlarm(): Promise<void> {
+    const ttlMs = (Number(this.env.GRACE_TTL_MIN) || GRACE_TTL_DEFAULT_MIN) * 60_000
+    const earliest = this.sql
+      .exec("SELECT MIN(marked_at) AS m FROM tickets WHERE state = 'PendingNoShow'")
+      .toArray()[0]
+    const m = earliest?.m
+    if (m === undefined || m === null || typeof m !== "string") return
+    const markedMs = Date.parse(m)
+    if (Number.isNaN(markedMs)) return
+    const deadlineMs = markedMs + ttlMs
+    // Floor at now + 1s so a stuck deadline doesn't loop the alarm
+    // synchronously inside the runtime's grace window.
+    await this.ctx.storage.setAlarm(Math.max(deadlineMs, Date.now() + 1000))
   }
 }

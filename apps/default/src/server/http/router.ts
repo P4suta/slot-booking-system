@@ -49,7 +49,7 @@ import type { Env } from "./types.js"
  *   GET   /tickets/me                    customer self-fetch
  *   POST  /tickets/:id/cancel            cancel (customer with handle, or staff)
  *   POST  /tickets/:id/served            staff: mark served (Called | Serving)
- *   POST  /tickets/:id/no-show           staff: mark no-show (Called only)
+ *   POST  /tickets/:id/no-show           staff: open grace window (Called → PendingNoShow, ADR-0074)
  *   POST  /tickets/:id/recall            staff: recall (Called -> Waiting)
  *   GET   /queue                         shop state v2 (calling[]/serving[],
  *                                        PII for staff, anon otherwise)
@@ -695,7 +695,13 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     )
   })
 
-  // POST /api/v1/tickets/:id/no-show — staff
+  // POST /api/v1/tickets/:id/no-show — staff. ADR-0074 redirected
+  // this endpoint from immediate NoShow to MarkPendingNoShow: the
+  // ticket enters the grace window (the customer can still respond
+  // with 「遅れる」 / 「来ない」), and the DO alarm sweeps it into
+  // terminal NoShow when GRACE_TTL_MIN elapses. The endpoint URL
+  // and response shape are unchanged for backward compatibility
+  // with the existing web client.
   app.post("/api/v1/tickets/:id/no-show", async (c) => {
     const guard = await requireStaff(c)
     if (!guard.ok) return guard.res
@@ -703,7 +709,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     return dispatchEnvelope(
       await stub(c.env).dispatch({
-        type: "MarkNoShow",
+        type: "MarkPendingNoShow",
         ticketId: idR.success,
         actor: "staff",
       }),

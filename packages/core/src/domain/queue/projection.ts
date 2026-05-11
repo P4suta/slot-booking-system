@@ -4,7 +4,7 @@ import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import { type CustomerHandle, equalsCustomerHandle } from "../value-objects/CustomerHandle.js"
 import { type Lane, PREFERRED_LANE_CHAIN } from "./Lane.js"
 import { intervalOf, type Slot } from "./Slot.js"
-import type { Called, Ticket, Waiting } from "./Ticket.js"
+import type { Called, PendingNoShow, Ticket, Waiting } from "./Ticket.js"
 import type { TicketEvent } from "./TicketEvent.js"
 
 /**
@@ -86,10 +86,23 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "NoShowed": {
       const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Called") return snap
+      if (prior === undefined) return snap
+      if (prior.state !== "Called" && prior.state !== "PendingNoShow") return snap
       const next: Ticket = {
         ...prior,
         state: "NoShow",
+        markedAt: event.occurredAt,
+        markedBy: event.markedBy,
+      }
+      tickets.set(event.ticketId, next)
+      return { tickets }
+    }
+    case "PendingNoShowMarked": {
+      const prior = tickets.get(event.ticketId)
+      if (prior?.state !== "Called") return snap
+      const next: PendingNoShow = {
+        ...prior,
+        state: "PendingNoShow",
         markedAt: event.occurredAt,
         markedBy: event.markedBy,
       }
@@ -111,12 +124,13 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "Recalled": {
       const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Called") return snap
-      // Drop the Called-only fields by reconstructing the common
-      // shape verbatim — keeping `seq + displaySeq + lane` is the
-      // point (the ticket returns to the head of its lane), but
-      // `calledAt` / `calledBy` must NOT leak into the Waiting
-      // variant.
+      if (prior === undefined) return snap
+      if (prior.state !== "Called" && prior.state !== "PendingNoShow") return snap
+      // Drop the Called-only / PendingNoShow-only fields by
+      // reconstructing the common shape verbatim — keeping
+      // `seq + displaySeq + lane` is the point (the ticket returns
+      // to its lane head), but `calledAt` / `calledBy` /
+      // `markedAt` must NOT leak into the Waiting variant.
       const next: Ticket = {
         id: prior.id,
         seq: prior.seq,
@@ -147,7 +161,13 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     case "Rescheduled": {
       const prior = tickets.get(event.ticketId)
       if (prior === undefined) return snap
-      if (prior.state !== "Waiting" && prior.state !== "Called") return snap
+      if (
+        prior.state !== "Waiting" &&
+        prior.state !== "Called" &&
+        prior.state !== "PendingNoShow"
+      ) {
+        return snap
+      }
       // Lane invariant: only reservation tickets carry an
       // appointmentAt. Walk-in / priority tickets that somehow reach
       // here are ignored — the usecase already gates on lane.
@@ -181,6 +201,7 @@ export const applyMany = (snap: QueueSnapshot, events: readonly TicketEvent[]): 
 
 const isWaiting = (t: Ticket): t is Waiting => t.state === "Waiting"
 const isCalled = (t: Ticket): t is Called => t.state === "Called"
+const isPendingNoShow = (t: Ticket): t is PendingNoShow => t.state === "PendingNoShow"
 
 /**
  * Lane-filter predicate. `filter === undefined` matches every
@@ -404,6 +425,26 @@ export const callingTickets = (snap: QueueSnapshot, lane?: Lane): readonly Calle
 }
 
 /**
+ * All tickets in PendingNoShow (the grace window opened by staff
+ * 「来なかった」 — ADR-0074), sorted by `displaySeq`. The staff
+ * Kanban renders these in a dedicated 「催促中」 column with the
+ * remaining TTL countdown.
+ */
+export const pendingNoShowTickets = (
+  snap: QueueSnapshot,
+  lane?: Lane,
+): readonly PendingNoShow[] => {
+  const out: PendingNoShow[] = []
+  for (const t of snap.tickets.values()) {
+    if (!isPendingNoShow(t)) continue
+    if (!matchesLane(t.lane, lane)) continue
+    out.push(t)
+  }
+  out.sort((a, b) => a.displaySeq - b.displaySeq)
+  return out
+}
+
+/**
  * All Waiting tickets in the given lane (or every lane when
  * omitted), sorted by `displaySeq`. The customer-facing position
  * helper and the staff Kanban Waiting column read this directly.
@@ -494,14 +535,15 @@ export const nextDisplaySeqInLane = (snap: QueueSnapshot, lane: Lane): number =>
 /* -------------------------------------------------------------------------- */
 
 /**
- * A ticket "holds" the customer's handle while in any of the two
- * pre-terminal states. `CheckedIn` is an audit field on top of
- * `Waiting`, not a state, so it does not appear here. Once a ticket
- * transitions to `Served / Cancelled / NoShow` the handle is
- * released and may be re-used by a fresh issue.
+ * A ticket "holds" the customer's handle while in any of the
+ * pre-terminal states (Waiting / Called / PendingNoShow).
+ * `CheckedIn` is an audit field on top of `Waiting`, not a state,
+ * so it does not appear here. Once a ticket transitions to
+ * `Served / Cancelled / NoShow` the handle is released and may be
+ * re-used by a fresh issue.
  */
 export const isActiveForHandle = (t: Ticket): boolean =>
-  t.state === "Waiting" || t.state === "Called"
+  t.state === "Waiting" || t.state === "Called" || t.state === "PendingNoShow"
 
 /**
  * `(nameKana, phoneLast4)` is enforced as the **active-set primary key**

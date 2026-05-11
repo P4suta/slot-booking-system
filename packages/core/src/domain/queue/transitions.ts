@@ -16,6 +16,7 @@ import type {
   Called,
   Cancelled,
   NoShow,
+  PendingNoShow,
   Served,
   Ticket,
   TicketCommon,
@@ -28,6 +29,7 @@ import type {
   CheckedInEvent,
   IssuedEvent,
   NoShowedEvent,
+  PendingNoShowMarkedEvent,
   RecalledEvent,
   RescheduledEvent,
   ServedEvent,
@@ -191,7 +193,7 @@ export const applyMarkServed = (
 /* -------------------------------------------------------------------------- */
 
 export const applyMarkNoShow = (
-  t: Called,
+  t: Called | PendingNoShow,
   at: Temporal.Instant,
   eventId: TicketEventId,
   markedBy: Actor = "staff",
@@ -213,6 +215,36 @@ export const applyMarkNoShow = (
 }
 
 /* -------------------------------------------------------------------------- */
+/* MarkPendingNoShow — Called → PendingNoShow (ADR-0074). Staff hits          */
+/* 「来なかった」; the ticket enters the grace window where push notifications */
+/* are sent and the customer can choose 「遅れる」 / 「来ない」. The DO alarm  */
+/* sweeps any PendingNoShow whose `markedAt + GRACE_TTL_MIN` has elapsed       */
+/* into terminal NoShow.                                                       */
+/* -------------------------------------------------------------------------- */
+
+export const applyMarkPendingNoShow = (
+  t: Called,
+  at: Temporal.Instant,
+  eventId: TicketEventId,
+  markedBy: Actor = "staff",
+): ApplyResult => {
+  const ticket: PendingNoShow = {
+    ...common(t),
+    state: "PendingNoShow",
+    calledAt: t.calledAt,
+    calledBy: t.calledBy,
+    markedAt: at,
+    markedBy,
+  }
+  const event: PendingNoShowMarkedEvent = {
+    ...baseEvent(eventId, t.id, at),
+    type: "PendingNoShowMarked",
+    markedBy,
+  }
+  return { ticket, event }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Recall — Called → Waiting. Staff-issued reversal of an accidental          */
 /* Call: the customer never actually arrived at the counter, so we drop       */
 /* the Called-only fields (`calledAt`, `calledBy`) and restore the original   */
@@ -225,7 +257,7 @@ export const applyMarkNoShow = (
 /* -------------------------------------------------------------------------- */
 
 export const applyRecall = (
-  t: Called,
+  t: Called | PendingNoShow,
   at: Temporal.Instant,
   eventId: TicketEventId,
   recalledBy: Actor = "staff",
@@ -250,7 +282,7 @@ export const applyRecall = (
 /* -------------------------------------------------------------------------- */
 
 export const applyCancel = (
-  t: Waiting | Called,
+  t: Waiting | Called | PendingNoShow,
   at: Temporal.Instant,
   eventId: TicketEventId,
   cancelledBy: Actor,
@@ -307,7 +339,7 @@ export const applyCheckIn = (
 /* -------------------------------------------------------------------------- */
 
 export const applyReschedule = (
-  t: Waiting | Called,
+  t: Waiting | Called | PendingNoShow,
   newAppointmentAt: Temporal.Instant,
   at: Temporal.Instant,
   eventId: TicketEventId,
@@ -347,6 +379,7 @@ export type TicketCommand =
   | "CallBatch"
   | "MarkServed"
   | "MarkNoShow"
+  | "MarkPendingNoShow"
   | "Cancel"
   | "Recall"
   | "CheckIn"

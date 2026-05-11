@@ -76,6 +76,24 @@ export const CalledSchema = Schema.Struct({
 })
 export type Called = Schema.Schema.Type<typeof CalledSchema>
 
+/**
+ * `PendingNoShow` (ADR-0074) sits between `Called` and the terminal
+ * states. Staff hits 「来なかった」 → the ticket enters this state
+ * and the customer receives a push prompt to choose between
+ * 「遅れる」 (= Recall back to Waiting, or Reschedule for reservation)
+ * and 「来ない」 (= Cancelled). After `markedAt + GRACE_TTL_MIN` with
+ * no customer response, the DO alarm sweeps the ticket into `NoShow`.
+ */
+export const PendingNoShowSchema = Schema.Struct({
+  ...CommonFields,
+  state: Schema.Literal("PendingNoShow"),
+  calledAt: InstantSchema,
+  calledBy: ActorSchema,
+  markedAt: InstantSchema,
+  markedBy: ActorSchema,
+})
+export type PendingNoShow = Schema.Schema.Type<typeof PendingNoShowSchema>
+
 export const ServedSchema = Schema.Struct({
   ...CommonFields,
   state: Schema.Literal("Served"),
@@ -112,6 +130,7 @@ export type Cancelled = Schema.Schema.Type<typeof CancelledSchema>
 export const TicketSchema = Schema.Union([
   WaitingSchema,
   CalledSchema,
+  PendingNoShowSchema,
   ServedSchema,
   NoShowSchema,
   CancelledSchema,
