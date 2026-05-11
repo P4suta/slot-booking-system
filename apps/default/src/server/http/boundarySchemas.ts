@@ -9,6 +9,7 @@ import {
   TicketIdSchema,
 } from "@booking/core"
 import { Schema, type SchemaIssue } from "effect"
+import { type DebugEnvelope, isDevMode } from "./errorEnvelope.js"
 
 /**
  * HTTP boundary schemas — domain branded value-objects composed
@@ -210,12 +211,25 @@ const ROOT_FAILURE: DecodeFailureEnvelope = {
  * wrapper at the Result level; the wrapper only appears in the
  * Effect / Promise variants of the parser API).
  */
-export const dispatchDecodeFailure = (issue: SchemaIssue.Issue): DecodeFailureEnvelope => {
+export const dispatchDecodeFailure = (
+  issue: SchemaIssue.Issue,
+  env: { readonly IS_DEV?: string } = {},
+): DecodeFailureEnvelope & { readonly debug?: DebugEnvelope } => {
   const field = firstFailedFieldKey(issue)
-  if (field !== undefined && field in FIELD_FAILURE_MAP) {
-    return FIELD_FAILURE_MAP[field as keyof typeof FIELD_FAILURE_MAP]
+  const base =
+    field !== undefined && field in FIELD_FAILURE_MAP
+      ? FIELD_FAILURE_MAP[field as keyof typeof FIELD_FAILURE_MAP]
+      : ROOT_FAILURE
+  if (!isDevMode(env)) return base
+  const debug: DebugEnvelope = {
+    reason: "schema_decode_failure",
+    ...(field !== undefined ? { field } : {}),
+    hint:
+      field !== undefined
+        ? `Request field \`${field}\` failed boundary Schema decode — check its branded format (e.g. PhoneLast4 = /^[0-9]{4}$/, NameKana = NFKC katakana, TicketId = /^tkt_[0-9a-z]{26}$/)`
+        : "Request body did not match the top-level Schema struct — check that every required field is present with the right type",
   }
-  return ROOT_FAILURE
+  return { ...base, debug }
 }
 
 /**

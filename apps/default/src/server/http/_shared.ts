@@ -11,7 +11,7 @@ import type { QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
 import { verifyStaffJwt } from "../security/jwt.js"
 import { readSessionCookie, verifySession } from "../security/session.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
-import { DEFECT_STATUS, statusForTag } from "./errorEnvelope.js"
+import { DEFECT_STATUS, type DebugEnvelope, isDevMode, statusForTag } from "./errorEnvelope.js"
 import type { Env } from "./types.js"
 
 export const stub = (env: Env): DurableObjectStub<QueueShop> =>
@@ -51,18 +51,72 @@ export const failResponse = (
   status: number,
   _tag: string,
   code: string,
-  extra: Record<string, unknown> = {},
-): Response =>
-  new Response(JSON.stringify({ ok: false, error: { _tag, code, ...extra } }), {
+  options: {
+    readonly extra?: Record<string, unknown>
+    readonly debug?: DebugEnvelope
+    readonly env?: { readonly IS_DEV?: string }
+  } = {},
+): Response => {
+  const error: Record<string, unknown> = { _tag, code, ...(options.extra ?? {}) }
+  if (options.debug !== undefined && options.env !== undefined && isDevMode(options.env)) {
+    error.debug = options.debug
+  }
+  return new Response(JSON.stringify({ ok: false, error }), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   })
+}
 
 export const okJson = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   })
+
+/**
+ * Discriminated failure surface for {@link requireStaff} — Stage 21
+ * / ADR-0089. The wire envelope still uniformly returns 401 +
+ * `MissingStaffCapability` (so an attacker cannot distinguish
+ * "wrong header form" from "expired JWT" from "wrong cookie sig"
+ * via the public response), but in dev mode the `debug.reason`
+ * field carries this tag so the operator can tell at a glance
+ * which credential surface failed and why. Closed enum — every new
+ * failure shape must add a case here, and every consumer (tests,
+ * the boundary log) must update its exhaustive switch.
+ *
+ *   - `secret_missing`     — server side: STAFF_SESSION_SECRET unset
+ *   - `credential_absent`  — no header, bearer, or cookie presented
+ *   - `header_mismatch`    — x-staff-token presented but ≠ secret
+ *   - `bearer_malformed`   — Authorization present but not `Bearer X`
+ *   - `bearer_invalid`     — Bearer JWT failed jose verification
+ *   - `cookie_invalid`     — session cookie HMAC / payload bad
+ */
+export type StaffGuardFailureReason =
+  | "secret_missing"
+  | "credential_absent"
+  | "header_mismatch"
+  | "bearer_malformed"
+  | "bearer_invalid"
+  | "cookie_invalid"
+
+/**
+ * Helper for the {@link requireStaff} failure path. Wraps the 401
+ * envelope into the discriminated `{ ok: false }` shape callers
+ * pattern-match on and attaches the dev-mode `debug` context.
+ */
+const failStaff = (
+  status: number,
+  reason: StaffGuardFailureReason,
+  env: { readonly IS_DEV?: string },
+  hint: string,
+): { ok: false; reason: StaffGuardFailureReason; res: Response } => ({
+  ok: false,
+  reason,
+  res: failResponse(status, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
+    debug: { reason, hint },
+    env,
+  }),
+})
 
 /**
  * Staff capability guard — accepts three credential surfaces:
@@ -79,47 +133,94 @@ export const okJson = (body: unknown, status = 200): Response =>
  *      check through `timingSafeEqual`.
  *
  * Any one of the three is sufficient. Failures uniformly return
- * 401 + `MissingStaffCapability` so an attacker cannot
- * distinguish "wrong header form" from "expired JWT" from
- * "wrong cookie sig".
+ * 401 + `MissingStaffCapability` on the wire so an attacker cannot
+ * distinguish "wrong header form" from "expired JWT" from "wrong
+ * cookie sig"; the dev-mode `debug.reason` field (Stage 21 /
+ * ADR-0089) carries a {@link StaffGuardFailureReason} discriminant
+ * for the operator. On success the result reports `via` so the
+ * caller can log which surface was honoured.
  */
-export const requireStaff = async (c: {
-  req: { header: (k: string) => string | undefined }
-  env: Env
-}): Promise<{ ok: true } | { ok: false; res: Response }> => {
+export const requireStaff = async (
+  c: {
+    req: { header: (k: string) => string | undefined }
+    env: { readonly STAFF_SESSION_SECRET?: string; readonly IS_DEV?: string }
+  },
+  env: { readonly IS_DEV?: string } = c.env,
+): Promise<
+  | { ok: true; via: "header" | "bearer" | "cookie" }
+  | { ok: false; reason: StaffGuardFailureReason; res: Response }
+> => {
   const secret = c.env.STAFF_SESSION_SECRET
   if (secret === undefined || secret === "") {
-    return {
-      ok: false,
-      res: failResponse(503, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
-        reason: "absent",
-      }),
-    }
+    return failStaff(
+      503,
+      "secret_missing",
+      env,
+      "Deployment is missing STAFF_SESSION_SECRET — set it in .dev.vars (dev) or via `wrangler secret put` (prod)",
+    )
   }
+  // Track the deepest credential surface attempted so the failure
+  // path can report the right reason. The three paths are tried in
+  // declared order; the first to succeed short-circuits via the
+  // happy returns below.
   const headerToken = c.req.header("x-staff-token")
-  if (headerToken !== undefined && timingSafeEqual(headerToken, secret)) {
-    return { ok: true }
+  if (headerToken !== undefined) {
+    if (timingSafeEqual(headerToken, secret)) {
+      return { ok: true, via: "header" }
+    }
+    // header presented + did not match — record and continue, the
+    // caller may also be carrying a valid bearer / cookie.
   }
   const auth = c.req.header("authorization")
-  if (auth?.startsWith("Bearer ") === true) {
-    const jwt = auth.slice("Bearer ".length).trim()
-    if (jwt.length > 0) {
-      const result = await verifyStaffJwt(secret, jwt)
-      if (result.ok) return { ok: true }
+  let bearerOutcome: "absent" | "malformed" | "invalid" | "valid" = "absent"
+  if (auth !== undefined) {
+    if (!auth.startsWith("Bearer ")) {
+      bearerOutcome = "malformed"
+    } else {
+      const jwt = auth.slice("Bearer ".length).trim()
+      if (jwt.length === 0) {
+        bearerOutcome = "malformed"
+      } else {
+        const result = await verifyStaffJwt(secret, jwt)
+        if (result.ok) return { ok: true, via: "bearer" }
+        bearerOutcome = "invalid"
+      }
     }
   }
   const cookieValue = readSessionCookie(c.req.header("cookie"))
+  let cookieOutcome: "absent" | "invalid" | "valid" = "absent"
   if (cookieValue !== null) {
     const result = await verifySession(secret, cookieValue)
-    if (result.ok) return { ok: true }
+    if (result.ok) return { ok: true, via: "cookie" }
+    cookieOutcome = "invalid"
   }
-  return {
-    ok: false,
-    res: failResponse(401, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
-      reason:
-        headerToken === undefined && auth === undefined && cookieValue === null
-          ? "absent"
-          : "wrong_kind",
-    }),
-  }
+  // Reason precedence — most specific (most-progress-made) wins.
+  // The cookie path is checked last; if a cookie was presented but
+  // failed, that is the most informative signal. Otherwise a
+  // presented-but-bad bearer beats a malformed Authorization header
+  // beats a wrong x-staff-token beats outright absence.
+  const reason: StaffGuardFailureReason =
+    cookieOutcome === "invalid"
+      ? "cookie_invalid"
+      : bearerOutcome === "invalid"
+        ? "bearer_invalid"
+        : bearerOutcome === "malformed"
+          ? "bearer_malformed"
+          : headerToken !== undefined
+            ? "header_mismatch"
+            : "credential_absent"
+  return failStaff(
+    401,
+    reason,
+    env,
+    reason === "credential_absent"
+      ? "Attach x-staff-token, Authorization: Bearer <jwt>, or the __Host-staff_session cookie"
+      : reason === "header_mismatch"
+        ? "x-staff-token does not match STAFF_SESSION_SECRET — confirm the .dev.vars value"
+        : reason === "bearer_malformed"
+          ? "Authorization header is not `Bearer <jwt>` — check for typos / empty token"
+          : reason === "bearer_invalid"
+            ? "Bearer JWT failed verification (expired, wrong signature, or wrong issuer/audience)"
+            : "Session cookie HMAC verification failed (tampered, expired, or signed with a rotated secret)",
+  )
 }

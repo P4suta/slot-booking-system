@@ -60,6 +60,59 @@ export const statusForTag = (tag: DomainError["_tag"]): number => STATUS_BY_TAG[
 export const DEFECT_STATUS = 500
 
 /**
+ * Sanitised, dev-only debug context attached to an error envelope.
+ *
+ * Stage 21 / ADR-0089 — without this, a 401 / 422 only carries
+ * `_tag` + `code`, which collapses three otherwise-distinct root
+ * causes ("password value wrong", "JWT expired", "session cookie
+ * HMAC mismatch") into one opaque envelope. The field is emitted
+ * only when {@link isDevMode} returns true; production responses
+ * remain `{ ok: false, error: { _tag, code } }` byte-for-byte.
+ *
+ * Every field is structurally sanitised:
+ *   - `reason` is a closed discriminant (e.g. `"bearer_invalid"`),
+ *     not a free-form error string from the verifier;
+ *   - `*Len` are integer character counts — leak nothing beyond
+ *     "the operator typed N characters";
+ *   - `*Head` / `*Tail` cap at four characters so the previewer
+ *     can spot "I forgot the trailing newline" / "I pasted with a
+ *     leading space" without exposing the whole secret;
+ *   - `field` is the boundary's `firstFailedFieldKey` output (a
+ *     known field name from the Schema, not user input);
+ *   - `hint` is a static, hand-curated remediation string.
+ *
+ * Never widen the type to carry the raw credential, the verifier's
+ * exception message, or any structured-clone of the request body.
+ * That widening would defeat the whole point of redaction.
+ */
+export type DebugEnvelope = {
+  readonly reason: string
+  readonly receivedLen?: number
+  readonly expectedLen?: number
+  readonly receivedHead?: string
+  readonly receivedTail?: string
+  readonly field?: string
+  readonly hint?: string
+}
+
+/**
+ * Maximum chars copied from a presented credential into the
+ * `receivedHead` / `receivedTail` preview. Four chars is enough to
+ * spot whitespace / case-folding / trailing-newline mistakes without
+ * giving an attacker a useful prefix oracle.
+ */
+export const DEBUG_PREVIEW_CHARS = 4
+
+/**
+ * `IS_DEV === "1"` is the canonical dev-mode flag across the
+ * worker (`securityHeaders.ts` / `corsAllowlist` already keys off
+ * it). Centralised here so the envelope-enrichment code path uses
+ * exactly the same predicate, and a future "staging" tier can be
+ * added in one place.
+ */
+export const isDevMode = (env: { readonly IS_DEV?: string }): boolean => env.IS_DEV === "1"
+
+/**
  * Structured-log entry emitted on every error response (status
  * ≥ 400 with a JSON `{ok: false}` envelope). The shape mirrors
  * the rest of the structured-log surface (`HttpRequest`,

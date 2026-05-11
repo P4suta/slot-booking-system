@@ -74,12 +74,19 @@ const route_issueTicket: RouteDescriptor = {
   handle: async (c: RouteContext) => {
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+      return failResponse(parsed.status, parsed.tag, parsed.code, {
+        extra: { reason: parsed.reason },
+        debug: { reason: "json_parse_failure", hint: parsed.reason },
+        env: c.env,
+      })
     }
     const decoded = Schema.decodeUnknownResult(IssueTicketBodySchema)(parsed.raw)
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     const action: QueueAction = {
       type: "IssueTicket",
@@ -117,8 +124,11 @@ const route_getMyTicket: RouteDescriptor = {
       phoneLast4: c.req.query("phoneLast4"),
     })
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     // Direct primary-key lookup (O(log N) on the SQLite btree)
     // — the previous `listTickets()` + `Array.find` was O(N) JSON-
@@ -158,8 +168,11 @@ const route_getByHandle: RouteDescriptor = {
       phoneLast4: c.req.query("phoneLast4"),
     })
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     const ticket = await stub(c.env).getByHandle(decoded.success)
     if (ticket === null) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
@@ -196,11 +209,18 @@ const route_reschedule: RouteDescriptor = {
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     const parsed = await parseJsonBody(c)
     if (!parsed.ok)
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+      return failResponse(parsed.status, parsed.tag, parsed.code, {
+        extra: { reason: parsed.reason },
+        debug: { reason: "json_parse_failure", hint: parsed.reason },
+        env: c.env,
+      })
     const decoded = Schema.decodeUnknownResult(RescheduleBodySchema)(parsed.raw)
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     const isStaff =
       c.env.STAFF_SESSION_SECRET !== undefined &&
@@ -259,8 +279,11 @@ const route_listSlots: RouteDescriptor = {
       granularity: Number(c.req.query("granularity")),
     })
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     const { from, to, granularity } = decoded.success
     // NaN-safe — empty string or non-numeric env value falls back
@@ -344,19 +367,26 @@ const route_cancel: RouteDescriptor = {
   handle: async (c: RouteContext) => {
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+      return failResponse(parsed.status, parsed.tag, parsed.code, {
+        extra: { reason: parsed.reason },
+        debug: { reason: "json_parse_failure", hint: parsed.reason },
+        env: c.env,
+      })
     }
     const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
     const raw = parsed.raw
     const isStaff = c.req.header("x-staff-token") !== undefined
     if (isStaff) {
-      const guard = await requireStaff(c)
+      const guard = await requireStaff(c, c.env)
       if (!guard.ok) return guard.res
       const decoded = Schema.decodeUnknownResult(StaffCancelBodySchema)(raw)
       if (Result.isFailure(decoded)) {
-        const fail = dispatchDecodeFailure(decoded.failure)
-        return failResponse(fail.status, fail.tag, fail.code)
+        const fail = dispatchDecodeFailure(decoded.failure, c.env)
+        return failResponse(fail.status, fail.tag, fail.code, {
+          ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+          env: c.env,
+        })
       }
       return dispatchEnvelope(
         await stub(c.env).dispatch({
@@ -369,8 +399,11 @@ const route_cancel: RouteDescriptor = {
     }
     const decoded = Schema.decodeUnknownResult(CancelBodySchema)(raw)
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     return dispatchEnvelope(
       await stub(c.env).dispatch({
@@ -507,21 +540,27 @@ const route_callNext: RouteDescriptor = {
   path: "/api/v1/queue/call-next",
   rateLimit: "RL_OPERATE",
   handle: async (c: RouteContext) => {
-    const guard = await requireStaff(c)
+    const guard = await requireStaff(c, c.env)
     if (!guard.ok) return guard.res
     let raw: unknown = {}
     try {
       const text = await c.req.text()
       if (text.length > 0) raw = JSON.parse(text)
     } catch (err) {
+      const message = err instanceof Error ? err.message : "non-json body"
       return failResponse(400, "InvalidPayload", "E_VAL_PAYLOAD", {
-        reason: err instanceof Error ? err.message : "non-json body",
+        extra: { reason: message },
+        debug: { reason: "json_parse_failure", hint: message },
+        env: c.env,
       })
     }
     const decoded = Schema.decodeUnknownResult(CallNextBodySchema)(raw)
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     const action: QueueAction = {
       type: "CallNext",
@@ -539,16 +578,23 @@ const route_callSpecific: RouteDescriptor = {
   path: "/api/v1/queue/call-specific",
   rateLimit: "RL_OPERATE",
   handle: async (c: RouteContext) => {
-    const guard = await requireStaff(c)
+    const guard = await requireStaff(c, c.env)
     if (!guard.ok) return guard.res
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+      return failResponse(parsed.status, parsed.tag, parsed.code, {
+        extra: { reason: parsed.reason },
+        debug: { reason: "json_parse_failure", hint: parsed.reason },
+        env: c.env,
+      })
     }
     const decoded = Schema.decodeUnknownResult(CallSpecificBodySchema)(parsed.raw)
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     return dispatchEnvelope(
       await stub(c.env).dispatch({
@@ -569,16 +615,23 @@ const route_callBatch: RouteDescriptor = {
   path: "/api/v1/queue/call-batch",
   rateLimit: "RL_OPERATE",
   handle: async (c: RouteContext) => {
-    const guard = await requireStaff(c)
+    const guard = await requireStaff(c, c.env)
     if (!guard.ok) return guard.res
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+      return failResponse(parsed.status, parsed.tag, parsed.code, {
+        extra: { reason: parsed.reason },
+        debug: { reason: "json_parse_failure", hint: parsed.reason },
+        env: c.env,
+      })
     }
     const decoded = Schema.decodeUnknownResult(CallBatchBodySchema)(parsed.raw)
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     const ids = decoded.success.ticketIds
     const head = ids[0]
@@ -601,7 +654,7 @@ const route_served: RouteDescriptor = {
   method: "POST",
   path: "/api/v1/tickets/:id/served",
   handle: async (c: RouteContext) => {
-    const guard = await requireStaff(c)
+    const guard = await requireStaff(c, c.env)
     if (!guard.ok) return guard.res
     const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
@@ -622,7 +675,7 @@ const route_noShow: RouteDescriptor = {
   method: "POST",
   path: "/api/v1/tickets/:id/no-show",
   handle: async (c: RouteContext) => {
-    const guard = await requireStaff(c)
+    const guard = await requireStaff(c, c.env)
     if (!guard.ok) return guard.res
     const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
@@ -641,7 +694,7 @@ const route_recall: RouteDescriptor = {
   method: "POST",
   path: "/api/v1/tickets/:id/recall",
   handle: async (c: RouteContext) => {
-    const guard = await requireStaff(c)
+    const guard = await requireStaff(c, c.env)
     if (!guard.ok) return guard.res
     const idR = decodeTicketIdParam(c.req.param("id"))
     if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
@@ -674,12 +727,19 @@ const route_lateAcknowledge: RouteDescriptor = {
     }
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+      return failResponse(parsed.status, parsed.tag, parsed.code, {
+        extra: { reason: parsed.reason },
+        debug: { reason: "json_parse_failure", hint: parsed.reason },
+        env: c.env,
+      })
     }
     const decoded = Schema.decodeUnknownResult(LateAcknowledgeBodySchema)(parsed.raw)
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     const ticketId = idR.success
     const ticket = await stub(c.env).getTicketById(ticketId)
@@ -744,12 +804,19 @@ const route_noComeConfirm: RouteDescriptor = {
     }
     const parsed = await parseJsonBody(c)
     if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+      return failResponse(parsed.status, parsed.tag, parsed.code, {
+        extra: { reason: parsed.reason },
+        debug: { reason: "json_parse_failure", hint: parsed.reason },
+        env: c.env,
+      })
     }
     const decoded = Schema.decodeUnknownResult(NoComeConfirmBodySchema)(parsed.raw)
     if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, {
+        ...(fail.debug !== undefined ? { debug: fail.debug } : {}),
+        env: c.env,
+      })
     }
     return dispatchEnvelope(
       await stub(c.env).dispatch({
@@ -797,7 +864,7 @@ const route_queueFeed: RouteDescriptor = {
     if (c.req.header("upgrade") !== "websocket") {
       return c.text("Expected websocket upgrade", 426)
     }
-    const guard = await requireStaff(c)
+    const guard = await requireStaff(c, c.env)
     const upgradeUrl = new URL(c.req.raw.url)
     if (guard.ok) {
       upgradeUrl.searchParams.set("capability", "staff")
