@@ -2,6 +2,7 @@ import {
   BusinessTimeZoneSchema,
   constantTimeStringEqual,
   intervalOf,
+  isCallableNow,
   reservationsByDeadline,
   type Slot,
   TicketSchema,
@@ -521,19 +522,10 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const pendingNoShow = tickets
       .filter((t) => t.state === "PendingNoShow")
       .sort((a, b) => a.displaySeq - b.displaySeq)
-    // "Callable now" partition: walk-in + priority always, reservation
-    // only inside the 5-min grace before appointmentAt. Mirrors
-    // QueueShop.shopState's `isCallableNow` so the landing headline
-    // number matches the staff card's call-button enabled state.
-    const RESERVATION_GRACE_MS = 5 * 60 * 1000
-    const isCallableNow = (t: (typeof tickets)[number]): boolean => {
-      if (t.lane !== "reservation") return true
-      if (t.appointmentAt === null) return true
-      const atMs = Date.parse(t.appointmentAt)
-      if (Number.isNaN(atMs)) return true
-      return atMs - RESERVATION_GRACE_MS <= nowMs
-    }
-    const callableNowCount = waiting.filter(isCallableNow).length
+    // "Callable now" partition lives in @booking/core (ADR-0078) — a
+    // single EDF-lateness lens shared with QueueShop.shopState and
+    // the staff card's call-button enabled state.
+    const callableNowCount = waiting.filter((t) => isCallableNow(t, nowMs)).length
     // ADR-0069 §Stage 11 — staff 履歴 column needs the recent terminal
     // tickets so an operator can see what just finished. `seq` is
     // monotone over the queue's lifetime, so sorting desc + slicing 8

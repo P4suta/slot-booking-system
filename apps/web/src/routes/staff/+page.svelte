@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isCallableNow as coreIsCallableNow } from "@booking/core"
   import { onDestroy, onMount } from "svelte"
   import {
     type ApiResult,
@@ -84,21 +85,16 @@
     return "future"
   }
   /**
-   * Mirrors the backend EDF grace (ADR-0067 / CallNext) — a
-   * reservation isn't callable until `appointmentAt - 5min ≤ now`.
-   * Walk-in / priority tickets are always callable. The card's
-   * 呼び出す button is `disabled` when this returns false so a
-   * stray tap can't pull a reservation customer to the front
-   * 30 minutes early.
+   * EDF-grace lens — a reservation isn't callable until
+   * `appointmentAt - RESERVATION_GRACE ≤ now`; walk-in / priority
+   * tickets are always callable (ADR-0078). The 呼び出す button is
+   * `disabled` when this returns false so a stray tap can't pull a
+   * reservation customer to the front 30 minutes early. The core
+   * import keeps server (`QueueShop`, REST `/queue`) and client in
+   * lockstep — change the magnitude there and every callable-now
+   * decision moves together.
    */
-  const RESERVATION_GRACE_MS = 5 * 60 * 1000
-  const isCallableNow = (t: Ticket): boolean => {
-    if (t.lane !== "reservation") return true
-    if (t.appointmentAt === null) return true
-    const atMs = Date.parse(t.appointmentAt)
-    if (Number.isNaN(atMs)) return true
-    return atMs - RESERVATION_GRACE_MS <= now
-  }
+  const isCallableNow = (t: Ticket): boolean => coreIsCallableNow(t, now)
 
   // ADR-0074 — PendingNoShow TTL は server-side `GRACE_TTL_MIN` (default
   // 10 分) に対応する。 client から env 値は見えないので 10 分仮置き、

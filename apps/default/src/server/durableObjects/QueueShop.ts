@@ -16,6 +16,7 @@ import {
   type IdGenerator,
   InstantSchema,
   IssueTicket,
+  isCallableNow,
   isEmptyShopStateDelta,
   type Lane,
   type Logger,
@@ -451,15 +452,8 @@ export class QueueShop extends DurableObject<Env> {
     // see what's coming next. Matches the order CallNext (ADR-0067)
     // actually pulls from, so the staff dashboard reads top-to-bottom
     // the way customers will be called.
-    const PROJECTION_GRACE_MS = 5 * 60 * 1000
     const nowMs = Date.now()
-    const isCallableNow = (t: EncodedTicket): boolean => {
-      if (t.lane !== "reservation") return true
-      if (t.appointmentAt === null) return true
-      const atMs = Date.parse(t.appointmentAt)
-      if (Number.isNaN(atMs)) return true
-      return atMs - PROJECTION_GRACE_MS <= nowMs
-    }
+    const callable = (t: EncodedTicket): boolean => isCallableNow(t, nowMs)
     const apptMs = (t: EncodedTicket): number => {
       if (t.appointmentAt === null) return 0
       const ms = Date.parse(t.appointmentAt)
@@ -468,8 +462,8 @@ export class QueueShop extends DurableObject<Env> {
     const waiting = tickets
       .filter((t) => t.state === "Waiting")
       .sort((a, b) => {
-        const aCall = isCallableNow(a)
-        const bCall = isCallableNow(b)
+        const aCall = callable(a)
+        const bCall = callable(b)
         if (aCall !== bCall) return aCall ? -1 : 1
         if (!aCall) {
           const d = apptMs(a) - apptMs(b)
@@ -509,7 +503,7 @@ export class QueueShop extends DurableObject<Env> {
     return {
       v: 4 as const,
       waitingCount: waiting.length,
-      callableNowCount: waiting.filter(isCallableNow).length,
+      callableNowCount: waiting.filter(callable).length,
       laneCounts: {
         walkIn: laneCount("walkIn"),
         priority: laneCount("priority"),
