@@ -40,7 +40,7 @@ import {
 import { Cause, Effect, Layer, Schema } from "effect"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
-import { ensureDurableObjectSchema } from "./schema.js"
+import { ensureDurableObjectSchema } from "./migrations.js"
 import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecycleLog.js"
 
 type Env = {
