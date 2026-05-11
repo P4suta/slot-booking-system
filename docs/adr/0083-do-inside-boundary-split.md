@@ -1,6 +1,6 @@
 # ADR-0083: DO inside-boundary split — Projector / Broadcaster / AlarmScheduler / WsLifecycle / Dispatcher
 
-- Status: Accepted (Part 1 + Part 2 + Part 3)
+- Status: Accepted (Parts 1 — 4)
 - Date: 2026-05-11
 - Stage: C / S11 — S15
 - Refines: ADR-0061 (DO hibernating WebSocket projection feed),
@@ -149,15 +149,31 @@ scheduler op:
 `"ReservationDeadline"` or `"ServingTimeout"` slots in without
 touching the heap structure itself.
 
-### Parts 4–5 (S14 — S15) — pending
+### Part 4 (S14) — `WsLifecycle` hibernation-safe adapter
 
-- S14 `WsLifecycle` — hibernation-safe upgrade + lifecycle
-  forwarding adapter.
+Collapse the DO's four WS hooks (`fetch`, `webSocketMessage`,
+`webSocketClose`, `webSocketError`) into a thin
+`WsLifecycle.accept` / `handleMessage` / `handleClose` /
+`handleError` quartet. The adapter reads `?capability=` off the
+upgrade URL, calls `acceptWebSocket(ws, ["cap:<capability>"])`,
+wires `setAutoResponse("ping","pong")`, and pushes the initial
+snapshot through `Broadcaster.connect`. The QueueShop facade
+forwards each hook in one line.
+
+The adapter owns every direct touchpoint to
+`wsLifecycleLog` (`logWsAccept` / `logWsClose` / `logWsError`);
+the DO does not import the log module anymore. Future
+bidirectional WS exchanges (resume-token negotiation, client
+ping payloads with vector echo) extend `handleMessage` without
+touching the DO.
+
+### Part 5 (S15) — pending
+
 - S15 `Dispatcher` + `Persistence/` — Mealy-machine command
   switch + `repository.ts`/`queries.ts` move from
   `adapters/`.
 
 ## Status
 
-- 2026-05-11 — Parts 1–3 landed (S11 Projector + S12 Broadcaster
-  + S13 AlarmScheduler). Parts 4–5 follow in the same sprint.
+- 2026-05-11 — Parts 1–4 landed (S11 Projector + S12 Broadcaster
+  + S13 AlarmScheduler + S14 WsLifecycle). Part 5 follows.

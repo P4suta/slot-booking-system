@@ -38,10 +38,11 @@ import { Cause, Effect, Layer, Schema } from "effect"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { AlarmScheduler } from "./AlarmScheduler.js"
-import { Broadcaster, CAPABILITY_TAG_PREFIX } from "./Broadcaster.js"
+import { Broadcaster } from "./Broadcaster.js"
 import { ensureDurableObjectSchema } from "./migrations.js"
 import { buildShopState, buildStaffShopState } from "./Projector.js"
-import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecycleLog.js"
+import { WsLifecycle } from "./WsLifecycle.js"
+import { logWsBroadcast } from "./wsLifecycleLog.js"
 
 type Env = {
   DB: D1Database
@@ -130,6 +131,7 @@ export class QueueShop extends DurableObject<Env> {
   private readonly sql: SqlStorage
   private readonly broadcaster: Broadcaster
   private readonly scheduler: AlarmScheduler
+  private readonly wsLifecycle: WsLifecycle
 
   // Wire v6 (ADR-0081) — VectorClock advances once per broadcast so
   // the client can detect snapshot/delta gaps. The DO is single-writer
@@ -156,6 +158,15 @@ export class QueueShop extends DurableObject<Env> {
       ttlMs: (Number(env.GRACE_TTL_MIN) || GRACE_TTL_DEFAULT_MIN) * 60_000,
       setAlarm: (deadlineMs) => this.ctx.storage.setAlarm(deadlineMs),
       sql: this.sql,
+    })
+    this.wsLifecycle = new WsLifecycle({
+      acceptWebSocket: (ws, tags) => {
+        this.ctx.acceptWebSocket(ws, [...tags])
+      },
+      setAutoResponse: (req, resp) => {
+        this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(req, resp))
+      },
+      connect: (ws, capability) => this.broadcaster.connect(ws, capability),
     })
     void state.blockConcurrencyWhile(() => {
       ensureDurableObjectSchema(this.sql)
@@ -401,64 +412,21 @@ export class QueueShop extends DurableObject<Env> {
    *
    * See ADR-0061 (DO Hibernating WebSocket projection feed).
    */
-  override async fetch(request: Request): Promise<Response> {
-    if (request.headers.get("upgrade") !== "websocket") {
-      return new Response("Expected websocket upgrade", { status: 426 })
-    }
-    // Capability negotiation: the Hono router verifies the staff JWT
-    // before forwarding the upgrade and rewrites the URL to
-    // `?capability=staff` when verification succeeds. An absent or
-    // unrecognised value defaults to `anonymous` (PII-free).
-    const url = new URL(request.url)
-    const capability = url.searchParams.get("capability") === "staff" ? "staff" : "anonymous"
-    const pair = new WebSocketPair()
-    const client = pair[0]
-    const server = pair[1]
-    // Attach the capability tag so per-socket fan-out can pick the
-    // right frame variant (Broadcaster.fire reads ctx.getTags(ws)).
-    this.ctx.acceptWebSocket(server, [`${CAPABILITY_TAG_PREFIX}${capability}`])
-    // Auto-respond "pong" to client keepalive "ping" frames so the
-    // DO stays hibernated for the keepalive traffic. Without this,
-    // every 30s ping wakes the actor; with it, the runtime handles
-    // the exchange entirely. Idempotent — setting it on every
-    // accept just refreshes the same registration.
-    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"))
-    logWsAccept()
-    // Send the current projection on connect so the new client has
-    // full state immediately rather than waiting for the next mutation.
-    await this.broadcaster.connect(server, capability)
-    return new Response(null, { status: 101, webSocket: client })
+  override fetch(request: Request): Promise<Response> {
+    return this.wsLifecycle.accept(request)
   }
 
-  /**
-   * Hibernating-WebSocket lifecycle handler. The projection feed is
-   * server-push only; client messages are accepted but not
-   * processed. Future bidirectional exchanges (e.g. resume-token
-   * negotiation) hook in here.
-   */
-  override async webSocketMessage(_ws: WebSocket, _msg: ArrayBuffer | string): Promise<void> {
-    // intentional no-op; the feed is unidirectional today
+  override webSocketMessage(ws: WebSocket, msg: ArrayBuffer | string): Promise<void> {
+    this.wsLifecycle.handleMessage(ws, msg)
+    return Promise.resolve()
   }
 
-  override webSocketClose(_ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
-    // No-op on the runtime side: by the time this lifecycle handler
-    // fires the socket is already in a closing state, and the
-    // Hibernating runtime has already removed it from
-    // `ctx.getWebSockets()`. Calling `ws.close(...)` here throws
-    // because the socket is no longer mutable from server code.
-    // The structured `ws.close` log is the operator's signal that
-    // the socket actually disconnected (close code + reason
-    // surface "client navigated away" vs "1006 abnormal closure").
-    logWsClose(code, reason, wasClean)
+  override webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
+    this.wsLifecycle.handleClose(ws, code, reason, wasClean)
   }
 
-  override webSocketError(_ws: WebSocket, err: unknown): void {
-    // No-op on the runtime side: same lifecycle invariant as
-    // `webSocketClose`. The runtime surfaces the underlying error
-    // via the close handshake; we have no recovery path inside the
-    // DO that does not race with hibernation. The structured log
-    // gives the operator visibility into errored disconnects.
-    logWsError(err instanceof Error ? err.message : String(err))
+  override webSocketError(ws: WebSocket, err: unknown): void {
+    this.wsLifecycle.handleError(ws, err)
   }
 
   /**
