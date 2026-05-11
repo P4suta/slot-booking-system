@@ -1,3 +1,4 @@
+import { applyShopStateDelta, type ShopStateDelta } from "@booking/core"
 import { apiBaseUrl } from "./baseUrl.js"
 
 const baseUrl = apiBaseUrl
@@ -364,6 +365,11 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
   let socket: WebSocket | null = null
   let currentState: QueueFeedState = "connecting"
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  // ADR-0075 — local mirror of the server's last broadcast snapshot.
+  // Snapshots replace it; deltas are applied on top. The merged
+  // ShopState surfaces through `onProjection` so consumers see the
+  // same shape as before the v5 envelope landed.
+  let localShopState: ShopState | null = null
 
   const setState = (next: QueueFeedState): void => {
     currentState = next
@@ -405,6 +411,28 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
       if (event.data === "pong") return
       try {
         const parsed: unknown = JSON.parse(event.data)
+        // ADR-0075 v5 envelope: { v: 5, kind: "snapshot"|"delta", ... }
+        // Anything else (legacy v4 raw payload) falls through to the
+        // consumer unchanged so a deploy that downgrades the server
+        // doesn't break the client.
+        if (typeof parsed === "object" && parsed !== null && (parsed as { v?: unknown }).v === 5) {
+          const env = parsed as
+            | { v: 5; kind: "snapshot"; snapshot: ShopState }
+            | { v: 5; kind: "delta"; delta: ShopStateDelta }
+          if (env.kind === "snapshot") {
+            localShopState = env.snapshot
+            callbacks.onProjection(env.snapshot)
+          } else if (localShopState !== null) {
+            localShopState = applyShopStateDelta(localShopState, env.delta) as ShopState
+            callbacks.onProjection(localShopState)
+          } else {
+            // delta arrived before snapshot — request a fresh
+            // snapshot via reconnect (cheaper than a separate REST
+            // round-trip and keeps the same handshake path).
+            socket?.close(1011, "delta-before-snapshot")
+          }
+          return
+        }
         callbacks.onProjection(parsed)
       } catch (err) {
         callbacks.onError?.("ParseError", err)

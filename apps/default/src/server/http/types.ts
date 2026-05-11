@@ -23,4 +23,5 @@ export type Env = {
   readonly BUSINESS_HOURS_START_MIN?: string
   readonly BUSINESS_HOURS_END_MIN?: string
   readonly SERVING_THRESHOLD_MS?: string
+  readonly BROADCAST_COALESCE_MS?: string
 }

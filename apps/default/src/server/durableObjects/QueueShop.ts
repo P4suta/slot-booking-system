@@ -10,10 +10,13 @@ import {
   type ConcurrencyError,
   type CustomerHandle,
   codeOf,
+  computeShopStateDelta,
   type DomainError,
+  type FeedMessage,
   type IdGenerator,
   InstantSchema,
   IssueTicket,
+  isEmptyShopStateDelta,
   type Lane,
   type Logger,
   MarkNoShow,
@@ -23,6 +26,7 @@ import {
   Recall,
   RescheduleTicket,
   reservationsByDeadline,
+  type ShopState as ShopStateWire,
   type StorageError,
   SystemClockLive,
   type Ticket,
@@ -41,6 +45,7 @@ type Env = {
   DB: D1Database
   GRACE_TTL_MIN?: string
   SERVING_THRESHOLD_MS?: string
+  BROADCAST_COALESCE_MS?: string
 }
 
 /**
@@ -426,7 +431,7 @@ export class QueueShop extends DurableObject<Env> {
    * `ticketByHandle` round-trip on every broadcast, which is what
    * was consuming `RL_VERIFY` budget under v3.
    */
-  private async projectionPayload(): Promise<string> {
+  private async computeShopState(): Promise<ShopStateWire> {
     const tickets = await this.listTickets()
     const project = (t: EncodedTicket) => ({
       id: t.id,
@@ -501,9 +506,8 @@ export class QueueShop extends DurableObject<Env> {
     const decodedWaitingTickets = this.listDecodedWaitingTickets()
     const ranked = reservationsByDeadline({ tickets: decodedWaitingTickets })
     const nextDeadline = ranked[0]?.appointmentAt ?? null
-    return JSON.stringify({
-      ok: true,
-      v: 4,
+    return {
+      v: 4 as const,
       waitingCount: waiting.length,
       callableNowCount: waiting.filter(isCallableNow).length,
       laneCounts: {
@@ -516,7 +520,7 @@ export class QueueShop extends DurableObject<Env> {
       pendingNoShow: pendingNoShow.map(project),
       waitingPreview: waiting.map(project),
       nextReservationDeadline: nextDeadline !== null ? String(nextDeadline) : null,
-    })
+    }
   }
 
   private listDecodedWaitingTickets(): Map<TicketId, Ticket> {
@@ -529,9 +533,19 @@ export class QueueShop extends DurableObject<Env> {
     return m
   }
 
+  private lastBroadcastSnapshot: ShopStateWire | null = null
+  private coalesceTimer: ReturnType<typeof setTimeout> | undefined
+
   private async sendProjectionTo(ws: WebSocket): Promise<void> {
     try {
-      ws.send(await this.projectionPayload())
+      // New connects always receive a full snapshot — the client has
+      // no prior state to merge a delta against. The cached
+      // `lastBroadcastSnapshot` is reused if the DO has broadcast
+      // recently, otherwise a fresh snapshot is computed.
+      const snapshot = this.lastBroadcastSnapshot ?? (await this.computeShopState())
+      this.lastBroadcastSnapshot = snapshot
+      const msg: FeedMessage = { v: 5, kind: "snapshot", snapshot }
+      ws.send(JSON.stringify(msg))
     } catch (err) {
       // The socket may have been closed between accept + send; the
       // runtime evicts it from `ctx.getWebSockets()` on the next
@@ -544,15 +558,44 @@ export class QueueShop extends DurableObject<Env> {
   }
 
   /**
-   * Fan out the current projection to every attached WebSocket.
-   * Called from {@link dispatch} after a successful state change so
-   * the customer landing page reflects the queue without polling.
+   * Fan out the current projection to every attached WebSocket
+   * (ADR-0075). Coalesces dispatches inside `BROADCAST_COALESCE_MS`
+   * (default 100 ms) into a single broadcast; if a prior snapshot
+   * exists the wire payload is the diff against it. Called from
+   * {@link dispatch} after a successful state change.
    */
-  private async broadcastProjection(): Promise<void> {
+  private broadcastProjection(): Promise<void> {
+    if (this.coalesceTimer !== undefined) return Promise.resolve()
+    const coalesceMs = Number(this.env.BROADCAST_COALESCE_MS) || 100
+    this.coalesceTimer = setTimeout(() => {
+      this.coalesceTimer = undefined
+      void this.fireBroadcast()
+    }, coalesceMs)
+    return Promise.resolve()
+  }
+
+  private async fireBroadcast(): Promise<void> {
     const sockets = this.ctx.getWebSockets()
-    if (sockets.length === 0) return
+    const next = await this.computeShopState()
+    if (sockets.length === 0) {
+      this.lastBroadcastSnapshot = next
+      return
+    }
     const started = Date.now()
-    const payload = await this.projectionPayload()
+    let payload: string
+    if (this.lastBroadcastSnapshot === null) {
+      const msg: FeedMessage = { v: 5, kind: "snapshot", snapshot: next }
+      payload = JSON.stringify(msg)
+    } else {
+      const delta = computeShopStateDelta(this.lastBroadcastSnapshot, next)
+      if (isEmptyShopStateDelta(delta)) {
+        this.lastBroadcastSnapshot = next
+        return
+      }
+      const msg: FeedMessage = { v: 5, kind: "delta", delta }
+      payload = JSON.stringify(msg)
+    }
+    this.lastBroadcastSnapshot = next
     let failed = 0
     for (const ws of sockets) {
       try {

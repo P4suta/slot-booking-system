@@ -30,7 +30,7 @@
     "apps/web": {
       "entry": ["src/routes/**/*.{svelte,ts}", "src/app.html", "test/**/*.test.ts"],
       "project": ["src/**/*.{ts,svelte}", "test/**/*.ts"],
-      "ignoreDependencies": ["@booking/core", "@cloudflare/workers-types"]
+      "ignoreDependencies": ["@cloudflare/workers-types"]
     }
   }
 }
