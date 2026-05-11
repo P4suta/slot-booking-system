@@ -233,6 +233,44 @@
     return idx >= 0 ? idx : null
   })
 
+  // Flip-card behaviour for the numeral hero. While the ticket is
+  // Waiting and we know the position, the hero card has two faces:
+  // 表 = 整理券番号、 裏 = 「あなたの前に N 人」。 The card flips
+  // every 5s automatically, and a tap toggles it manually (which
+  // also restarts the auto cycle so the user's intent stays
+  // visible for at least one full interval).
+  let flipped = $state(false)
+  const flipShowable = $derived(
+    ticket !== null && ticket.state === "Waiting" && positionInfo !== null,
+  )
+  let flipTimer: ReturnType<typeof setInterval> | undefined
+  const startFlipTimer = (): void => {
+    if (flipTimer !== undefined) clearInterval(flipTimer)
+    flipTimer = setInterval(() => {
+      flipped = !flipped
+    }, 5000)
+  }
+  const stopFlipTimer = (): void => {
+    if (flipTimer !== undefined) {
+      clearInterval(flipTimer)
+      flipTimer = undefined
+    }
+  }
+  $effect(() => {
+    if (flipShowable) {
+      startFlipTimer()
+    } else {
+      stopFlipTimer()
+      flipped = false
+    }
+    return stopFlipTimer
+  })
+  const onFlipClick = (): void => {
+    if (!flipShowable) return
+    flipped = !flipped
+    startFlipTimer()
+  }
+
   const stateLabel = $derived.by(() => {
     if (ticket === null) return ""
     switch (ticket.state) {
@@ -426,10 +464,32 @@
   {/if}
 
   {#if ticket !== null}
-    <div class="numeral-hero" data-state={ticket.state}>
-      <span class="numeral-label">{m.numeral_label()}</span>
-      <span class="numeral">{ticket.displaySeq}</span>
-      <span class="state-tag">{stateLabel}</span>
+    <div class="numeral-hero-wrap" data-flipped={flipped ? "true" : undefined}>
+      {#if flipShowable && positionInfo !== null}
+        <button
+          type="button"
+          class="numeral-flip"
+          onclick={onFlipClick}
+          aria-label={flipped ? "整理券番号を表示" : "前の人数を表示"}
+        >
+          <div class="numeral-face numeral-face-front" data-state={ticket.state}>
+            <span class="numeral-label">{m.numeral_label()}</span>
+            <span class="numeral">{ticket.displaySeq}</span>
+            <span class="state-tag">{stateLabel}</span>
+          </div>
+          <div class="numeral-face numeral-face-back" data-state={ticket.state}>
+            <span class="numeral-label">あなたの前に</span>
+            <span class="numeral">{positionInfo}</span>
+            <span class="state-tag">人 待ち</span>
+          </div>
+        </button>
+      {:else}
+        <div class="numeral-face numeral-face-static" data-state={ticket.state}>
+          <span class="numeral-label">{m.numeral_label()}</span>
+          <span class="numeral">{ticket.displaySeq}</span>
+          <span class="state-tag">{stateLabel}</span>
+        </div>
+      {/if}
     </div>
 
     {#if isReservation && minutesUntilAppointment !== null}
@@ -474,12 +534,6 @@
             </p>
           {/if}
         </div>
-      </Card>
-    {:else if ticket.state === "Waiting" && positionInfo !== null}
-      <Card class="position-card">
-        <p class="position">
-          あなたの前に <strong>{positionInfo}</strong> 人
-        </p>
       </Card>
     {/if}
 
@@ -615,7 +669,7 @@
       row-gap: var(--space-6);
       align-items: start;
     }
-    .ticket-page > .numeral-hero {
+    .ticket-page > .numeral-hero-wrap {
       grid-column: 1;
       grid-row: 1;
     }
@@ -624,7 +678,6 @@
       grid-row: 1;
     }
     .ticket-page > .appointment-card,
-    .ticket-page > .position-card,
     .ticket-page > .notify-card,
     .ticket-page > .actions,
     .ticket-page > .banner,
@@ -632,7 +685,36 @@
       grid-column: 1 / -1;
     }
   }
-  .numeral-hero {
+  /* Flip-card structure. The wrap is the grid item; the flip is a
+     position:relative container that hosts the two absolutely-
+     positioned faces. The wrap also exposes the perspective so the
+     rotation reads as depth instead of a 2-D shear. The "static"
+     mode (= no positionInfo available) collapses to a plain
+     numeral-face with no flip machinery. */
+  .numeral-hero-wrap {
+    perspective: 1200px;
+  }
+  .numeral-flip {
+    position: relative;
+    width: 100%;
+    min-height: 16rem;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    transform-style: preserve-3d;
+    transition: transform 600ms cubic-bezier(0.4, 0, 0.2, 1);
+    display: block;
+  }
+  .numeral-hero-wrap[data-flipped="true"] .numeral-flip {
+    transform: rotateY(180deg);
+  }
+  .numeral-flip:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 4px;
+    border-radius: var(--radius-lg);
+  }
+  .numeral-face {
     text-align: center;
     padding: var(--space-8) var(--space-4);
     background: var(--color-bg-raised);
@@ -642,27 +724,40 @@
     flex-direction: column;
     gap: var(--space-2);
     justify-content: center;
+    box-sizing: border-box;
+  }
+  .numeral-flip .numeral-face {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .numeral-face-back {
+    transform: rotateY(180deg);
   }
   @media (min-width: 48rem) {
-    .numeral-hero {
+    .numeral-flip {
+      min-height: 20rem;
+    }
+    .numeral-face {
       padding: var(--space-10) var(--space-6);
     }
-    .numeral-hero .numeral {
+    .numeral-face .numeral {
       font-size: 8rem;
       line-height: 1;
     }
   }
-  .numeral-hero[data-state="Called"],
-  .numeral-hero[data-state="Serving"] {
+  .numeral-face[data-state="Called"],
+  .numeral-face[data-state="Serving"] {
     background: oklch(95% 0.07 65);
     border-color: var(--color-state-called);
   }
-  .numeral-hero[data-state="Served"] {
+  .numeral-face[data-state="Served"] {
     background: oklch(95% 0.07 145);
     border-color: var(--color-state-serving);
   }
-  .numeral-hero[data-state="Cancelled"],
-  .numeral-hero[data-state="NoShow"] {
+  .numeral-face[data-state="Cancelled"],
+  .numeral-face[data-state="NoShow"] {
     background: var(--color-bg-subtle);
     color: var(--color-fg-muted);
   }

@@ -45,13 +45,6 @@
   let selected: Set<string> = $state(new Set())
   let expanded: Set<string> = $state(new Set())
   let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
-  // Batch-call confirmation dialog. The previous design was a free
-  // number input + "先頭から呼ぶ" button on the topbar; a single
-  // mistyped digit could call 11 customers at once. The dialog
-  // restricts the choice to a preset (2 / 3 / 5) and requires an
-  // explicit confirmation step.
-  let batchDialogOpen = $state(false)
-  let batchDialogN: number = $state(2)
   let now = $state(Date.now())
   let slotChipTick: ReturnType<typeof setInterval> | undefined
 
@@ -249,35 +242,11 @@
   }
 
   /**
-   * The primary action surfaced on the topbar — call the single
-   * next customer in line. Reuses `onCallNext` (no lane filter
-   * argument, so the preferred-lane chain in ADR-0062 decides
-   * which lane to pull from).
+   * Primary single-customer call surfaced on the column header.
+   * For multi-customer calls, staff tick the per-card checkboxes
+   * and use the bottom action bar (`onCallBatch`).
    */
   const onCallNextOne = (): Promise<void> => onCallNext()
-
-  /**
-   * Confirmed multi-customer call from the batch dialog. Pulls
-   * `batchDialogN` ticket ids from the head of `waiting`
-   * and fires `callBatch`. The dialog closes on success; on
-   * failure the dialog stays open so the operator sees the inline
-   * error before retrying.
-   */
-  const onCallBatchConfirm = async (): Promise<void> => {
-    const ids = waiting.slice(0, batchDialogN).map((t) => t.id)
-    if (ids.length === 0) {
-      batchDialogOpen = false
-      return
-    }
-    await runAction(
-      "call-next-batch",
-      () => callBatch(token, ids),
-      () => {
-        showToast(`${ids.length} 件を順次呼び出しました`, "info")
-        batchDialogOpen = false
-      },
-    )
-  }
 
   const onStartServing = (ticketId: string) =>
     runAction("start-serving", () => startServing(token, ticketId), () => showToast("対応中に切り替えました", "success"))
@@ -383,19 +352,9 @@
         <header class="col-header">
           <div class="col-title-row">
             <h2>待機 ({waiting.length})</h2>
-            <div class="primary-action">
-              <Button variant="primary" size="md" onclick={onCallNextOne} disabled={busy}>
-                {m.call_next_one_button()}
-              </Button>
-              <button
-                type="button"
-                class="batch-link"
-                onclick={() => (batchDialogOpen = true)}
-                disabled={busy}
-              >
-                {m.call_next_batch_link()}
-              </button>
-            </div>
+            <Button variant="primary" size="md" onclick={onCallNextOne} disabled={busy}>
+              {m.call_next_one_button()}
+            </Button>
           </div>
         </header>
         <div class="cards">
@@ -598,45 +557,6 @@
       </footer>
     {/if}
 
-    <!-- batch confirmation dialog -->
-    <Dialog
-      bind:open={batchDialogOpen}
-      title={m.call_batch_dialog_title()}
-      onClose={() => (batchDialogOpen = false)}
-    >
-      <p>{m.call_batch_dialog_intro()}</p>
-      <div class="batch-preset" role="radiogroup" aria-label="呼ぶ人数">
-        {#each [2, 3, 5] as preset}
-          <button
-            type="button"
-            role="radio"
-            class="preset-chip"
-            aria-checked={batchDialogN === preset}
-            data-active={batchDialogN === preset ? "true" : undefined}
-            onclick={() => (batchDialogN = preset)}
-          >
-            {preset} 人
-          </button>
-        {/each}
-      </div>
-      <p class="batch-note">
-        待機列の先頭から {batchDialogN} 人を順番に呼び出します。
-        現在の待機列は {waiting.length} 人です。
-      </p>
-      {#snippet actions()}
-        <Button variant="ghost" onclick={() => (batchDialogOpen = false)} disabled={busy}>
-          {m.call_batch_dialog_cancel()}
-        </Button>
-        <Button
-          variant="primary"
-          onclick={onCallBatchConfirm}
-          disabled={busy || waiting.length === 0}
-        >
-          {m.call_batch_dialog_confirm({ count: String(batchDialogN) })}
-        </Button>
-      {/snippet}
-    </Dialog>
-
     <!-- toast -->
     {#if toast !== null}
       <div class="toast-host">
@@ -733,31 +653,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-  }
-  .batch-preset {
-    display: flex;
-    gap: var(--space-2);
-    margin: var(--space-3) 0;
-  }
-  .preset-chip {
-    flex: 1;
-    background: transparent;
-    color: var(--color-fg-secondary);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-pill);
-    padding: var(--space-3) var(--space-4);
-    font: var(--text-body-md);
-    cursor: pointer;
-  }
-  .preset-chip[data-active="true"] {
-    background: var(--color-fg-primary);
-    color: var(--color-bg-surface);
-    border-color: transparent;
-  }
-  .batch-note {
-    color: var(--color-fg-muted);
-    font: var(--text-body-sm);
-    margin: 0;
   }
   .error {
     background: oklch(95% 0.05 25);
