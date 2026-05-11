@@ -72,7 +72,8 @@ module.exports = {
           "|^apps/.*/test/integration/_harness/.*\\.ts$" +
           // SvelteKit's file-system routing loads these by convention.
           "|^apps/web/src/routes/.*\\.svelte$" +
-          "|^apps/web/src/(app\\.d\\.ts|app\\.html|app\\.css|hooks\\.server\\.ts)$" +
+          "|^apps/web/src/routes/.*/(\\+page|\\+layout|\\+error)\\.(ts|svelte)$" +
+          "|^apps/web/src/(app\\.d\\.ts|app\\.html|app\\.css|hooks\\.(client|server)\\.ts)$" +
           // Imported by .svelte files which dep-cruiser does not parse.
           "|^apps/web/src/lib/(graphql/endpoint|graphql/client|graphql/queries|i18n|kana|qr|ticketCache|staffSession|wsStatus)\\.ts$" +
           // S19 vocabulary modules — consumed by the Kanban /
@@ -81,7 +82,12 @@ module.exports = {
           // parser, so flag them as exempt rather than the
           // misleading "orphan".
           "|^apps/web/src/lib/components/(kanban/descriptors|modal/states)\\.ts$" +
-          "|^apps/web/src/lib/components/.*\\.svelte$)",
+          "|^apps/web/src/lib/components/.*\\.svelte$" +
+          // S23 dev inspector — same shape as the S19 vocabulary
+          // modules (consumed by .svelte pages dep-cruiser does not
+          // parse). The `.svelte.ts` extension marks Svelte 5
+          // reactive runes living outside the markup.
+          "|^apps/web/src/lib/dev/.*\\.svelte\\.ts$)",
       },
       to: {},
     },

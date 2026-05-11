@@ -46,7 +46,13 @@ pre-commit:
       run: scripts/dev-exec.ts ./node_modules/.bin/biome check --write --error-on-warnings --no-errors-on-unmatched {staged_files}
       stage_fixed: true
     eslint-staged:
-      glob: "**/*.{ts,tsx,js,mjs,cjs,svelte}"
+      # `.svelte` is intentionally excluded — the project's flat
+      # ESLint config does not register a parser for Svelte
+      # markup; semantic checks for `.svelte` live in
+      # `svelte-check` (pre-push). Passing a `.svelte` file here
+      # would surface a no-config "file ignored" warning that
+      # `--max-warnings 0` flips into a hard failure.
+      glob: "**/*.{ts,tsx,js,mjs,cjs}"
       run: scripts/dev-exec.ts ./node_modules/.bin/eslint --cache --cache-location node_modules/.cache/.eslintcache --fix --max-warnings 0 {staged_files}
       stage_fixed: true
     comment-bans-staged:
