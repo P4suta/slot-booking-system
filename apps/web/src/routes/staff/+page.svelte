@@ -397,7 +397,7 @@
           <h2>待機 ({waiting.length})</h2>
         </header>
         <div class="cards">
-          {#each waiting as t (t.id)}
+          {#each waiting as t, idx (t.id)}
             <Card interactive>
               <div
                 class="ticket waiting-card" data-ticket-id={t.id}
@@ -411,16 +411,6 @@
                     onchange={() => toggleSelect(t.id)}
                   />
                 </label>
-                <div class="quick-call">
-                  <Button
-                    variant="primary"
-                    size="md"
-                    onclick={() => onCallSpecific(t.id)}
-                    disabled={busy}
-                  >
-                    この人を呼ぶ
-                  </Button>
-                </div>
                 <button
                   type="button"
                   class="ticket-body-button"
@@ -440,6 +430,15 @@
                     <span class="kana">{t.nameKana ?? ""}</span>
                     <span class="last4">{t.phoneLast4 ?? ""}</span>
                   </div>
+                </button>
+                <button
+                  type="button"
+                  class="card-call-action"
+                  aria-label="この人を呼ぶ"
+                  onclick={() => onCallSpecific(t.id)}
+                  disabled={busy}
+                >
+                  <span class="call-label">呼び出す</span>
                 </button>
                 {#if expanded.has(t.id)}
                   <div id={`ticket-detail-${t.id}`} class="ticket-detail">
@@ -461,14 +460,13 @@
                         <dd>{t.appointmentAt.slice(11, 16)}</dd>
                       {/if}
                     </dl>
-                    <div class="detail-actions">
-                      <Button variant="primary" size="md" onclick={() => onCallSpecific(t.id)} disabled={busy}>
-                        個別呼び出し
-                      </Button>
-                      <Button variant="secondary" size="md" onclick={() => onReorderToHead(t.id)} disabled={busy}>
-                        先頭に移動
-                      </Button>
-                    </div>
+                    {#if idx > 0}
+                      <div class="detail-actions">
+                        <Button variant="secondary" size="md" onclick={() => onReorderToHead(t.id)} disabled={busy}>
+                          先頭に移動
+                        </Button>
+                      </div>
+                    {/if}
                   </div>
                 {/if}
               </div>
@@ -790,31 +788,7 @@
     font: var(--text-mono-sm);
     color: var(--color-fg-muted);
   }
-  .quick-call {
-    position: absolute;
-    bottom: var(--space-2);
-    right: var(--space-2);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 150ms ease;
-    z-index: 2;
-  }
-  .waiting-card:hover .quick-call,
-  .waiting-card:focus-within .quick-call,
-  .waiting-card[data-expanded="true"] .quick-call {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  @media (hover: none) {
-    /* On touch devices the hover trick doesn't work; always show. */
-    .quick-call {
-      opacity: 1;
-      pointer-events: auto;
-      position: static;
-      align-self: stretch;
-      margin-top: var(--space-2);
-    }
-  }
+
   .col-title-row {
     display: flex;
     justify-content: space-between;
@@ -920,22 +894,25 @@
     outline-offset: 2px;
     border-radius: var(--radius-md);
   }
+  /* Waiting card is a 2-column grid: the left column carries the
+     accordion trigger button (= the whole card body, single
+     click opens the detail panel inline). The right column is a
+     `.card-call-action` whose width animates from 0 to ~7rem on
+     hover / focus / touch — the card "morphs" into a call surface
+     instead of having a separate floating call button. */
   .waiting-card {
     position: relative;
-  }
-  /* Reserve a gutter on the card body for the absolutely-positioned
-     checkbox so the lane chip (right edge of `.ticket-head`) never
-     gets visually clipped underneath it. */
-  .waiting-card .ticket-body-button .ticket-head {
-    padding-right: 2.5rem;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: stretch;
   }
   .select-handle {
     position: absolute;
     top: var(--space-2);
-    right: var(--space-2);
+    left: var(--space-2);
     display: inline-flex;
     align-items: center;
-    z-index: 1;
+    z-index: 2;
   }
   .select-handle input[type="checkbox"] {
     width: 1.25rem;
@@ -944,10 +921,11 @@
     accent-color: var(--color-accent-primary);
   }
   .ticket-body-button {
+    grid-column: 1;
     appearance: none;
     background: transparent;
     border: 0;
-    padding: 0;
+    padding: 0 0 0 calc(1.25rem + var(--space-3));
     margin: 0;
     text-align: left;
     color: inherit;
@@ -962,6 +940,53 @@
     outline: 2px solid var(--color-accent-primary);
     outline-offset: 4px;
     border-radius: var(--radius-md);
+  }
+  .card-call-action {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: stretch;
+    background: var(--color-accent-primary);
+    color: var(--color-accent-on-primary);
+    border: 0;
+    cursor: pointer;
+    width: 0;
+    overflow: hidden;
+    padding: 0;
+    transition: width 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                padding 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                margin 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    margin-left: 0;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: var(--text-label-md);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .waiting-card:hover .card-call-action,
+  .waiting-card:focus-within .card-call-action {
+    width: 6rem;
+    padding: 0 var(--space-3);
+    margin-left: var(--space-3);
+  }
+  .card-call-action:focus-visible {
+    outline: 2px solid var(--color-fg-primary);
+    outline-offset: 2px;
+  }
+  .card-call-action:disabled {
+    background: var(--color-bg-subtle);
+    color: var(--color-fg-muted);
+    cursor: not-allowed;
+  }
+  @media (hover: none) {
+    /* On touch devices the hover trick doesn't work; the call
+       action is rendered alongside the card body at all times. */
+    .card-call-action {
+      width: 5.5rem;
+      padding: 0 var(--space-2);
+      margin-left: var(--space-2);
+    }
   }
   .ticket-detail {
     margin-top: var(--space-3);
