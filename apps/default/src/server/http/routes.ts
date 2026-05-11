@@ -31,6 +31,7 @@ import {
 } from "@booking/core"
 import { Result, Schema } from "effect"
 import type { QueueAction } from "../durableObjects/QueueShop.js"
+import { ClientReportSchema, emitClientReport } from "../obs/clientReport.js"
 import { dispatchEnvelope, failResponse, okJson, requireStaff, stub } from "./_shared.js"
 import { handleStaffLogin } from "./auth/login.js"
 import {
@@ -52,6 +53,7 @@ import {
 import type { RouteContext, RouteDescriptor } from "./dispatchRoute.js"
 import { openApiDocument } from "./openapi.js"
 import { parseJsonBody } from "./parseJsonBody.js"
+import { currentTraceId } from "./traceIdHeader.js"
 
 // 1. POST /api/v1/staff/login — exchanges the deployment secret
 // for a JWT (response body) + HMAC-signed cookie session. Bearer
@@ -833,6 +835,32 @@ const route_noComeConfirm: RouteDescriptor = {
   },
 }
 
+// POST /api/v1/__/client-error — receive client-side
+// observability reports (S22 / ADR-0090). The web reporter
+// batches every warning/error DevEvent from the ring and POSTs
+// here; the handler emits one ClientReport structured-log line
+// per event. Unauthenticated by design — observability is best-
+// effort, not an audit channel. See `obs/clientReport.ts`.
+const route_clientError: RouteDescriptor = {
+  method: "POST",
+  path: "/api/v1/__/client-error",
+  handle: async (c: RouteContext) => {
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, {
+        extra: { reason: parsed.reason },
+      })
+    }
+    const decoded = Schema.decodeUnknownResult(ClientReportSchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure, c.env)
+      return failResponse(fail.status, fail.tag, fail.code, { env: c.env })
+    }
+    emitClientReport(decoded.success, currentTraceId())
+    return new Response(null, { status: 204 })
+  },
+}
+
 // 18. GET /api/v1/openapi.json — OpenAPI 3.1 document
 const route_openapi: RouteDescriptor = {
   method: "GET",
@@ -902,6 +930,7 @@ export const ROUTES: readonly RouteDescriptor[] = [
   route_recall,
   route_lateAcknowledge,
   route_noComeConfirm,
+  route_clientError,
   route_openapi,
   route_queueFeed,
 ]
