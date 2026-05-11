@@ -12,11 +12,12 @@ import {
   codeOf,
   computeShopStateDelta,
   type DomainError,
+  type EncodedTicket,
+  encodeTicket,
   type FeedMessage,
   type IdGenerator,
   InstantSchema,
   IssueTicket,
-  isCallableNow,
   isEmptyShopStateDelta,
   type Lane,
   type Logger,
@@ -26,7 +27,6 @@ import {
   type NonEmptyReadonlyArray,
   Recall,
   RescheduleTicket,
-  reservationsByDeadline,
   type ShopState as ShopStateWire,
   type StorageError,
   SystemClockLive,
@@ -41,6 +41,7 @@ import { Cause, Effect, Layer, Schema } from "effect"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { ensureDurableObjectSchema } from "./migrations.js"
+import { buildShopState } from "./Projector.js"
 import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecycleLog.js"
 
 type Env = {
@@ -99,15 +100,6 @@ export type QueueAction =
     }
 
 /**
- * The Worker boundary serialises every DO RPC return through
- * `structuredClone`, which rejects `Temporal.Instant` values (no
- * default cloner). We re-encode the ticket via `Schema.encode` so the
- * wire shape is JSON-safe; consumers re-decode if they need typed
- * Temporal access.
- */
-export type EncodedTicket = (typeof TicketSchema)["Encoded"]
-
-/**
  * Result envelope. Single-ticket actions return `ticket`; CallBatch
  * returns `tickets` (the array of every member that landed Called).
  * Failure carries the `_tag + code` pair the boundary surfaces.
@@ -122,8 +114,6 @@ export type QueueResult =
   | { ok: true; tickets: readonly EncodedTicket[] }
   | { ok: true }
   | { ok: false; error: { _tag: string; code: string } }
-
-const encodeTicket = (t: Ticket): EncodedTicket => Schema.encodeUnknownSync(TicketSchema)(t)
 
 const GRACE_TTL_DEFAULT_MIN = 10
 
@@ -435,87 +425,13 @@ export class QueueShop extends DurableObject<Env> {
    */
   private async computeShopState(): Promise<ShopStateWire> {
     const tickets = await this.listTickets()
-    const project = (t: EncodedTicket) => ({
-      id: t.id,
-      seq: t.seq,
-      lane: t.lane,
-      displaySeq: t.displaySeq,
-      appointmentAt: t.appointmentAt,
-      state: t.state,
+    const decodedWaiting = this.listDecodedWaitingTickets()
+    return buildShopState({
+      tickets,
+      decodedWaiting,
+      nowMs: Date.now(),
+      servingThresholdMs: Number(this.env.SERVING_THRESHOLD_MS) || 30_000,
     })
-    // Waiting-row ordering — partition into "callable now" (= walk-in
-    // / priority / reservation already within the EDF grace window)
-    // and "not yet" (= reservation whose appointmentAt is still
-    // farther in the future than `now + grace`). Callable rows sit
-    // above not-yet rows; within callable, displaySeq asc keeps the
-    // walk-in/priority FIFO; within not-yet, appointmentAt asc puts
-    // the soonest-due reservation near the boundary so the staff can
-    // see what's coming next. Matches the order CallNext (ADR-0067)
-    // actually pulls from, so the staff dashboard reads top-to-bottom
-    // the way customers will be called.
-    const nowMs = Date.now()
-    const callable = (t: EncodedTicket): boolean => isCallableNow(t, nowMs)
-    const apptMs = (t: EncodedTicket): number => {
-      if (t.appointmentAt === null) return 0
-      const ms = Date.parse(t.appointmentAt)
-      return Number.isNaN(ms) ? 0 : ms
-    }
-    const waiting = tickets
-      .filter((t) => t.state === "Waiting")
-      .sort((a, b) => {
-        const aCall = callable(a)
-        const bCall = callable(b)
-        if (aCall !== bCall) return aCall ? -1 : 1
-        if (!aCall) {
-          const d = apptMs(a) - apptMs(b)
-          if (d !== 0) return d
-        }
-        return a.displaySeq - b.displaySeq
-      })
-    // ADR-0073 — Serving is no longer a domain state. The Kanban
-    // "対応中" column is derived from Called: any Called ticket whose
-    // calledAt is older than SERVING_THRESHOLD_MS (default 30s) is
-    // assumed to be at the counter, the rest are still "calling out".
-    // The two arrays are mutually exclusive subsets of Called.
-    const SERVING_THRESHOLD_MS = Number(this.env.SERVING_THRESHOLD_MS) || 30_000
-    const calledAll = tickets
-      .filter((t) => t.state === "Called")
-      .sort((a, b) => a.displaySeq - b.displaySeq)
-    const calling = calledAll.filter((t) => {
-      const calledMs = Date.parse(t.calledAt)
-      if (Number.isNaN(calledMs)) return true
-      return calledMs + SERVING_THRESHOLD_MS > nowMs
-    })
-    const serving = calledAll.filter((t) => {
-      const calledMs = Date.parse(t.calledAt)
-      if (Number.isNaN(calledMs)) return false
-      return calledMs + SERVING_THRESHOLD_MS <= nowMs
-    })
-    const pendingNoShow = tickets
-      .filter((t) => t.state === "PendingNoShow")
-      .sort((a, b) => a.displaySeq - b.displaySeq)
-    const laneCount = (lane: Lane) => waiting.filter((t) => t.lane === lane).length
-    // Decode just the waiting subset to drive the EDF deadline read;
-    // the rest of the payload stays in encoded form to keep the wire
-    // shape JSON-safe under structuredClone.
-    const decodedWaitingTickets = this.listDecodedWaitingTickets()
-    const ranked = reservationsByDeadline({ tickets: decodedWaitingTickets })
-    const nextDeadline = ranked[0]?.appointmentAt ?? null
-    return {
-      v: 6 as const,
-      waitingCount: waiting.length,
-      callableNowCount: waiting.filter(callable).length,
-      laneCounts: {
-        walkIn: laneCount("walkIn"),
-        priority: laneCount("priority"),
-        reservation: laneCount("reservation"),
-      },
-      calling: calling.map(project),
-      serving: serving.map(project),
-      pendingNoShow: pendingNoShow.map(project),
-      waitingPreview: waiting.map(project),
-      nextReservationDeadline: nextDeadline !== null ? String(nextDeadline) : null,
-    }
   }
 
   private listDecodedWaitingTickets(): Map<TicketId, Ticket> {
