@@ -54,7 +54,16 @@ describe("rescheduleTicket", () => {
     const call = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(call[0]).toMatch(/\/api\/v1\/tickets\/01TICKET\/reschedule$/)
     expect(call[1].method).toBe("POST")
-    expect(call[1].headers).toEqual({ "content-type": "application/json" })
+    // ADR-0088 — fetchJson now attaches an `x-trace-id` header to
+    // every outbound request. The header is constructed via
+    // `new Headers(...)`, so the `headers` field on RequestInit is
+    // a Headers instance rather than the plain object the call site
+    // passed in. We assert on the merged content rather than strict
+    // equality so the obs instrumentation can evolve (e.g. add a
+    // session id header in Stage 22) without churning unit tests.
+    const headers = call[1].headers as Headers
+    expect(headers.get("content-type")).toBe("application/json")
+    expect(headers.get("x-trace-id")).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/)
     expect(JSON.parse(call[1].body as string)).toEqual({
       nameKana: "ヤマダ",
       phoneLast4: "1234",

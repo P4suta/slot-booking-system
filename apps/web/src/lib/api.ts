@@ -8,6 +8,8 @@ import {
   type StaffShopStateDelta,
 } from "@booking/core"
 import { apiBaseUrl } from "./baseUrl.js"
+import { obsBus } from "./obs/bus.js"
+import { generateTraceId } from "./obs/traceId.js"
 import { setShopState } from "./stores/shopState.svelte.js"
 
 // ADR-0086 — wire types re-export from @booking/core. The web side
@@ -125,11 +127,46 @@ const json = async <A>(res: Response): Promise<ApiResult<A>> => {
   }
 }
 
+// Stage 20 / ADR-0088 — derive a stable "path" string from the
+// request URL for obs events. We strip the origin to avoid noisy
+// origin churn between dev / preview / prod and keep query strings
+// because slot ranges + handle lookups are the path discriminator
+// for repeated /api/v1/tickets/by-handle calls.
+const obsPathOf = (input: string): string => {
+  try {
+    const url = new URL(
+      input,
+      typeof window !== "undefined" ? window.location.origin : "http://obs.local",
+    )
+    return `${url.pathname}${url.search}`
+  } catch {
+    return input
+  }
+}
+
 const fetchJson = async <A>(input: string, init?: RequestInit): Promise<ApiResult<A>> => {
+  // Local trace id; the server may echo back a different one via
+  // `x-trace-id` (e.g. the worker assigned one before parsing), in
+  // which case the response branch overwrites the FetchEnd record.
+  const localTraceId = generateTraceId()
+  const method = init?.method ?? "GET"
+  const path = obsPathOf(input)
+  const startedAt = Date.now()
+
+  // Merge `x-trace-id` into the outgoing headers without clobbering
+  // an explicit caller value (none today, but the type permits it).
+  // Uppercased to match the server's canonical Crockford alphabet.
+  const headers = new Headers(init?.headers)
+  if (!headers.has("x-trace-id")) headers.set("x-trace-id", localTraceId.toUpperCase())
+
+  obsBus.emit({ kind: "FetchStart", traceId: localTraceId, method, path, at: startedAt })
+
   let res: Response
   try {
-    res = await fetch(input, init)
-  } catch {
+    res = await fetch(input, { ...init, headers })
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err)
+    obsBus.emit({ kind: "FetchError", traceId: localTraceId, method, path, reason, at: Date.now() })
     return {
       ok: false,
       kind: "NetworkError",
@@ -138,6 +175,19 @@ const fetchJson = async <A>(input: string, init?: RequestInit): Promise<ApiResul
       traceId: null,
     }
   }
+
+  const serverTraceId = res.headers.get("x-trace-id")
+  const traceId = serverTraceId ?? localTraceId
+  obsBus.emit({
+    kind: "FetchEnd",
+    traceId,
+    method,
+    path,
+    status: res.status,
+    ms: Date.now() - startedAt,
+    ok: res.ok,
+    at: Date.now(),
+  })
   return json<A>(res)
 }
 
@@ -341,6 +391,7 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
     socket.onopen = () => {
       attempt = 0
       setState("open")
+      obsBus.emit({ kind: "WsOpen", at: Date.now() })
       // Client-side keepalive: send an empty text frame every 30s.
       // The runtime's Hibernating WebSocket can otherwise idle-close
       // a quiet broadcast feed (no mutations during a slow hour);
@@ -371,6 +422,17 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
             | { v: 6; kind: "snapshot"; capability: "staff"; snapshot: StaffShopState }
             | { v: 6; kind: "delta"; capability: "anonymous"; delta: ShopStateDelta }
             | { v: 6; kind: "delta"; capability: "staff"; delta: StaffShopStateDelta }
+          obsBus.emit({
+            kind: "WsFrameIn",
+            capability: env.capability,
+            frameKind: env.kind,
+            bytes: event.data.length,
+            // ADR-0088 — server-attached trigger trace id is not on
+            // the envelope yet (Stage 25); placeholder null until
+            // the server populates it.
+            triggerTraceId: null,
+            at: Date.now(),
+          })
           if (env.kind === "snapshot") {
             if (env.capability === "staff") {
               localStaffShopState = env.snapshot
@@ -407,10 +469,23 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
       }
     }
     socket.onerror = (err) => {
+      // `err` is a generic Event (the WebSocket onerror argument is
+      // intentionally non-descriptive in the spec). The best label
+      // we can attach is its `type` field; we surface that into the
+      // obs ring so the post-mortem at least knows a network-level
+      // WS error fired, even though the browser strips the cause.
+      obsBus.emit({ kind: "WsError", reason: err.type, at: Date.now() })
       callbacks.onError?.("NetworkError", err)
     }
-    socket.onclose = () => {
+    socket.onclose = (event: CloseEvent) => {
       stopKeepalive()
+      obsBus.emit({
+        kind: "WsClose",
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+        at: Date.now(),
+      })
       // Manual close (= consumer unmounted): the page's onDestroy
       // has already reset wsStatus and may have moved on to another
       // route. Firing `onState("closed")` here would overwrite the
