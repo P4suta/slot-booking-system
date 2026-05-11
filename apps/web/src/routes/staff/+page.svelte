@@ -86,6 +86,22 @@
     if (delta <= 30 * 60 * 1000) return "soon"
     return "future"
   }
+  /**
+   * Mirrors the backend EDF grace (ADR-0067 / CallNext) — a
+   * reservation isn't callable until `appointmentAt - 5min ≤ now`.
+   * Walk-in / priority tickets are always callable. The card's
+   * 呼び出す button is `disabled` when this returns false so a
+   * stray tap can't pull a reservation customer to the front
+   * 30 minutes early.
+   */
+  const RESERVATION_GRACE_MS = 5 * 60 * 1000
+  const isCallableNow = (t: Ticket): boolean => {
+    if (t.lane !== "reservation") return true
+    if (t.appointmentAt === null) return true
+    const atMs = Date.parse(t.appointmentAt)
+    if (Number.isNaN(atMs)) return true
+    return atMs - RESERVATION_GRACE_MS <= now
+  }
 
   /* ---------- derived ---------- */
   const searchHits: Ticket[] = $derived.by(() => {
@@ -380,9 +396,10 @@
                 <button
                   type="button"
                   class="card-call-action"
-                  aria-label="この人を呼ぶ"
+                  aria-label={isCallableNow(t) ? "この人を呼ぶ" : "予約時刻が近づいてから呼び出せます"}
+                  title={isCallableNow(t) ? undefined : "予約時刻まで 5 分以内になるまで呼び出せません"}
                   onclick={() => onCallSpecific(t.id)}
-                  disabled={busy}
+                  disabled={busy || !isCallableNow(t)}
                 >
                   <span class="call-label">呼び出す</span>
                 </button>

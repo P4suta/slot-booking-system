@@ -440,9 +440,42 @@ export class QueueShop extends DurableObject<Env> {
       appointmentAt: t.appointmentAt,
       state: t.state,
     })
+    // Waiting-row ordering — partition into "callable now" (= walk-in
+    // / priority / reservation already within the EDF grace window)
+    // and "not yet" (= reservation whose appointmentAt is still
+    // farther in the future than `now + grace`). Callable rows sit
+    // above not-yet rows; within callable, displaySeq asc keeps the
+    // walk-in/priority FIFO; within not-yet, appointmentAt asc puts
+    // the soonest-due reservation near the boundary so the staff can
+    // see what's coming next. Matches the order CallNext (ADR-0067)
+    // actually pulls from, so the staff dashboard reads top-to-bottom
+    // the way customers will be called.
+    const PROJECTION_GRACE_MS = 5 * 60 * 1000
+    const nowMs = Date.now()
+    const isCallableNow = (t: EncodedTicket): boolean => {
+      if (t.lane !== "reservation") return true
+      if (t.appointmentAt === null) return true
+      const atMs = Date.parse(t.appointmentAt)
+      if (Number.isNaN(atMs)) return true
+      return atMs - PROJECTION_GRACE_MS <= nowMs
+    }
+    const apptMs = (t: EncodedTicket): number => {
+      if (t.appointmentAt === null) return 0
+      const ms = Date.parse(t.appointmentAt)
+      return Number.isNaN(ms) ? 0 : ms
+    }
     const waiting = tickets
       .filter((t) => t.state === "Waiting")
-      .sort((a, b) => a.displaySeq - b.displaySeq)
+      .sort((a, b) => {
+        const aCall = isCallableNow(a)
+        const bCall = isCallableNow(b)
+        if (aCall !== bCall) return aCall ? -1 : 1
+        if (!aCall) {
+          const d = apptMs(a) - apptMs(b)
+          if (d !== 0) return d
+        }
+        return a.displaySeq - b.displaySeq
+      })
     const calling = tickets
       .filter((t) => t.state === "Called")
       .sort((a, b) => a.displaySeq - b.displaySeq)
