@@ -122,6 +122,9 @@ describe("GET /api/v1/queue/feed credential surfaces (S26)", () => {
     const res = await worker().fetch(req.queueFeedUpgrade())
     expect(res.status).toBe(101)
     expect(res.webSocket).not.toBeNull()
+    // accept() before close() — without it the runtime throws on
+    // any post-handshake socket method.
+    res.webSocket?.accept()
     res.webSocket?.close(1000, "test-done")
   })
 
