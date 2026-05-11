@@ -96,7 +96,10 @@
     })
   })
 
-  onDestroy(() => feed?.close())
+  onDestroy(() => {
+    feed?.close()
+    wsStatus.set("none")
+  })
 </script>
 
 <svelte:head>

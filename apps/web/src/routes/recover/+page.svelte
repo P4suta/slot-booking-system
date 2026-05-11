@@ -9,6 +9,7 @@
   import { toKatakana } from "$lib/kana.js"
   import { errorMessage, helpText } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
+  import { wsStatus } from "$lib/wsStatus.js"
 
   let nameKana = $state("")
   let phoneLast4 = $state("")
@@ -20,6 +21,10 @@
   let booting = $state(true)
 
   onMount(async () => {
+    // /recover does not subscribe to the projection feed (form-only
+    // page). Mark the WS chip as inactive so the layout doesn't
+    // render a stale "接続中…" inherited from a previous route.
+    wsStatus.set("none")
     // Stage 10: staff session sandbox — staff token in localStorage
     // means an operator is at the keyboard; redirect to /staff so
     // the customer-recovery form does not impersonate a customer view.

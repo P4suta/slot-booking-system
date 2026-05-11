@@ -10,6 +10,7 @@
   import { toKatakana } from "$lib/kana.js"
   import { errorMessage, helpText } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
+  import { wsStatus } from "$lib/wsStatus.js"
 
   let nameKana = $state("")
   let phoneLast4 = $state("")
@@ -24,6 +25,10 @@
   let booting = $state(true)
 
   onMount(async () => {
+    // /issue does not subscribe to the projection feed (form-only
+    // page). Mark the WS chip as inactive so the layout doesn't
+    // render a stale "接続中…" inherited from a previous route.
+    wsStatus.set("none")
     // Stage 10: staff session sandbox — staff never lands on the
     // customer issue form even by typing the URL.
     if (hasStaffToken()) {

@@ -344,6 +344,7 @@
 
   onDestroy(() => {
     feed?.close()
+    wsStatus.set("none")
     if (slotChipTick !== undefined) clearInterval(slotChipTick)
   })
 </script>

@@ -513,6 +513,7 @@
 
   onDestroy(() => {
     feed?.close()
+    wsStatus.set("none")
     if (countdownTick !== undefined) clearInterval(countdownTick)
   })
 </script>

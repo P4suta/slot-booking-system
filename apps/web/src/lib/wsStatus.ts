@@ -9,11 +9,19 @@ import type { QueueFeedState } from "./api.js"
  * "サーバ通信" indicator at the same place (ADR-0061 broadcast feed
  * is shared infrastructure; the visual representation should match).
  *
- * Writers: `/+page.svelte`, `/ticket/+page.svelte`, `/staff/+page.svelte`.
- * Reader: `+layout.svelte` (header chip).
+ * `"none"` means the current route has no WS subscription, so the
+ * layout chip should not render at all. The default is `"none"` so
+ * pages like `/issue` and `/recover` (which don't open a feed) don't
+ * leave the chip stuck on "接続中…" forever — they would otherwise
+ * never call `wsStatus.set(...)` and the store would retain the
+ * value from the previous route or the initial "connecting".
  *
- * The default `connecting` is what every fresh tab observes before
- * the first `onState` callback fires, so the chip never starts on a
- * misleading "open" or "closed".
+ * Writers: `/+page.svelte`, `/ticket/+page.svelte`, `/staff/+page.svelte`
+ * (mirror onState into the store; reset to `"none"` on unmount).
+ * `/issue/+page.svelte` and `/recover/+page.svelte` reset to `"none"`
+ * on mount.
+ * Reader: `+layout.svelte` (header chip; hidden when `"none"`).
  */
-export const wsStatus = writable<QueueFeedState>("connecting")
+export type WsDisplayState = QueueFeedState | "none"
+
+export const wsStatus = writable<WsDisplayState>("none")

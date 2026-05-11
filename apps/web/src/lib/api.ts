@@ -383,10 +383,11 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
     }
     socket.onclose = () => {
       stopKeepalive()
-      if (manualClose) {
-        setState("closed")
-        return
-      }
+      // Manual close (= consumer unmounted): the page's onDestroy
+      // has already reset wsStatus and may have moved on to another
+      // route. Firing `onState("closed")` here would overwrite the
+      // store value the new route just set; just exit silently.
+      if (manualClose) return
       const delay = reconnectDelayMs(attempt)
       attempt += 1
       setState("reconnecting")

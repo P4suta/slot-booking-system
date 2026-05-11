@@ -9,16 +9,18 @@
     initStaffSession,
     staffSessionActive,
   } from "$lib/staffSession.js"
-  import type { QueueFeedState } from "$lib/api.js"
 
   let { children } = $props()
 
   // Resolve a single WS-status descriptor (label + tone) per
-  // QueueFeedState value. Color alone fails a11y; the visible text
-  // tells screen readers and colour-blind users the same thing.
+  // store value. Returns `null` for `"none"` so the layout can
+  // hide the chip entirely on routes that don't subscribe to a
+  // WS feed (= /issue, /recover, /staff before login). Colour
+  // alone fails a11y; the visible text tells screen readers and
+  // colour-blind users the same thing.
   const wsDescriptor = (
-    state: QueueFeedState,
-  ): { readonly text: string; readonly tone: "ok" | "pending" | "error" } => {
+    state: string,
+  ): { readonly text: string; readonly tone: "ok" | "pending" | "error" } | null => {
     switch (state) {
       case "open":
         return { text: m.ws_status_open(), tone: "ok" }
@@ -28,6 +30,8 @@
         return { text: m.ws_status_reconnecting(), tone: "pending" }
       case "closed":
         return { text: m.ws_status_closed(), tone: "error" }
+      default:
+        return null
     }
   }
 
@@ -102,13 +106,15 @@
 <header>
   <nav aria-label="メイン">
     <a href="/" onclick={onBrandClick}>整理券</a>
-    <span class="ws-chip" data-tone={ws.tone} role="status" aria-live="polite">
-      <span class="ws-dot" aria-hidden="true"></span>
-      <span class="ws-text">
-        <span class="ws-label">{m.ws_status_label()}:</span>
-        <span class="ws-value">{ws.text}</span>
+    {#if ws !== null}
+      <span class="ws-chip" data-tone={ws.tone} role="status" aria-live="polite">
+        <span class="ws-dot" aria-hidden="true"></span>
+        <span class="ws-text">
+          <span class="ws-label">{m.ws_status_label()}:</span>
+          <span class="ws-value">{ws.text}</span>
+        </span>
       </span>
-    </span>
+    {/if}
   </nav>
   {#if $staffSessionActive}
     <button type="button" class="header-logout" onclick={onHeaderLogout}>
@@ -121,7 +127,7 @@
   {@render children()}
 </main>
 
-{#if ws.tone === "error"}
+{#if ws !== null && ws.tone === "error"}
   <!--
     Server connection lost. The chip in the header turns red but
     that alone is easy to miss when the page renders other
