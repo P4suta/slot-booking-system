@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { isCallableNow as coreIsCallableNow } from "@booking/core"
+  import {
+    isCallableNow as coreIsCallableNow,
+    type StaffProjectionEntry,
+    type TicketState,
+  } from "@booking/core"
   import { onDestroy, onMount } from "svelte"
   import {
     type ApiResult,
@@ -13,7 +17,6 @@
     type QueueFeedState,
     recall,
     staffCancel,
-    staffShopState,
     type Ticket,
   } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
@@ -22,6 +25,7 @@
   import Help from "$lib/components/Help.svelte"
   import Toast from "$lib/components/Toast.svelte"
   import { emptyState, m } from "$lib/messages.js"
+  import { isStaffShopState, shopStateStore } from "$lib/stores/shopState.svelte.js"
   import { clearStaffSession, markStaffLoggedIn } from "$lib/staffSession.js"
   import { wsStatus } from "$lib/wsStatus.js"
 
@@ -31,11 +35,11 @@
   )
   let authenticated = $state(token.length > 0)
   let waitingCount = $state(0)
-  let waiting: ReadonlyArray<Ticket> = $state([])
-  let calling: ReadonlyArray<Ticket> = $state([])
-  let servingList: ReadonlyArray<Ticket> = $state([])
-  let pendingNoShow: ReadonlyArray<Ticket> = $state([])
-  let done: Ticket[] = $state([])
+  let waiting: ReadonlyArray<StaffProjectionEntry> = $state([])
+  let calling: ReadonlyArray<StaffProjectionEntry> = $state([])
+  let servingList: ReadonlyArray<StaffProjectionEntry> = $state([])
+  let pendingNoShow: ReadonlyArray<StaffProjectionEntry> = $state([])
+  let done: ReadonlyArray<StaffProjectionEntry> = $state([])
   let busy = $state(false)
   let error: string | null = $state(null)
   let feedState: QueueFeedState = $state("connecting")
@@ -62,11 +66,13 @@
   // staff-side detail panels (waiting accordion + history accordion).
   // The customer-facing chips fall through paraglide already; this
   // helper covers the dl pairs where we render the value text.
-  const stateLabelJa = (s: Ticket["state"]): string => {
+  const stateLabelJa = (s: TicketState): string => {
     switch (s) {
       case "Waiting":
         return m.state_Waiting()
       case "Called":
+        return m.state_Called()
+      case "PendingNoShow":
         return m.state_Called()
       case "Served":
         return m.state_Served()
@@ -94,38 +100,18 @@
    * lockstep — change the magnitude there and every callable-now
    * decision moves together.
    */
-  const isCallableNow = (t: Ticket): boolean => coreIsCallableNow(t, now)
+  const isCallableNow = (t: StaffProjectionEntry): boolean => coreIsCallableNow(t, now)
 
-  // ADR-0074 — PendingNoShow TTL は server-side `GRACE_TTL_MIN` (default
-  // 10 分) に対応する。 client から env 値は見えないので 10 分仮置き、
-  // server 側を変更したらここも合わせる。
-  const GRACE_TTL_MS = 10 * 60 * 1000
-  const GRACE_IMMINENT_MS = 60 * 1000
-  // markedAt は PendingNoShow variant のみで定義される field。 narrow して
-  // typesafe に取り出し、 不正な ISO 文字列 (= server bug) は 0 に倒す。
-  const pendingMarkedMs = (t: Ticket): number => {
-    if (t.state !== "PendingNoShow") return 0
-    const raw = t.markedAt
-    if (raw === undefined) return 0
-    const ms = Date.parse(raw)
-    return Number.isNaN(ms) ? 0 : ms
-  }
-  const pendingElapsedMin = (t: Ticket): number => {
-    const markedMs = pendingMarkedMs(t)
-    if (markedMs === 0) return 0
-    return Math.max(0, Math.round((now - markedMs) / 60000))
-  }
-  const pendingRemainingMs = (t: Ticket): number => {
-    const markedMs = pendingMarkedMs(t)
-    if (markedMs === 0) return GRACE_TTL_MS
-    return Math.max(0, GRACE_TTL_MS - (now - markedMs))
-  }
+  // ADR-0074 — PendingNoShow grace TTL の elapsed / remaining 表示は
+  // `markedAt` を要するが、 staff projection (S17 / ADR-0085) では PII
+  // を絞り込んだ entry shape なので timestamp は載っていない。 残時間表示
+  // は projection 拡張時に復活させる。
 
   /* ---------- derived ---------- */
-  const searchHits: Ticket[] = $derived.by(() => {
+  const searchHits: ReadonlyArray<StaffProjectionEntry> = $derived.by(() => {
     const q = searchQuery.trim().toLowerCase()
     if (q.length === 0) return []
-    const pool: ReadonlyArray<Ticket> = [
+    const pool: ReadonlyArray<StaffProjectionEntry> = [
       ...waiting,
       ...calling,
       ...pendingNoShow,
@@ -160,30 +146,30 @@
     }, 80)
   }
 
-  /* ---------- refresh ---------- */
-  const refresh = async (): Promise<void> => {
-    try {
-      const r = await staffShopState(token)
-      if (!r.ok) {
-        error = `refresh: ${r.error._tag}`
-        if (r.error._tag === "MissingStaffCapability") onLogout()
-        return
-      }
-      const nextCount = r.value.waitingCount
-      if (prevWaitingCount !== null && nextCount > prevWaitingCount) {
-        notifyArrival(nextCount - prevWaitingCount)
-      }
-      prevWaitingCount = nextCount
-      waitingCount = nextCount
-      waiting = r.value.waitingPreview
-      calling = r.value.calling
-      servingList = r.value.serving
-      pendingNoShow = r.value.pendingNoShow
-      done = r.value.terminal
-      error = null
-    } catch (e) {
-      error = `refresh: ${String(e)}`
+  /* ---------- refresh ----------
+   *
+   * S17 / ADR-0085 — staff page is a pure consumer of `shopStateStore`.
+   * The WS path (`connectQueueFeed`) writes every snapshot + delta
+   * into the store; this projection pulls the staff variant out and
+   * updates the local Kanban columns. PII payload arrives through the
+   * staff WS frame (S12) so no REST refetch is needed.
+   */
+  const refresh = (): void => {
+    const snap = shopStateStore.value
+    if (snap === null) return
+    if (!isStaffShopState(snap)) return
+    const nextCount = snap.waitingCount
+    if (prevWaitingCount !== null && nextCount > prevWaitingCount) {
+      notifyArrival(nextCount - prevWaitingCount)
     }
+    prevWaitingCount = nextCount
+    waitingCount = nextCount
+    waiting = snap.waitingPreview
+    calling = snap.calling
+    servingList = snap.serving
+    pendingNoShow = snap.pendingNoShow
+    done = snap.terminal
+    error = null
   }
 
   /* ---------- desktop notification on new arrival ---------- */
@@ -206,14 +192,17 @@
   }
 
   /* ---------- live feed ---------- */
-  const startLiveFeed = async (): Promise<void> => {
-    await refresh()
+  const startLiveFeed = (): void => {
+    // S17 / ADR-0085 — `shopStateStore` is the single source of truth
+    // for the staff projection. `connectQueueFeed` writes every WS
+    // frame into it; the `$effect` below pulls the staff variant into
+    // the local Kanban state. No REST refetch is needed.
+    refresh()
     if (feed === undefined) {
       feed = connectQueueFeed({
         onProjection: () => {
-          // PII-bearing snapshot lives behind the staff token, so we
-          // re-fetch over REST after every WS push.
-          void refresh()
+          // No-op: the store is already updated by `connectQueueFeed`,
+          // and the `$effect` propagates the snapshot into page state.
         },
         onState: (next) => {
           feedState = next
@@ -222,6 +211,16 @@
       })
     }
   }
+
+  // Reactive bridge — every time `shopStateStore.value` advances
+  // (snapshot or delta merged in by `connectQueueFeed`), propagate
+  // the staff variant into the page state. The `refresh()` body is
+  // pure projection extraction with no async hops.
+  $effect(() => {
+    // Touch the store value so Svelte tracks it.
+    void shopStateStore.value
+    refresh()
+  })
 
   /* ---------- generic action runner ---------- */
   async function runAction<A>(
@@ -248,7 +247,12 @@
     } finally {
       busy = false
     }
-    void refresh()
+    // The WS push reflects the server-side mutation into
+    // `shopStateStore` shortly after the action returns; the
+    // `$effect` re-runs `refresh()` automatically so no manual call
+    // is needed here. The local re-projection is also already done
+    // for the snapshot the store carries at this instant.
+    refresh()
   }
 
   const showToast = (message: string, variant?: "info" | "success" | "warning" | "danger", undoLabel?: string, onUndo?: () => void) => {
@@ -256,14 +260,14 @@
   }
 
   /* ---------- auth ---------- */
-  const onLogin = async (event: SubmitEvent): Promise<void> => {
+  const onLogin = (event: SubmitEvent): void => {
     event.preventDefault()
     if (token.length === 0) return
     localStorage.setItem("queue.staffToken", token)
     markStaffLoggedIn()
     authenticated = true
     ensureNotificationPermission()
-    await startLiveFeed()
+    startLiveFeed()
   }
 
   const onLogout = (): void => {
@@ -323,14 +327,14 @@
     runAction("cancel", () => staffCancel(token, ticketId, "staff-cancel"), () => showToast("キャンセル", "warning"))
 
   /* ---------- lifecycle ---------- */
-  onMount(async () => {
+  onMount(() => {
     if (authenticated) {
       // Token came from localStorage at script init; the shared
       // store needs to mirror it so the layout's ログアウト button
       // renders without waiting for an explicit login event.
       markStaffLoggedIn()
       ensureNotificationPermission()
-      await startLiveFeed()
+      startLiveFeed()
     }
     // 1Hz tick drives the slot chip due/overdue colour transition.
     slotChipTick = setInterval(() => {
@@ -514,10 +518,6 @@
         <header><h2>催促中 ({pendingNoShow.length})</h2></header>
         <div class="cards">
           {#each pendingNoShow as t (t.id)}
-            {@const remainingMs = pendingRemainingMs(t)}
-            {@const elapsedMin = pendingElapsedMin(t)}
-            {@const imminent = remainingMs < GRACE_IMMINENT_MS}
-            {@const remainingMin = Math.max(1, Math.ceil(remainingMs / 60000))}
             <Card>
               <div
                 class="ticket pending-noshow-card"
@@ -531,13 +531,6 @@
                       <span class="block-caption">整理券番号</span>
                       <span class="numeral">{t.displaySeq}</span>
                     </div>
-                    <span
-                      class="grace-chip"
-                      data-state={imminent ? "imminent" : "active"}
-                    >
-                      <span class="grace-chip-label">催促開始から</span>
-                      <span class="grace-chip-time">{elapsedMin} 分</span>
-                    </span>
                   </div>
                   <div class="ticket-body">
                     <div class="kana-block">
@@ -545,13 +538,6 @@
                       <span class="kana">{t.nameKana ?? ""}</span>
                     </div>
                   </div>
-                  <p class="grace-ttl" data-state={imminent ? "imminent" : "active"}>
-                    {#if imminent}
-                      間もなく自動キャンセル
-                    {:else}
-                      残り {remainingMin} 分
-                    {/if}
-                  </p>
                 </div>
                 <div class="ticket-detail">
                   <dl>
@@ -1020,43 +1006,12 @@
     border-left: 3px solid oklch(75% 0.18 80);
     padding-left: var(--space-2);
   }
-  /* markedAt からの経過時間は slot-chip と同じ場所スタイル、
-     色は warning 系で「待っている時間が伸びている」 の意味付け。 */
-  .grace-chip {
-    display: inline-flex;
-    align-items: baseline;
-    gap: var(--space-1);
-    font: var(--text-mono-sm);
-    border-radius: var(--radius-pill);
-    padding: var(--space-1) var(--space-3);
-    color: oklch(35% 0.18 80);
-    background: oklch(95% 0.13 80 / 60%);
-  }
-  .grace-chip[data-state="imminent"] {
-    color: oklch(35% 0.22 25);
-    background: oklch(85% 0.18 25 / 70%);
-    font-weight: 700;
-  }
-  .grace-chip-label {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-    font-family: inherit;
-  }
-  .grace-chip[data-state="imminent"] .grace-chip-label {
-    color: oklch(40% 0.18 25);
-  }
-  .grace-chip-time {
-    font-variant-numeric: tabular-nums;
-  }
-  .grace-ttl {
-    margin: 0;
-    font: var(--text-body-sm);
-    color: oklch(40% 0.13 80);
-  }
-  .grace-ttl[data-state="imminent"] {
-    color: var(--color-state-danger);
-    font-weight: 600;
-  }
+  /* S17 / ADR-0085 — the elapsed / remaining display under each
+     pending-noshow card used to read `markedAt` off a full `Ticket`,
+     but the staff projection no longer carries that timestamp. The
+     `.grace-chip` / `.grace-ttl` styles were removed alongside the
+     markup; revive them when `StaffProjectionEntry` gains a
+     `markedAt` field server-side. */
   /* Card content: head + body stacked. The whole region is
      non-interactive (= no click handler) so it stays a `<div>`,
      not a button. The detail panel below is hover-revealed by

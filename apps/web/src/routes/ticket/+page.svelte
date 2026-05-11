@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
   import { page } from "$app/state"
-  import { onDestroy, onMount } from "svelte"
+  import { onDestroy, onMount, untrack } from "svelte"
   import {
     acknowledgeLate,
     cancelTicket,
@@ -32,6 +32,7 @@
   import SlotPicker from "$lib/components/SlotPicker.svelte"
   import { errorMessage, helpText, loadingState, m } from "$lib/messages.js"
   import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
+  import { isStaffShopState, shopStateStore } from "$lib/stores/shopState.svelte.js"
   import {
     hasStaffToken,
     isTerminalState,
@@ -45,7 +46,20 @@
 
   let stored: Stored | null = $state(null)
   let ticket: Ticket | null = $state(null)
-  let snapshot: ShopState | null = $state(null)
+  // ADR-0085 / S17 — single-source projection: WS frames live in
+  // `shopStateStore.value`, written exclusively by `connectQueueFeed`.
+  // The REST `shopState()` boot fetch fills `restSnapshot` so the
+  // hero numeral can paint a position before the first WS frame
+  // arrives; once the store has anything, the store wins.
+  let restSnapshot: ShopState | null = $state(null)
+  const snapshot = $derived.by<ShopState | null>(() => {
+    const v = shopStateStore.value
+    // Customer page subscribes anonymously, so staff frames are
+    // structurally impossible here — the guard is just a type
+    // narrowing for `ShopState` consumers below.
+    if (v !== null && !isStaffShopState(v)) return v
+    return restSnapshot
+  })
   let qrDataUrl: string | null = $state(null)
   let shareUrl: string | null = $state(null)
   let error: { tag: string; code: string; message: string } | null = $state(null)
@@ -214,7 +228,7 @@
         clearAlertMemory()
       }
       const s = await shopState()
-      if (s.ok) snapshot = s.value
+      if (s.ok) restSnapshot = s.value
       const origin = window.location.origin
       const url = buildShareRecoveryUrl(origin)
       shareUrl = url
@@ -481,6 +495,62 @@
     }
   }
 
+  // ADR-0085 / S17 — single-source projection sync. The store is the
+  // canonical wire-frame holder; this effect mirrors the legacy
+  // `onProjection` selfEntry tracking against it.
+  //
+  // ADR-0071 — v4 projection carries `state` on every entry, so the
+  // common transition path (Waiting position shuffle, appointmentAt
+  // edit) rides the WS feed directly with no HTTP follow-up. A
+  // `ticketByHandle()` round-trip is only spent on two rare
+  // boundaries:
+  //   1. Waiting → Called   — we need a fresh `calledAt` instant to
+  //                            drive the chime / vibrate /
+  //                            notification (the replay-protection
+  //                            key in `maybeTriggerCalledAlert`).
+  //   2. active → terminal — the id has fallen out of every bucket;
+  //                            one HTTP call confirms the terminal
+  //                            state and lets `refresh()` purge the
+  //                            cache + redirect to /recover.
+  //
+  // `untrack` isolates the reactive dependency to `shopStateStore.value`
+  // alone — the body reads + writes `ticket`, but we do not want the
+  // effect to re-fire on those writes (that would loop on every
+  // optimistic check-in or mutation response).
+  $effect(() => {
+    const snap = shopStateStore.value
+    if (snap === null || isStaffShopState(snap)) return
+    untrack(() => {
+      if (stored === null) return
+      const selfEntry =
+        snap.calling.find((t) => t.id === stored?.ticketId) ??
+        snap.serving.find((t) => t.id === stored?.ticketId) ??
+        snap.waitingPreview.find((t) => t.id === stored?.ticketId) ??
+        null
+      if (selfEntry !== null) {
+        const wasCalled = ticket?.state === "Called"
+        const nowCalled = selfEntry.state === "Called"
+        if (!wasCalled && nowCalled) {
+          void refresh(stored)
+          return
+        }
+        if (ticket !== null) {
+          ticket = {
+            ...ticket,
+            state: selfEntry.state,
+            lane: selfEntry.lane,
+            displaySeq: selfEntry.displaySeq,
+            appointmentAt: selfEntry.appointmentAt,
+          }
+        }
+        return
+      }
+      if (ticket !== null && !isTerminalState(ticket.state)) {
+        void refresh(stored)
+      }
+    })
+  })
+
   onMount(async () => {
     // Stage 10: staff session sandbox — operator at the keyboard
     // shouldn't impersonate a customer view, even by accident.
@@ -500,56 +570,12 @@
     }
     await refresh(stored)
     feed = connectQueueFeed({
-      onProjection: (parsed) => {
-        const snap = parsed as ShopState
-        snapshot = snap
-        if (stored === null) return
-        // ADR-0071 — v4 projection carries `state` on every entry,
-        // so the common transition path (Waiting position shuffle,
-        // appointmentAt edit) rides the WS feed directly with no
-        // HTTP follow-up. A `ticketByHandle()`
-        // round-trip is only spent on two rare boundaries:
-        //   1. Waiting → Called   — we need a fresh `calledAt`
-        //                            instant to drive the chime /
-        //                            vibrate / notification (the
-        //                            replay-protection key in
-        //                            `maybeTriggerCalledAlert`).
-        //   2. active → terminal — the id has fallen out of every
-        //                            bucket; one HTTP call confirms
-        //                            the terminal state and lets
-        //                            `refresh()` purge the cache +
-        //                            redirect to /recover.
-        const selfEntry =
-          snap.calling.find((t) => t.id === stored.ticketId) ??
-          snap.serving.find((t) => t.id === stored.ticketId) ??
-          snap.waitingPreview.find((t) => t.id === stored.ticketId) ??
-          null
-        if (selfEntry !== null) {
-          const wasCalled = ticket?.state === "Called"
-          const nowCalled = selfEntry.state === "Called"
-          if (!wasCalled && nowCalled) {
-            // Called transition observed — one HTTP fetch pulls the
-            // server-assigned `calledAt` so the chime can fire and
-            // the audit timestamp is real. `refresh()` runs the
-            // alert internally.
-            void refresh(stored)
-            return
-          }
-          if (ticket !== null) {
-            ticket = {
-              ...ticket,
-              state: selfEntry.state,
-              lane: selfEntry.lane,
-              displaySeq: selfEntry.displaySeq,
-              appointmentAt: selfEntry.appointmentAt,
-            }
-          }
-          return
-        }
-        if (ticket !== null && !isTerminalState(ticket.state)) {
-          void refresh(stored)
-        }
-      },
+      // ADR-0085 / S17 — projection frames are written directly into
+      // `shopStateStore` by `connectQueueFeed`; the page re-derives
+      // `snapshot` from the store and reacts via the `$effect` below.
+      // The callback is kept as a no-op only because
+      // `QueueFeedCallbacks.onProjection` is currently required.
+      onProjection: () => {},
       onState: (next) => {
         feedState = next
         wsStatus.set(next)

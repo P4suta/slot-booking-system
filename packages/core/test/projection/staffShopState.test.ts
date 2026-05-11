@@ -32,6 +32,7 @@ const baseSnap = (): StaffShopState => ({
   serving: [],
   pendingNoShow: [],
   waitingPreview: [],
+  terminal: [],
   nextReservationDeadline: null,
 })
 
@@ -117,6 +118,24 @@ describe("staff frame variant — compute/apply/isEmpty (ADR-0083)", () => {
     expect(delta.waitingPreview?.added).toEqual([w])
     expect(delta.serving?.added).toEqual([s])
     expect(applyStaffShopStateDelta(a, delta)).toEqual(b)
+  })
+
+  it("terminal column diffs independently and applyDelta round-trips", () => {
+    const before = entry("t1", 1, { state: "Served" })
+    const after = entry("t2", 2, { state: "Cancelled" })
+    const a: StaffShopState = { ...baseSnap(), terminal: [before] }
+    const b: StaffShopState = { ...a, terminal: [before, after] }
+    const delta = computeStaffShopStateDelta(a, b)
+    expect(delta.terminal?.added).toEqual([after])
+    expect(applyStaffShopStateDelta(a, delta).terminal.map((t) => t.id)).toEqual(["t1", "t2"])
+    expect(isEmptyStaffShopStateDelta(delta)).toBe(false)
+  })
+
+  it("terminal-only field changes mark the delta as non-empty", () => {
+    const t = entry("t1", 1, { state: "NoShow" })
+    const a = baseSnap()
+    const b: StaffShopState = { ...a, terminal: [t] }
+    expect(isEmptyStaffShopStateDelta(computeStaffShopStateDelta(a, b))).toBe(false)
   })
 
   it("array delta is sorted by displaySeq after merge", () => {

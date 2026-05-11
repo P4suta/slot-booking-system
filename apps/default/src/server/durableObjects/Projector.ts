@@ -163,6 +163,15 @@ export const buildStaffShopState = (inputs: ProjectorInputs): StaffShopState => 
   const laneCount = (lane: Lane) => waiting.filter((t) => t.lane === lane).length
   const ranked = reservationsByDeadline({ tickets: decodedWaiting })
   const nextDeadline = ranked[0]?.appointmentAt ?? null
+  // ADR-0085 § terminal — staff Kanban's 履歴 column needs the
+  // recent terminal tickets so an operator can see what just
+  // finished. `seq` is monotone over the queue's lifetime, so
+  // sorting desc + slicing 8 gives a stable "newest first" recency
+  // proxy without a time index.
+  const terminal = tickets
+    .filter((t) => t.state === "Served" || t.state === "Cancelled" || t.state === "NoShow")
+    .sort((a, b) => b.seq - a.seq)
+    .slice(0, 8)
   return {
     v: 6 as const,
     waitingCount: waiting.length,
@@ -176,6 +185,7 @@ export const buildStaffShopState = (inputs: ProjectorInputs): StaffShopState => 
     serving: serving.map(projectStaffEntry),
     pendingNoShow: pendingNoShow.map(projectStaffEntry),
     waitingPreview: waiting.map(projectStaffEntry),
+    terminal: terminal.map(projectStaffEntry),
     nextReservationDeadline: nextDeadline !== null ? String(nextDeadline) : null,
   }
 }

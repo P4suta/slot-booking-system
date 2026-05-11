@@ -93,6 +93,13 @@ export type StaffShopState = {
   readonly serving: readonly StaffProjectionEntry[]
   readonly pendingNoShow: readonly StaffProjectionEntry[]
   readonly waitingPreview: readonly StaffProjectionEntry[]
+  /**
+   * Recent terminal tickets (Served / Cancelled / NoShow) — the
+   * staff Kanban exposes these as the 履歴 column. Sliced by `seq
+   * desc` to 8 entries server-side so the staff client does not
+   * need a separate trip for the recency tail.
+   */
+  readonly terminal: readonly StaffProjectionEntry[]
   readonly nextReservationDeadline: string | null
 }
 
@@ -105,6 +112,7 @@ export type StaffShopStateDelta = {
   readonly serving?: StaffArrayDelta
   readonly pendingNoShow?: StaffArrayDelta
   readonly waitingPreview?: StaffArrayDelta
+  readonly terminal?: StaffArrayDelta
 }
 
 /* -------------------------------------------------------------------------- */
@@ -355,6 +363,7 @@ export const computeStaffShopStateDelta = (
     serving?: StaffArrayDelta
     pendingNoShow?: StaffArrayDelta
     waitingPreview?: StaffArrayDelta
+    terminal?: StaffArrayDelta
   } = {}
   if (prev.waitingCount !== next.waitingCount) out.waitingCount = next.waitingCount
   if (prev.callableNowCount !== next.callableNowCount) {
@@ -372,6 +381,8 @@ export const computeStaffShopStateDelta = (
   if (pendingDelta !== undefined) out.pendingNoShow = pendingDelta
   const previewDelta = staffArrayDelta(prev.waitingPreview, next.waitingPreview)
   if (previewDelta !== undefined) out.waitingPreview = previewDelta
+  const terminalDelta = staffArrayDelta(prev.terminal, next.terminal)
+  if (terminalDelta !== undefined) out.terminal = terminalDelta
   return out
 }
 
@@ -399,6 +410,10 @@ export const applyStaffShopStateDelta = (
     delta.waitingPreview === undefined
       ? snap.waitingPreview
       : applyStaffArrayDelta(snap.waitingPreview, delta.waitingPreview),
+  terminal:
+    delta.terminal === undefined
+      ? snap.terminal
+      : applyStaffArrayDelta(snap.terminal, delta.terminal),
 })
 
 export const isEmptyStaffShopStateDelta = (d: StaffShopStateDelta): boolean =>
@@ -409,4 +424,5 @@ export const isEmptyStaffShopStateDelta = (d: StaffShopStateDelta): boolean =>
   d.calling === undefined &&
   d.serving === undefined &&
   d.pendingNoShow === undefined &&
-  d.waitingPreview === undefined
+  d.waitingPreview === undefined &&
+  d.terminal === undefined

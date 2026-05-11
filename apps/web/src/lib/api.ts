@@ -1,11 +1,14 @@
 import {
   applyShopStateDelta,
-  type LaneCounts,
+  applyStaffShopStateDelta,
   type ProjectionEntry,
   type ShopState,
   type ShopStateDelta,
+  type StaffShopState,
+  type StaffShopStateDelta,
 } from "@booking/core"
 import { apiBaseUrl } from "./baseUrl.js"
+import { setShopState } from "./stores/shopState.svelte.js"
 
 // ADR-0086 — wire types re-export from @booking/core. The web side
 // no longer hand-maintains `ProjectionEntry` / `ShopState`; any
@@ -52,28 +55,6 @@ export type SlotEntry = {
   readonly capacity: number
   readonly taken: number
   readonly available: number
-}
-
-/**
- * Staff-only shape: PII (nameKana / phoneLast4 / freeText) のせ。
- * calling / serving / waitingPreview のすべてが full Ticket row を
- * carry。 `terminal` は ADR-0069 §Stage 11 で追加された直近 8 件の
- * Served / Cancelled / NoShow ticket スライス (履歴列の source)。
- * `x-staff-token` 付き GET /api/v1/queue で返る。 v4 で
- * `waitingPreview` の cap が外れ、 全 Waiting ticket を返す
- * (ADR-0071)。
- */
-export type StaffShopState = {
-  readonly v: 6
-  readonly waitingCount: number
-  readonly callableNowCount: number
-  readonly laneCounts: LaneCounts
-  readonly calling: readonly Ticket[]
-  readonly serving: readonly Ticket[]
-  readonly pendingNoShow: readonly Ticket[]
-  readonly waitingPreview: readonly Ticket[]
-  readonly terminal: readonly Ticket[]
-  readonly nextReservationDeadline: string | null
 }
 
 /**
@@ -270,16 +251,6 @@ export const rescheduleTicket = async (
 export const shopState = async (): Promise<ApiResult<ShopState>> =>
   fetchJson(`${baseUrl()}/api/v1/queue`)
 
-/**
- * Staff 権限版 shopState — preview に PII (kana / 末尾4 / freeText) が
- * 同梱される。 token を付けたまま public endpoint を叩くだけで sub-path
- * は変わらない (worker 側で `x-staff-token` をチェックして branch)。
- */
-export const staffShopState = async (token: string): Promise<ApiResult<StaffShopState>> =>
-  fetchJson(`${baseUrl()}/api/v1/queue`, {
-    headers: { "x-staff-token": token },
-  })
-
 const wsUrl = (): string => {
   const http = baseUrl()
   return http === ""
@@ -341,10 +312,14 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
   let currentState: QueueFeedState = "connecting"
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   // ADR-0075 — local mirror of the server's last broadcast snapshot.
-  // Snapshots replace it; deltas are applied on top. The merged
-  // ShopState surfaces through `onProjection` so consumers see the
-  // same shape as before the v5 envelope landed.
+  // Snapshots replace it; deltas are applied on top. Mirrors the
+  // capability variant per ADR-0083 part 2: anonymous frames merge
+  // through `applyShopStateDelta`, staff frames through
+  // `applyStaffShopStateDelta`. The merged variant surfaces via
+  // `onProjection` (callback API, kept for incremental migration)
+  // *and* `setShopState` (the canonical Svelte 5 store, ADR-0085).
   let localShopState: ShopState | null = null
+  let localStaffShopState: StaffShopState | null = null
 
   const setState = (next: QueueFeedState): void => {
     currentState = next
@@ -392,14 +367,32 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
         // overhaul.
         if (typeof parsed === "object" && parsed !== null && (parsed as { v?: unknown }).v === 6) {
           const env = parsed as
-            | { v: 6; kind: "snapshot"; snapshot: ShopState }
-            | { v: 6; kind: "delta"; delta: ShopStateDelta }
+            | { v: 6; kind: "snapshot"; capability: "anonymous"; snapshot: ShopState }
+            | { v: 6; kind: "snapshot"; capability: "staff"; snapshot: StaffShopState }
+            | { v: 6; kind: "delta"; capability: "anonymous"; delta: ShopStateDelta }
+            | { v: 6; kind: "delta"; capability: "staff"; delta: StaffShopStateDelta }
           if (env.kind === "snapshot") {
-            localShopState = env.snapshot
-            callbacks.onProjection(env.snapshot)
-          } else if (localShopState !== null) {
-            localShopState = applyShopStateDelta(localShopState, env.delta)
-            callbacks.onProjection(localShopState)
+            if (env.capability === "staff") {
+              localStaffShopState = env.snapshot
+              localShopState = null
+              setShopState(env.snapshot)
+              callbacks.onProjection(env.snapshot)
+            } else {
+              localShopState = env.snapshot
+              localStaffShopState = null
+              setShopState(env.snapshot)
+              callbacks.onProjection(env.snapshot)
+            }
+          } else if (env.capability === "staff" && localStaffShopState !== null) {
+            const merged = applyStaffShopStateDelta(localStaffShopState, env.delta)
+            localStaffShopState = merged
+            setShopState(merged)
+            callbacks.onProjection(merged)
+          } else if (env.capability === "anonymous" && localShopState !== null) {
+            const merged = applyShopStateDelta(localShopState, env.delta)
+            localShopState = merged
+            setShopState(merged)
+            callbacks.onProjection(merged)
           } else {
             // delta arrived before snapshot — request a fresh
             // snapshot via reconnect (cheaper than a separate REST
