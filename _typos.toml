@@ -15,6 +15,7 @@ extend-ignore-identifiers-re = [
 # Add project-specific words here as they crop up.
 clos = "clos"   # TypeID prefix for Closure; not a typo of "close".
 staf = "staf"   # TypeID prefix for Staff; not a typo of "staff".
+Mattern = "Mattern"   # Friedemann Mattern (vector-clock co-author, ADR-0081).
 
 [files]
 extend-exclude = [

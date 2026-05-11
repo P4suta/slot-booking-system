@@ -4,6 +4,7 @@
 // the augmented globals automatically.
 import "@total-typescript/ts-reset"
 
+export * from "./algorithms/index.js"
 export * from "./application/index.js"
 export * from "./derive/index.js"
 export * from "./domain/index.js"
