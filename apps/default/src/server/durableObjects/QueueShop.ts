@@ -37,6 +37,7 @@ import {
 import { Cause, Effect, Layer, Schema } from "effect"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
+import { AlarmScheduler } from "./AlarmScheduler.js"
 import { Broadcaster, CAPABILITY_TAG_PREFIX } from "./Broadcaster.js"
 import { ensureDurableObjectSchema } from "./migrations.js"
 import { buildShopState, buildStaffShopState } from "./Projector.js"
@@ -128,6 +129,7 @@ const GRACE_TTL_DEFAULT_MIN = 10
 export class QueueShop extends DurableObject<Env> {
   private readonly sql: SqlStorage
   private readonly broadcaster: Broadcaster
+  private readonly scheduler: AlarmScheduler
 
   // Wire v6 (ADR-0081) — VectorClock advances once per broadcast so
   // the client can detect snapshot/delta gaps. The DO is single-writer
@@ -150,8 +152,14 @@ export class QueueShop extends DurableObject<Env> {
         logWsBroadcast(sockets, ms, bytes, failed)
       },
     })
+    this.scheduler = new AlarmScheduler({
+      ttlMs: (Number(env.GRACE_TTL_MIN) || GRACE_TTL_DEFAULT_MIN) * 60_000,
+      setAlarm: (deadlineMs) => this.ctx.storage.setAlarm(deadlineMs),
+      sql: this.sql,
+    })
     void state.blockConcurrencyWhile(() => {
       ensureDurableObjectSchema(this.sql)
+      this.scheduler.rehydrate()
       return Promise.resolve()
     })
   }
@@ -296,12 +304,42 @@ export class QueueShop extends DurableObject<Env> {
       // do not change shop state, so re-emitting the same payload
       // would just churn the wire without adding information.
       await this.broadcaster.publish()
-      // Re-arm the grace TTL alarm to the earliest PendingNoShow
-      // deadline still in flight (ADR-0074). A no-op when the active
-      // set has none.
-      await this.scheduleNextAlarm()
+      // Update the alarm heap with the post-state — PendingNoShow
+      // transitions schedule a TTL expiry, every other terminal
+      // state cancels any prior schedule on that ticket id.
+      await this.syncSchedulerFromResult(result)
     }
     return result
+  }
+
+  /**
+   * Map a dispatch result onto the alarm heap. Single-ticket
+   * results inspect the post-state; batch results (`CallBatch`)
+   * cancel every member since `Called` never expires through the
+   * scheduler. `void` results (`CheckIn`) leave the heap alone.
+   */
+  private async syncSchedulerFromResult(result: QueueResult): Promise<void> {
+    if (!result.ok) return
+    if ("tickets" in result) {
+      for (const t of result.tickets) this.scheduler.cancel(t.id as TicketId)
+      return
+    }
+    if ("ticket" in result) {
+      const ticket = result.ticket
+      if (ticket.state === "PendingNoShow") {
+        const markedMs = Date.parse(ticket.markedAt)
+        if (!Number.isNaN(markedMs)) {
+          const ttlMs = (Number(this.env.GRACE_TTL_MIN) || GRACE_TTL_DEFAULT_MIN) * 60_000
+          await this.scheduler.schedule({
+            ticketId: ticket.id as TicketId,
+            deadlineMs: markedMs + ttlMs,
+            kind: "PendingNoShowExpiry",
+          })
+        }
+        return
+      }
+      this.scheduler.cancel(ticket.id as TicketId)
+    }
   }
 
   /**
@@ -482,18 +520,14 @@ export class QueueShop extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     const startedAt = Date.now()
-    const ttlMs = (Number(this.env.GRACE_TTL_MIN) || GRACE_TTL_DEFAULT_MIN) * 60_000
-    const cutoff = new Date(Date.now() - ttlMs).toISOString()
-    const stale = this.sql
-      .exec("SELECT id FROM tickets WHERE state = 'PendingNoShow' AND marked_at <= ?", cutoff)
-      .toArray()
+    const expired = await this.scheduler.tick(Date.now())
     let succeeded = 0
     let failed = 0
-    for (const row of stale) {
+    for (const ticketId of expired) {
       try {
         const result = await this.dispatch({
           type: "MarkNoShow",
-          ticketId: row.id as TicketId,
+          ticketId,
           actor: "system",
         })
         if (result.ok) {
@@ -508,7 +542,7 @@ export class QueueShop extends DurableObject<Env> {
             _tag: "AlarmSweepError",
             code: "I_DO_ALARM_ERROR",
             severity: "infrastructure",
-            ticketId: typeof row.id === "string" ? row.id : JSON.stringify(row.id),
+            ticketId,
             message: err instanceof Error ? err.message : String(err),
           }),
         )
@@ -519,36 +553,11 @@ export class QueueShop extends DurableObject<Env> {
         _tag: "AlarmSweep",
         code: "I_DO_ALARM",
         severity: "infrastructure",
-        candidates: stale.length,
+        candidates: expired.length,
         succeeded,
         failed,
         ms: Date.now() - startedAt,
       }),
     )
-    // Re-arm for the next earliest deadline (= the PendingNoShow we
-    // just couldn't sweep yet, or `null` when the active set is
-    // empty).
-    await this.scheduleNextAlarm()
-  }
-
-  /**
-   * Re-arm the DO alarm to the earliest PendingNoShow's
-   * `markedAt + GRACE_TTL_MIN`. No-op when no PendingNoShow ticket
-   * is active. Called at every dispatch epilogue and at the end of
-   * the alarm sweep itself.
-   */
-  private async scheduleNextAlarm(): Promise<void> {
-    const ttlMs = (Number(this.env.GRACE_TTL_MIN) || GRACE_TTL_DEFAULT_MIN) * 60_000
-    const earliest = this.sql
-      .exec("SELECT MIN(marked_at) AS m FROM tickets WHERE state = 'PendingNoShow'")
-      .toArray()[0]
-    const m = earliest?.m
-    if (m === undefined || m === null || typeof m !== "string") return
-    const markedMs = Date.parse(m)
-    if (Number.isNaN(markedMs)) return
-    const deadlineMs = markedMs + ttlMs
-    // Floor at now + 1s so a stuck deadline doesn't loop the alarm
-    // synchronously inside the runtime's grace window.
-    await this.ctx.storage.setAlarm(Math.max(deadlineMs, Date.now() + 1000))
   }
 }

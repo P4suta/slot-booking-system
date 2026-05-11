@@ -1,6 +1,6 @@
 # ADR-0083: DO inside-boundary split — Projector / Broadcaster / AlarmScheduler / WsLifecycle / Dispatcher
 
-- Status: Accepted (Part 1 + Part 2)
+- Status: Accepted (Part 1 + Part 2 + Part 3)
 - Date: 2026-05-11
 - Stage: C / S11 — S15
 - Refines: ADR-0061 (DO hibernating WebSocket projection feed),
@@ -112,11 +112,45 @@ Move every broadcast-side concern off `QueueShop`:
 - Wire `FeedMessage` is now a 4-variant discriminated union over
   `capability ∈ {"anonymous","staff"}` × `kind ∈ {"snapshot","delta"}`.
 
-### Parts 3–5 (S13 — S15) — pending
+### Part 3 (S13) — `AlarmScheduler` with `MinHeap` rehydrate
 
-- S13 `AlarmScheduler` — `MinHeap`-backed multi-kind TTL with
-  cold-start Floyd O(n) rehydrate from `tickets WHERE state =
-  'PendingNoShow'`.
+Replace the SQL `MIN(marked_at)` poll with an in-memory binary
+min-heap keyed on `deadlineMs = markedAt + GRACE_TTL_MIN`.
+`AlarmScheduler` exposes `schedule / cancel / tick / earliestMs`;
+the DO's `alarm()` handler is now a 5-line `tick(now) → expired
+ids → dispatch(MarkNoShow)` forwarder.
+
+Cold-start rehydrate runs inside `blockConcurrencyWhile` —
+`SELECT id, marked_at FROM tickets WHERE state = 'PendingNoShow'`
+into a Floyd O(n) build. The heap is purely in-memory: after
+hibernation the actor re-runs its ctor and rebuilds from the
+persisted projection, so durability stays anchored on the SQL
+projection table (ADR-0028).
+
+Lazy delete via a `Set<TicketId>` tombstone keeps `cancel` O(1)
+and every `tick`/`earliestActiveMs` peek discards stale heads.
+Tombstone size is bounded by the active PendingNoShow set, which
+is small in practice — no compaction sweep is needed at this
+scale.
+
+The dispatch epilogue maps each `QueueResult` onto a single
+scheduler op:
+
+- `result.ticket.state === "PendingNoShow"` → `schedule({
+  ticketId, deadlineMs: markedMs + ttlMs, kind:
+  "PendingNoShowExpiry" })`
+- any other terminal post-state → `cancel(ticketId)` (no-op if
+  the id wasn't scheduled).
+- `CallBatch` returns `tickets[]`, never PendingNoShow → cancel
+  every member.
+- `CheckIn`'s void result leaves the heap alone.
+
+`HeapEntry.kind` is the extension point: a future
+`"ReservationDeadline"` or `"ServingTimeout"` slots in without
+touching the heap structure itself.
+
+### Parts 4–5 (S14 — S15) — pending
+
 - S14 `WsLifecycle` — hibernation-safe upgrade + lifecycle
   forwarding adapter.
 - S15 `Dispatcher` + `Persistence/` — Mealy-machine command
@@ -125,6 +159,5 @@ Move every broadcast-side concern off `QueueShop`:
 
 ## Status
 
-- 2026-05-11 — Part 1 (S11 / `Projector` + `EncodedTicket` pivot)
-  + Part 2 (S12 / `Broadcaster` + per-capability frame) landed.
-  Parts 3–5 follow in the same sprint.
+- 2026-05-11 — Parts 1–3 landed (S11 Projector + S12 Broadcaster
+  + S13 AlarmScheduler). Parts 4–5 follow in the same sprint.
