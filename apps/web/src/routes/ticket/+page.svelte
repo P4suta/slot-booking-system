@@ -430,16 +430,6 @@
       <span class="numeral-label">{m.numeral_label()}</span>
       <span class="numeral">{ticket.displaySeq}</span>
       <span class="state-tag">{stateLabel}</span>
-      <span class="lane">
-        {ticket.lane === "priority"
-          ? "優先"
-          : ticket.lane === "reservation"
-            ? "予約"
-            : "通常"}
-      </span>
-      {#if ticket.lane === "reservation"}
-        <span class="lane-note">{m.lane_note_reservation()}</span>
-      {/if}
     </div>
 
     {#if isReservation && minutesUntilAppointment !== null}
@@ -691,18 +681,6 @@
     color: var(--color-fg-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-  }
-  .lane {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-  }
-  .lane-note {
-    margin-top: var(--space-2);
-    font: var(--text-body-sm);
-    color: var(--color-fg-secondary);
-    padding: var(--space-1) var(--space-3);
-    background: var(--color-bg-subtle);
-    border-radius: var(--radius-pill);
   }
   .position {
     text-align: center;

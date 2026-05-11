@@ -51,7 +51,7 @@
   "help_reschedule": "Only the appointment time can be changed here. To correct your name or phone number, cancel the ticket and reissue.",
   "help_recoverHandle": "Use your name (kana) and the last 4 digits of your phone number to return to your ticket.",
   "help_notifyPermission": "When you are called, we'll alert you with a sound and a notification. Browser permission is required.",
-  "help_slotPicker": "Appointments are 30-minute slots. The remaining capacity is shown for each slot.",
+  "help_slotPicker": "Appointments are 30-minute slots.",
   "confirm_cancel_body": "Cancelling will void this ticket and you'll need to queue again. Continue?",
   "confirm_reschedule_body": "This will move your appointment to the new time. The original slot is released and a new one is reserved on the same ticket.",
   "reservation_modify_help": "You can change the appointment time from this card. To correct other details (such as your name), cancel and reissue the ticket.",
@@ -63,9 +63,6 @@
   "ws_status_reconnecting": "Reconnecting…",
   "ws_status_closed": "Disconnected",
   "numeral_label": "Ticket number",
-  "lane_note_reservation": "This ticket has an appointment time",
-  "lane_help_summary": "Walk-in: issued on the spot. Priority: called ahead of walk-ins. Reservation: booked for a specific time slot.",
-  "filter_label": "Filter",
   "call_next_one_button": "Call the next customer",
   "call_next_batch_link": "Call multiple customers…",
   "call_batch_dialog_title": "Call multiple customers",
@@ -78,6 +75,5 @@
   "ws_alert_server_body": "Your device's network looks fine — the server may be experiencing an outage. If this does not resolve within a few minutes, please speak to staff.",
   "ws_alert_server_body_staff": "Your device's network looks fine — Cloudflare is likely the one in trouble. Check status.cloudflare.com and wait for recovery.",
   "ws_alert_server_body_staff_prefix": "Your device's network looks fine — Cloudflare is likely the one in trouble. Check ",
-  "ws_alert_server_body_staff_suffix": " and wait for recovery.",
-  "lane_help_short": "Three lane types: walk-in, priority, reservation. See the operations manual for details."
+  "ws_alert_server_body_staff_suffix": " and wait for recovery."
 }

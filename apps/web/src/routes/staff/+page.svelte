@@ -27,8 +27,6 @@
   import { clearStaffSession, markStaffLoggedIn } from "$lib/staffSession.js"
   import { wsStatus } from "$lib/wsStatus.js"
 
-  type LaneFilter = "all" | Lane
-
   /* ---------- state ---------- */
   let token = $state(
     typeof window === "undefined" ? "" : (localStorage.getItem("queue.staffToken") ?? ""),
@@ -44,8 +42,6 @@
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
   let prevWaitingCount: number | null = null
-  let laneFilter: LaneFilter = $state("all")
-  let search = $state("")
   let selected: Set<string> = $state(new Set())
   let expanded: Set<string> = $state(new Set())
   let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
@@ -85,17 +81,6 @@
         return m.state_Cancelled()
     }
   }
-  const laneLabelJa = (l: Lane): string => {
-    switch (l) {
-      case "walkIn":
-        return m.lane_walkIn()
-      case "priority":
-        return m.lane_priority()
-      case "reservation":
-        return m.lane_reservation()
-    }
-  }
-
   const slotChipState = (appointmentAt: string): "due" | "overdue" | "soon" | "future" => {
     const ms = Date.parse(appointmentAt)
     const delta = ms - now
@@ -106,19 +91,6 @@
   }
 
   /* ---------- derived ---------- */
-  const filteredWaiting = $derived.by(() => {
-    let list = waiting
-    if (laneFilter !== "all") list = list.filter((t) => t.lane === laneFilter)
-    const q = search.trim().toLowerCase()
-    if (q.length > 0) {
-      list = list.filter(
-        (t) =>
-          (t.nameKana ?? "").toLowerCase().includes(q) ||
-          (t.phoneLast4 ?? "") === q,
-      )
-    }
-    return list
-  })
   const selectionCount = $derived(selected.size)
 
   /* ---------- refresh ---------- */
@@ -286,13 +258,13 @@
 
   /**
    * Confirmed multi-customer call from the batch dialog. Pulls
-   * `batchDialogN` ticket ids from the head of `filteredWaiting`
+   * `batchDialogN` ticket ids from the head of `waiting`
    * and fires `callBatch`. The dialog closes on success; on
    * failure the dialog stays open so the operator sees the inline
    * error before retrying.
    */
   const onCallBatchConfirm = async (): Promise<void> => {
-    const ids = filteredWaiting.slice(0, batchDialogN).map((t) => t.id)
+    const ids = waiting.slice(0, batchDialogN).map((t) => t.id)
     if (ids.length === 0) {
       batchDialogOpen = false
       return
@@ -408,9 +380,9 @@
     <!-- 4-column kanban -->
     <div class="kanban">
       <section class="col">
-        <header class="col-header waiting-col-header">
+        <header class="col-header">
           <div class="col-title-row">
-            <h2>待機 ({filteredWaiting.length} / {waitingCount})</h2>
+            <h2>待機 ({waiting.length})</h2>
             <div class="primary-action">
               <Button variant="primary" size="md" onclick={onCallNextOne} disabled={busy}>
                 {m.call_next_one_button()}
@@ -425,43 +397,9 @@
               </button>
             </div>
           </div>
-          <input
-            type="search"
-            bind:value={search}
-            placeholder="名前 (一部) / 末尾4桁で検索"
-            aria-label="待機客を検索"
-            class="search"
-          />
-          <div class="lane-filter" role="radiogroup" aria-label="待機列の種別絞り込み">
-            <span class="filter-label">{m.filter_label()}</span>
-            <Help
-              text={m.lane_help_summary()}
-              label="種別の説明を表示"
-              placement="below"
-              align="start"
-            />
-            {#each ["all", "walkIn", "priority", "reservation"] as filter}
-              <button
-                type="button"
-                role="radio"
-                class="chip"
-                aria-checked={laneFilter === filter}
-                data-active={laneFilter === filter ? "true" : undefined}
-                onclick={() => (laneFilter = filter as LaneFilter)}
-              >
-                {filter === "all"
-                  ? "全部"
-                  : filter === "priority"
-                    ? "優先"
-                    : filter === "reservation"
-                      ? "予約"
-                      : "通常"}
-              </button>
-            {/each}
-          </div>
         </header>
         <div class="cards">
-          {#each filteredWaiting as t (t.id)}
+          {#each waiting as t (t.id)}
             <Card interactive>
               <div
                 class="ticket waiting-card"
@@ -484,7 +422,6 @@
                 >
                   <div class="ticket-head">
                     <span class="numeral">{t.displaySeq}</span>
-                    <span class="lane lane-{t.lane}">{laneLabelJa(t.lane)}</span>
                     {#if t.appointmentAt !== null}
                       <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                         {t.appointmentAt.slice(11, 16)}
@@ -501,8 +438,6 @@
                     <dl>
                       <dt>状態</dt>
                       <dd>{stateLabelJa(t.state)}</dd>
-                      <dt>レーン</dt>
-                      <dd>{laneLabelJa(t.lane)}</dd>
                       <dt>受付番号</dt>
                       <dd>{t.displaySeq}</dd>
                       <dt>お名前</dt>
@@ -531,7 +466,7 @@
               </div>
             </Card>
           {/each}
-          {#if filteredWaiting.length === 0}
+          {#if waiting.length === 0}
             <p class="empty">{emptyState("waiting")}</p>
           {/if}
         </div>
@@ -545,7 +480,6 @@
               <div class="ticket" role="group" aria-label="呼び出し中の整理券">
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane lane-{t.lane}">{laneLabelJa(t.lane)}</span>
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
@@ -579,7 +513,6 @@
               <div class="ticket" role="group" aria-label="対応中の整理券">
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane lane-{t.lane}">{laneLabelJa(t.lane)}</span>
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
@@ -621,7 +554,6 @@
                 >
                   <div class="ticket-head">
                     <span class="numeral">{t.displaySeq}</span>
-                    <span class="lane lane-{t.lane}">{laneLabelJa(t.lane)}</span>
                     <span class="state-badge" data-state={t.state}>{stateLabelJa(t.state)}</span>
                   </div>
                   <div class="ticket-body">
@@ -633,7 +565,6 @@
                   <div id={`history-detail-${t.id}`} class="ticket-detail">
                     <dl>
                       <dt>状態</dt><dd>{stateLabelJa(t.state)}</dd>
-                      <dt>レーン</dt><dd>{laneLabelJa(t.lane)}</dd>
                       <dt>受付番号</dt><dd>{t.displaySeq}</dd>
                       <dt>お名前</dt><dd>{t.nameKana ?? ""}</dd>
                       <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
@@ -679,7 +610,7 @@
           <button
             type="button"
             role="radio"
-            class="chip preset-chip"
+            class="preset-chip"
             aria-checked={batchDialogN === preset}
             data-active={batchDialogN === preset ? "true" : undefined}
             onclick={() => (batchDialogN = preset)}
@@ -690,7 +621,7 @@
       </div>
       <p class="batch-note">
         待機列の先頭から {batchDialogN} 人を順番に呼び出します。
-        現在の待機列は {filteredWaiting.length} 人です。
+        現在の待機列は {waiting.length} 人です。
       </p>
       {#snippet actions()}
         <Button variant="ghost" onclick={() => (batchDialogOpen = false)} disabled={busy}>
@@ -699,7 +630,7 @@
         <Button
           variant="primary"
           onclick={onCallBatchConfirm}
-          disabled={busy || filteredWaiting.length === 0}
+          disabled={busy || waiting.length === 0}
         >
           {m.call_batch_dialog_confirm({ count: String(batchDialogN) })}
         </Button>
@@ -764,23 +695,6 @@
     overflow: hidden;
     box-sizing: border-box;
   }
-  .chip {
-    background: transparent;
-    color: var(--color-fg-secondary);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-pill);
-    padding: var(--space-2) var(--space-4);
-    font: var(--text-label-sm);
-    cursor: pointer;
-  }
-  .chip[data-active="true"] {
-    background: var(--color-fg-primary);
-    color: var(--color-bg-surface);
-    border-color: transparent;
-  }
-  .waiting-col-header {
-    gap: var(--space-3);
-  }
   .col-title-row {
     display: flex;
     justify-content: space-between;
@@ -790,10 +704,6 @@
   }
   .col-title-row h2 {
     flex: 1;
-  }
-  .search {
-    width: 100%;
-    padding: var(--space-2) var(--space-3);
   }
   .primary-action {
     display: flex;
@@ -824,16 +734,6 @@
     flex-direction: column;
     gap: var(--space-2);
   }
-  .lane-filter {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .filter-label {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-  }
   .batch-preset {
     display: flex;
     gap: var(--space-2);
@@ -841,8 +741,18 @@
   }
   .preset-chip {
     flex: 1;
+    background: transparent;
+    color: var(--color-fg-secondary);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-pill);
     padding: var(--space-3) var(--space-4);
     font: var(--text-body-md);
+    cursor: pointer;
+  }
+  .preset-chip[data-active="true"] {
+    background: var(--color-fg-primary);
+    color: var(--color-bg-surface);
+    border-color: transparent;
   }
   .batch-note {
     color: var(--color-fg-muted);
@@ -999,17 +909,6 @@
     font: var(--text-numeral-md);
     font-variant-numeric: tabular-nums;
     color: var(--color-fg-primary);
-  }
-  .lane {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-    background: var(--color-bg-subtle);
-    border-radius: var(--radius-pill);
-    padding: var(--space-1) var(--space-3);
-  }
-  .lane.lane-priority {
-    color: var(--color-state-called);
-    background: oklch(95% 0.05 65 / 30%);
   }
   .slot-chip {
     font: var(--text-mono-sm);

@@ -51,7 +51,7 @@
   "help_reschedule": "予約時刻だけを変更できます。 お名前や電話番号を直したい場合は一度キャンセルして再度発券してください。",
   "help_recoverHandle": "お名前 (カタカナ) と電話番号末尾 4 桁で整理券に戻れます。",
   "help_notifyPermission": "呼ばれたときに音と通知でお知らせします。 ブラウザの許可が必要です。",
-  "help_slotPicker": "予約時刻は 30 分単位で選べます。 残り枠数も表示されています。",
+  "help_slotPicker": "予約時刻は 30 分単位で選べます。",
   "confirm_cancel_body": "キャンセルすると整理券は無効になり、 列に並び直しが必要になります。 続けますか?",
   "confirm_reschedule_body": "現在の予約時刻を新しい時刻に変更します。 元の枠は解放されますが、 同じ整理券のまま新しい枠を取り直します。",
   "reservation_modify_help": "予約時刻はこのカードから変更できます。 その他の修正 (お名前など) は一度キャンセルしてから再度発券してください。",
@@ -63,9 +63,6 @@
   "ws_status_reconnecting": "再接続中…",
   "ws_status_closed": "切断されています",
   "numeral_label": "整理券番号",
-  "lane_note_reservation": "予約時刻が指定された整理券です",
-  "lane_help_summary": "通常: 当日にその場で発券された整理券です。 優先: 高齢の方など先にお呼びする整理券です。 予約: 事前に時間を指定した整理券です。",
-  "filter_label": "絞り込み",
   "call_next_one_button": "次の 1 人を呼ぶ",
   "call_next_batch_link": "複数人をまとめて呼ぶ…",
   "call_batch_dialog_title": "複数人をまとめて呼ぶ",
@@ -78,6 +75,5 @@
   "ws_alert_server_body": "端末のネットワークは正常です。 サーバ側で障害の可能性があります。 数分待っても解消しない場合は店舗にお声がけください。",
   "ws_alert_server_body_staff": "端末のネットワークは正常です。 Cloudflare 側障害の可能性があります。 status.cloudflare.com で稼働状況を確認し、 復旧をお待ちください。",
   "ws_alert_server_body_staff_prefix": "端末のネットワークは正常です。 Cloudflare 側障害の可能性があります。 ",
-  "ws_alert_server_body_staff_suffix": " で稼働状況を確認し、 復旧をお待ちください。",
-  "lane_help_short": "通常 / 優先 / 予約の 3 種類があります。 詳しくはマニュアルをご確認ください。"
+  "ws_alert_server_body_staff_suffix": " で稼働状況を確認し、 復旧をお待ちください。"
 }
