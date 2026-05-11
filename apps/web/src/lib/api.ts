@@ -438,19 +438,45 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
         // overhaul.
         if (typeof parsed === "object" && parsed !== null && (parsed as { v?: unknown }).v === 6) {
           const env = parsed as
-            | { v: 6; kind: "snapshot"; capability: "anonymous"; snapshot: ShopState }
-            | { v: 6; kind: "snapshot"; capability: "staff"; snapshot: StaffShopState }
-            | { v: 6; kind: "delta"; capability: "anonymous"; delta: ShopStateDelta }
-            | { v: 6; kind: "delta"; capability: "staff"; delta: StaffShopStateDelta }
+            | {
+                v: 6
+                kind: "snapshot"
+                capability: "anonymous"
+                snapshot: ShopState
+                triggerTraceId?: string
+              }
+            | {
+                v: 6
+                kind: "snapshot"
+                capability: "staff"
+                snapshot: StaffShopState
+                triggerTraceId?: string
+              }
+            | {
+                v: 6
+                kind: "delta"
+                capability: "anonymous"
+                delta: ShopStateDelta
+                triggerTraceId?: string
+              }
+            | {
+                v: 6
+                kind: "delta"
+                capability: "staff"
+                delta: StaffShopStateDelta
+                triggerTraceId?: string
+              }
           obsBus.emit({
             kind: "WsFrameIn",
             capability: env.capability,
             frameKind: env.kind,
             bytes: event.data.length,
-            // ADR-0088 — server-attached trigger trace id is not on
-            // the envelope yet (Stage 25); placeholder null until
-            // the server populates it.
-            triggerTraceId: null,
+            // ADR-0093 (Stage 25) — server attaches `triggerTraceId`
+            // to every frame whose fan-out was caused by an HTTP
+            // dispatch / WS upgrade. Missing on frames generated
+            // outside a request (alarm sweep, hibernation rehydrate)
+            // — `null` preserves the obs ring shape.
+            triggerTraceId: env.triggerTraceId ?? null,
             at: Date.now(),
           })
           if (env.kind === "snapshot") {

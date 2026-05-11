@@ -131,6 +131,7 @@ export type FeedMessage =
       readonly at: VectorClock
       readonly capability: "anonymous"
       readonly snapshot: ShopState
+      readonly triggerTraceId?: string
     }
   | {
       readonly v: 6
@@ -138,6 +139,7 @@ export type FeedMessage =
       readonly at: VectorClock
       readonly capability: "staff"
       readonly snapshot: StaffShopState
+      readonly triggerTraceId?: string
     }
   | {
       readonly v: 6
@@ -146,6 +148,7 @@ export type FeedMessage =
       readonly since: VectorClock
       readonly capability: "anonymous"
       readonly delta: ShopStateDelta
+      readonly triggerTraceId?: string
     }
   | {
       readonly v: 6
@@ -154,6 +157,7 @@ export type FeedMessage =
       readonly since: VectorClock
       readonly capability: "staff"
       readonly delta: StaffShopStateDelta
+      readonly triggerTraceId?: string
     }
 
 const sameLaneCounts = (a: LaneCounts, b: LaneCounts): boolean =>

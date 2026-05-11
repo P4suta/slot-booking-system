@@ -70,11 +70,22 @@ export class Broadcaster {
   private lastStaff: StaffShopState | null = null
   private coalesceTimer: ReturnType<typeof setTimeout> | undefined
   private vector: VectorClock = VectorClock.empty()
+  // ADR-0093 (Stage 25): the trigger trace id is attributed to the
+  // first dispatch that arms the coalesce timer. Subsequent dispatches
+  // inside the same window fold into the same fan-out and inherit the
+  // first trigger's id — picking the "first writer wins" semantic
+  // because it matches the coalesce-arm contract (the first publish
+  // is what started the broadcast).
+  private pendingTriggerTraceId: string | undefined
 
   constructor(private readonly deps: BroadcasterDeps) {}
 
   /** Initial snapshot for a freshly-accepted socket. */
-  async connect(ws: WebSocket, capability: BroadcasterCapability): Promise<void> {
+  async connect(
+    ws: WebSocket,
+    capability: BroadcasterCapability,
+    triggerTraceId?: string,
+  ): Promise<void> {
     try {
       if (capability === "staff") {
         const snapshot = this.lastStaff ?? (await this.deps.buildStaff())
@@ -85,6 +96,7 @@ export class Broadcaster {
           at: this.vector,
           capability: "staff",
           snapshot,
+          ...(triggerTraceId !== undefined ? { triggerTraceId } : {}),
         }
         ws.send(JSON.stringify(msg))
       } else {
@@ -96,6 +108,7 @@ export class Broadcaster {
           at: this.vector,
           capability: "anonymous",
           snapshot,
+          ...(triggerTraceId !== undefined ? { triggerTraceId } : {}),
         }
         ws.send(JSON.stringify(msg))
       }
@@ -109,7 +122,10 @@ export class Broadcaster {
    * window. Re-entrant calls inside an in-flight window are
    * folded into the same fan-out.
    */
-  publish(): Promise<void> {
+  publish(triggerTraceId?: string): Promise<void> {
+    if (this.pendingTriggerTraceId === undefined && triggerTraceId !== undefined) {
+      this.pendingTriggerTraceId = triggerTraceId
+    }
     if (this.coalesceTimer !== undefined) return Promise.resolve()
     this.coalesceTimer = setTimeout(() => {
       this.coalesceTimer = undefined
@@ -119,7 +135,10 @@ export class Broadcaster {
   }
 
   /** For tests + alarm rehydrate paths — bypass the coalesce timer. */
-  async fireNow(): Promise<void> {
+  async fireNow(triggerTraceId?: string): Promise<void> {
+    if (this.pendingTriggerTraceId === undefined && triggerTraceId !== undefined) {
+      this.pendingTriggerTraceId = triggerTraceId
+    }
     if (this.coalesceTimer !== undefined) {
       clearTimeout(this.coalesceTimer)
       this.coalesceTimer = undefined
@@ -134,18 +153,36 @@ export class Broadcaster {
     if (sockets.length === 0) {
       this.lastAnon = nextAnon
       this.lastStaff = nextStaff
+      this.pendingTriggerTraceId = undefined
       return
     }
     const prevVector = this.vector
     const nextVector = VectorClock.tick(prevVector, this.deps.siteId)
-    const anonPayload = encodeAnonymousPayload(this.lastAnon, nextAnon, prevVector, nextVector)
-    const staffPayload = encodeStaffPayload(this.lastStaff, nextStaff, prevVector, nextVector)
+    const triggerTraceId = this.pendingTriggerTraceId
+    const anonPayload = encodeAnonymousPayload(
+      this.lastAnon,
+      nextAnon,
+      prevVector,
+      nextVector,
+      triggerTraceId,
+    )
+    const staffPayload = encodeStaffPayload(
+      this.lastStaff,
+      nextStaff,
+      prevVector,
+      nextVector,
+      triggerTraceId,
+    )
     this.lastAnon = nextAnon
     this.lastStaff = nextStaff
     // Only advance the VectorClock when at least one capability has
     // something to send; an empty diff for both is a no-op fan-out.
-    if (anonPayload === null && staffPayload === null) return
+    if (anonPayload === null && staffPayload === null) {
+      this.pendingTriggerTraceId = undefined
+      return
+    }
     this.vector = nextVector
+    this.pendingTriggerTraceId = undefined
     const startedAt = Date.now()
     let totalBytes = 0
     let failed = 0
@@ -170,6 +207,7 @@ const encodeAnonymousPayload = (
   next: ShopState,
   prevVector: VectorClock,
   nextVector: VectorClock,
+  triggerTraceId?: string,
 ): string | null => {
   if (prev === null) {
     const msg: FeedMessage = {
@@ -178,6 +216,7 @@ const encodeAnonymousPayload = (
       at: nextVector,
       capability: "anonymous",
       snapshot: next,
+      ...(triggerTraceId !== undefined ? { triggerTraceId } : {}),
     }
     return JSON.stringify(msg)
   }
@@ -190,6 +229,7 @@ const encodeAnonymousPayload = (
     since: prevVector,
     capability: "anonymous",
     delta,
+    ...(triggerTraceId !== undefined ? { triggerTraceId } : {}),
   }
   return JSON.stringify(msg)
 }
@@ -199,6 +239,7 @@ const encodeStaffPayload = (
   next: StaffShopState,
   prevVector: VectorClock,
   nextVector: VectorClock,
+  triggerTraceId?: string,
 ): string | null => {
   if (prev === null) {
     const msg: FeedMessage = {
@@ -207,6 +248,7 @@ const encodeStaffPayload = (
       at: nextVector,
       capability: "staff",
       snapshot: next,
+      ...(triggerTraceId !== undefined ? { triggerTraceId } : {}),
     }
     return JSON.stringify(msg)
   }
@@ -219,6 +261,7 @@ const encodeStaffPayload = (
     since: prevVector,
     capability: "staff",
     delta,
+    ...(triggerTraceId !== undefined ? { triggerTraceId } : {}),
   }
   return JSON.stringify(msg)
 }

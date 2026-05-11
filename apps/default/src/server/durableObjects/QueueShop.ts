@@ -7,6 +7,7 @@ import type {
   TicketId,
 } from "@booking/core"
 import { Effect } from "effect"
+import { currentTraceId } from "../http/traceIdHeader.js"
 import { AlarmScheduler } from "./AlarmScheduler.js"
 import { Broadcaster } from "./Broadcaster.js"
 import { type QueueAction, type QueueResult, runDispatch } from "./Dispatcher.js"
@@ -83,7 +84,8 @@ export class QueueShop extends DurableObject<Env> {
       setAutoResponse: (req, resp) => {
         this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(req, resp))
       },
-      connect: (ws, capability) => this.broadcaster.connect(ws, capability),
+      connect: (ws, capability) =>
+        this.broadcaster.connect(ws, capability, currentTraceId() ?? undefined),
     })
     void state.blockConcurrencyWhile(() => {
       ensureDurableObjectSchema(this.sql)
@@ -106,7 +108,7 @@ export class QueueShop extends DurableObject<Env> {
       // The projection is broadcast on success only; failed actions
       // do not change shop state, so re-emitting the same payload
       // would just churn the wire without adding information.
-      await this.broadcaster.publish()
+      await this.broadcaster.publish(currentTraceId() ?? undefined)
       // Update the alarm heap with the post-state — PendingNoShow
       // transitions schedule a TTL expiry, every other terminal
       // state cancels any prior schedule on that ticket id.
