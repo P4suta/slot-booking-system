@@ -22,7 +22,9 @@ import {
   decodeTicketIdParam,
   dispatchDecodeFailure,
   IssueTicketBodySchema,
+  LateAcknowledgeBodySchema,
   MyTicketQuerySchema,
+  NoComeConfirmBodySchema,
   RescheduleBodySchema,
   SlotsQuerySchema,
   StaffCancelBodySchema,
@@ -727,6 +729,105 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         type: "Recall",
         ticketId: idR.success,
         actor: "staff",
+      }),
+    )
+  })
+
+  // POST /api/v1/tickets/:id/late-acknowledge — customer (ADR-0074).
+  // The PendingNoShow grace-window response: reservation customers
+  // reschedule to `now + etaMinutes`; walk-in / priority customers
+  // are recalled to the lane head (the etaMinutes value is recorded
+  // for audit but otherwise unused). Handle is verified at the
+  // boundary against the stored ticket — the same threat model as
+  // the customer cancel endpoint.
+  app.post("/api/v1/tickets/:id/late-acknowledge", rateLimitMiddleware("RL_VERIFY"), async (c) => {
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) {
+      return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    }
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    }
+    const decoded = Schema.decodeUnknownResult(LateAcknowledgeBodySchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    const ticketId = idR.success
+    const ticket = await stub(c.env).getTicketById(ticketId)
+    if (ticket === null) {
+      return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    }
+    if (
+      ticket.nameKana !== decoded.success.nameKana ||
+      ticket.phoneLast4 !== decoded.success.phoneLast4
+    ) {
+      return failResponse(403, "PhoneMismatch", "E_DOM_PHONE_MISMATCH")
+    }
+    const handle = {
+      nameKana: decoded.success.nameKana,
+      phoneLast4: decoded.success.phoneLast4,
+    }
+    if (ticket.lane === "reservation") {
+      const granularity = (Number(c.env.SLOT_DEFAULT_GRANULARITY) || 30) as 15 | 30 | 60
+      const tz = c.env.DEPLOYMENT_TIMEZONE ?? "Asia/Tokyo"
+      const capacity = Number(c.env.SLOT_DEFAULT_CAPACITY) || 2
+      const newAppointmentAt = new Date(
+        Date.now() + decoded.success.etaMinutes * 60_000,
+      ).toISOString()
+      return dispatchEnvelope(
+        await stub(c.env).dispatch({
+          type: "RescheduleTicket",
+          ticketId,
+          newAppointmentAt,
+          granularity,
+          tz,
+          capacity,
+          actor: "customer",
+          handle,
+        }),
+      )
+    }
+    // walk-in / priority — recall to lane head; etaMinutes is not
+    // semantically meaningful here (no slot to move) but the
+    // boundary already accepted it for audit consistency.
+    return dispatchEnvelope(
+      await stub(c.env).dispatch({
+        type: "Recall",
+        ticketId,
+        actor: "customer",
+      }),
+    )
+  })
+
+  // POST /api/v1/tickets/:id/no-come-confirm — customer (ADR-0074).
+  // The PendingNoShow grace-window 「来ない」 response: cancel with
+  // `actor=customer` and the supplied / default reason.
+  app.post("/api/v1/tickets/:id/no-come-confirm", rateLimitMiddleware("RL_VERIFY"), async (c) => {
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) {
+      return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    }
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    }
+    const decoded = Schema.decodeUnknownResult(NoComeConfirmBodySchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    return dispatchEnvelope(
+      await stub(c.env).dispatch({
+        type: "CancelTicket",
+        ticketId: idR.success,
+        actor: "customer",
+        reason: decoded.success.reason ?? "no-come",
+        handle: {
+          nameKana: decoded.success.nameKana,
+          phoneLast4: decoded.success.phoneLast4,
+        },
       }),
     )
   })

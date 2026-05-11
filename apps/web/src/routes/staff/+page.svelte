@@ -276,8 +276,15 @@
   const onMarkServed = (ticketId: string) =>
     runAction("mark-served", () => markServed(token, ticketId), () => showToast("対応完了", "success"))
 
+  // ADR-0074 — the「来なかった」 button now opens a grace window
+  // (PendingNoShow) instead of terminating the ticket immediately.
+  // The customer's /ticket page surfaces a modal where they can
+  // respond 「遅れる」 or 「来ない」; the DO alarm sweeps after
+  // GRACE_TTL_MIN if neither.
   const onMarkNoShow = (ticketId: string) =>
-    runAction("mark-no-show", () => markNoShow(token, ticketId), () => showToast("不在 (NoShow) に記録", "warning"))
+    runAction("mark-no-show", () => markNoShow(token, ticketId), () =>
+      showToast("催促を開始しました (お客様の応答待ち)", "warning"),
+    )
 
   const onRecallTicket = (ticketId: string) =>
     runAction("recall", () => recall(token, ticketId), () => showToast("取り消しました", "info"))

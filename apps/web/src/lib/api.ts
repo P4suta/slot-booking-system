@@ -15,7 +15,7 @@ export type Ticket = {
   readonly seq: number
   readonly lane: Lane
   readonly displaySeq: number
-  readonly state: "Waiting" | "Called" | "Served" | "NoShow" | "Cancelled"
+  readonly state: "Waiting" | "Called" | "PendingNoShow" | "Served" | "NoShow" | "Cancelled"
   readonly nameKana: string | null
   readonly phoneLast4: string | null
   readonly freeText: string | null
@@ -44,7 +44,7 @@ export type ProjectionEntry = {
   readonly lane: Lane
   readonly displaySeq: number
   readonly appointmentAt: string | null
-  readonly state: "Waiting" | "Called" | "Served" | "NoShow" | "Cancelled"
+  readonly state: "Waiting" | "Called" | "PendingNoShow" | "Served" | "NoShow" | "Cancelled"
 }
 
 type LaneCounts = {
@@ -73,6 +73,7 @@ export type ShopState = {
   readonly laneCounts: LaneCounts
   readonly calling: readonly ProjectionEntry[]
   readonly serving: readonly ProjectionEntry[]
+  readonly pendingNoShow: readonly ProjectionEntry[]
   readonly waitingPreview: readonly ProjectionEntry[]
   readonly nextReservationDeadline: string | null
 }
@@ -93,6 +94,7 @@ export type StaffShopState = {
   readonly laneCounts: LaneCounts
   readonly calling: readonly Ticket[]
   readonly serving: readonly Ticket[]
+  readonly pendingNoShow: readonly Ticket[]
   readonly waitingPreview: readonly Ticket[]
   readonly terminal: readonly Ticket[]
   readonly nextReservationDeadline: string | null
@@ -240,6 +242,34 @@ export const cancelTicket = async (
   body: { nameKana: string; phoneLast4: string; reason: string },
 ): Promise<ApiResult<{ ticket: Ticket }>> =>
   fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
+// ADR-0074 — customer 「遅れる」 response inside the PendingNoShow
+// grace window. Reservation tickets reschedule to `now + etaMinutes`;
+// walk-in / priority tickets are recalled to the lane head (etaMinutes
+// is sent for audit symmetry but the server ignores it for non-
+// reservation lanes).
+export const acknowledgeLate = async (
+  ticketId: string,
+  body: { nameKana: string; phoneLast4: string; etaMinutes: 5 | 10 | 30 | 60 },
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/late-acknowledge`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
+// ADR-0074 — customer 「来ない」 response inside the PendingNoShow
+// grace window. Equivalent to a customer-initiated cancel with a
+// pre-set reason; defaults to "no-come" server-side when omitted.
+export const confirmNoCome = async (
+  ticketId: string,
+  body: { nameKana: string; phoneLast4: string; reason?: string },
+): Promise<ApiResult<{ ticket: Ticket }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/no-come-confirm`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

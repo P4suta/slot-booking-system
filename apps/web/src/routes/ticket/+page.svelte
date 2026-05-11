@@ -3,8 +3,10 @@
   import { page } from "$app/state"
   import { onDestroy, onMount } from "svelte"
   import {
+    acknowledgeLate,
     cancelTicket,
     checkIn,
+    confirmNoCome,
     connectQueueFeed,
     type ProjectionEntry,
     type QueueFeedHandle,
@@ -58,6 +60,13 @@
   let rescheduleNewISO: string | null = $state(null)
   let rescheduleBusy = $state(false)
   let rescheduleError: { tag: string; code: string; message: string } | null = $state(null)
+  // ADR-0074 — PendingNoShow grace-window response. Modal is open
+  // whenever the ticket sits in PendingNoShow; it is not dismissable
+  // (no 「戻る」 button) — the only exits are the customer
+  // responding 「遅れる」 / 「来ない」 or the DO TTL alarm rolling
+  // the ticket into terminal NoShow.
+  let graceBusy = $state(false)
+  let graceError: { tag: string; code: string; message: string } | null = $state(null)
   let feedState: QueueFeedState = $state("connecting")
   let notificationState: NotificationPermissionState = $state("unsupported")
   let feed: QueueFeedHandle | undefined
@@ -359,6 +368,53 @@
       await navigator.clipboard.writeText(shareUrl)
     } catch {
       // clipboard API 不可 (insecure context) — fallback はしない
+    }
+  }
+
+  const onLateAcknowledge = async (etaMinutes: 5 | 10 | 30 | 60): Promise<void> => {
+    if (stored === null) return
+    graceBusy = true
+    graceError = null
+    try {
+      const r = await acknowledgeLate(stored.ticketId, {
+        nameKana: stored.nameKana,
+        phoneLast4: stored.phoneLast4,
+        etaMinutes,
+      })
+      if (!r.ok) {
+        graceError = {
+          tag: r.error._tag,
+          code: r.error.code,
+          message: errorMessage(r.error._tag),
+        }
+        return
+      }
+      ticket = r.value.ticket
+    } finally {
+      graceBusy = false
+    }
+  }
+
+  const onNoComeConfirm = async (): Promise<void> => {
+    if (stored === null) return
+    graceBusy = true
+    graceError = null
+    try {
+      const r = await confirmNoCome(stored.ticketId, {
+        nameKana: stored.nameKana,
+        phoneLast4: stored.phoneLast4,
+      })
+      if (!r.ok) {
+        graceError = {
+          tag: r.error._tag,
+          code: r.error.code,
+          message: errorMessage(r.error._tag),
+        }
+        return
+      }
+      ticket = r.value.ticket
+    } finally {
+      graceBusy = false
     }
   }
 
@@ -685,6 +741,47 @@
   {:else if error === null}
     <p class="loading">{loadingState("ticket")}</p>
   {/if}
+
+  <Dialog
+    open={ticket?.state === "PendingNoShow"}
+    title="ご来店確認"
+    onClose={() => {
+      // not dismissable — the customer must respond
+    }}
+  >
+    <p>
+      お声がけしましたが、 ご来店が確認できていません。 どうされますか?
+    </p>
+    {#if ticket !== null && ticket.appointmentAt !== null && ticket.appointmentAt !== undefined}
+      <p class="dialog-hint">「あと N 分で着く」 を選ぶと予約時刻を自動で繰り下げます。</p>
+      <div class="grace-eta-row">
+        {#each [5, 10, 30, 60] as eta (eta)}
+          <Button
+            variant="primary"
+            disabled={graceBusy}
+            onclick={() => onLateAcknowledge(eta as 5 | 10 | 30 | 60)}
+          >
+            あと {eta} 分
+          </Button>
+        {/each}
+      </div>
+    {:else}
+      <p class="dialog-hint">「戻る」 を押すと待機列に並び直します。</p>
+      <div class="grace-eta-row">
+        <Button variant="primary" disabled={graceBusy} onclick={() => onLateAcknowledge(10)}>
+          すぐ戻ります
+        </Button>
+      </div>
+    {/if}
+    {#if graceError !== null}
+      <ErrorCard tag={graceError.tag} code={graceError.code} message={graceError.message} />
+    {/if}
+    {#snippet actions()}
+      <Button variant="destructive" disabled={graceBusy} onclick={onNoComeConfirm}>
+        来られません
+      </Button>
+    {/snippet}
+  </Dialog>
 
   <Dialog
     bind:open={cancelDialogOpen}

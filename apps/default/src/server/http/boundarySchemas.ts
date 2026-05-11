@@ -123,6 +123,31 @@ export const CancelBodySchema = Schema.Struct({
   reason: ReasonSchema,
 })
 
+/**
+ * `POST /api/v1/tickets/:id/late-acknowledge` body (ADR-0074
+ * customer 「遅れる」 path). Reservation tickets reschedule to
+ * `now + etaMinutes`; walk-in / priority tickets ignore the ETA
+ * and are recalled to the lane head. The fixed `etaMinutes` enum
+ * matches the modal's 5/10/30/60 buttons.
+ */
+export const LateAcknowledgeBodySchema = Schema.Struct({
+  nameKana: NameKanaSchema,
+  phoneLast4: PhoneLast4Schema,
+  etaMinutes: Schema.Literals([5, 10, 30, 60]),
+})
+
+/**
+ * `POST /api/v1/tickets/:id/no-come-confirm` body (ADR-0074
+ * customer 「来ない」 path). Equivalent to a customer-initiated
+ * cancel from the PendingNoShow grace window; `reason` defaults to
+ * `"no-come"` server-side when omitted.
+ */
+export const NoComeConfirmBodySchema = Schema.Struct({
+  nameKana: NameKanaSchema,
+  phoneLast4: PhoneLast4Schema,
+  reason: Schema.optional(ReasonSchema),
+})
+
 export const StaffCancelBodySchema = Schema.Struct({
   reason: ReasonSchema,
 })
@@ -170,6 +195,7 @@ const FIELD_FAILURE_MAP = {
   from: { status: 422, tag: "InvalidPayload", code: "E_VAL_PAYLOAD" },
   to: { status: 422, tag: "InvalidPayload", code: "E_VAL_PAYLOAD" },
   granularity: { status: 422, tag: "InvalidPayload", code: "E_VAL_PAYLOAD" },
+  etaMinutes: { status: 422, tag: "InvalidPayload", code: "E_VAL_PAYLOAD" },
 } as const satisfies Record<string, DecodeFailureEnvelope>
 
 const ROOT_FAILURE: DecodeFailureEnvelope = {
