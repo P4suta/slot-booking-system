@@ -1,5 +1,20 @@
-import { applyShopStateDelta, type ShopStateDelta } from "@booking/core"
+import {
+  applyShopStateDelta,
+  type LaneCounts,
+  type ProjectionEntry,
+  type ShopState,
+  type ShopStateDelta,
+} from "@booking/core"
 import { apiBaseUrl } from "./baseUrl.js"
+
+// ADR-0086 — wire types re-export from @booking/core. The web side
+// no longer hand-maintains `ProjectionEntry` / `ShopState`; any
+// future field addition on the server's `packages/core/src/projection
+// /shopState.ts` flows into the client as a type-level update, and
+// the `ShopState.v: 6` literal (ADR-0081) catches an envelope-version
+// mismatch at compile time. `LaneCounts` stays internal (it is only
+// referenced by `StaffShopState` inside this module).
+export type { ProjectionEntry, ShopState }
 
 const baseUrl = apiBaseUrl
 
@@ -37,46 +52,6 @@ export type SlotEntry = {
   readonly capacity: number
   readonly taken: number
   readonly available: number
-}
-
-export type ProjectionEntry = {
-  readonly id: string
-  readonly seq: number
-  readonly lane: Lane
-  readonly displaySeq: number
-  readonly appointmentAt: string | null
-  readonly state: "Waiting" | "Called" | "PendingNoShow" | "Served" | "NoShow" | "Cancelled"
-}
-
-type LaneCounts = {
-  readonly walkIn: number
-  readonly priority: number
-  readonly reservation: number
-}
-
-/**
- * v4 anonymous shop projection (ADR-0071, refines ADR-0061).
- * Every ProjectionEntry carries `state` so `/ticket` can resolve
- * its own state from the WS feed alone, and `waitingPreview`
- * exposes every Waiting ticket (cap removed). PII (kana / last4 /
- * freeText) remains staff-only — `state` is public information
- * already visible on the in-store monitor.
- *
- * v3 (ADR-0062 / ADR-0063 / ADR-0065 / ADR-0066 / ADR-0067) added
- * lane partitioning, `calling[]` + `serving[]`, `laneCounts`, and
- * `nextReservationDeadline`. v4 only widens projection coverage
- * — no v3 field changed shape.
- */
-export type ShopState = {
-  readonly v: 6
-  readonly waitingCount: number
-  readonly callableNowCount: number
-  readonly laneCounts: LaneCounts
-  readonly calling: readonly ProjectionEntry[]
-  readonly serving: readonly ProjectionEntry[]
-  readonly pendingNoShow: readonly ProjectionEntry[]
-  readonly waitingPreview: readonly ProjectionEntry[]
-  readonly nextReservationDeadline: string | null
 }
 
 /**
