@@ -150,12 +150,44 @@ export type TicketT<S extends TicketState> = Extract<Ticket, { state: S }>
 /** The three terminal states with no outgoing transitions. */
 export type TerminalTicketState = "Served" | "NoShow" | "Cancelled"
 
+/** The three active (non-terminal) states with at least one outgoing transition. */
+export type ActiveTicketState = "Waiting" | "Called" | "PendingNoShow"
+
 export const TERMINAL_TICKET_STATES: readonly TerminalTicketState[] = [
   "Served",
   "NoShow",
   "Cancelled",
 ] as const
 
+export const ACTIVE_TICKET_STATES: readonly ActiveTicketState[] = [
+  "Waiting",
+  "Called",
+  "PendingNoShow",
+] as const
+
+/* -------------------------------------------------------------------------- */
+/* Central type-guard registry (ADR-0079)                                      */
+/*                                                                             */
+/* Each guard narrows `Ticket` to the corresponding `TicketT<S>` variant so a  */
+/* call site that branches on a guard inherits the state-dependent fields     */
+/* (`calledAt` on `TicketT<"Called">`, `markedAt` on `TicketT<"PendingNoShow"> */
+/* …) at the type level without a second narrow. Previously each consumer    */
+/* (projection.ts, web routes, use-case files) redeclared these locally —    */
+/* one drift away from a runtime `InvalidStateTransition` slipping past tsc. */
+/* -------------------------------------------------------------------------- */
+
+export const isWaiting = (t: Ticket): t is TicketT<"Waiting"> => t.state === "Waiting"
+export const isCalled = (t: Ticket): t is TicketT<"Called"> => t.state === "Called"
+export const isPendingNoShow = (t: Ticket): t is TicketT<"PendingNoShow"> =>
+  t.state === "PendingNoShow"
+export const isServed = (t: Ticket): t is TicketT<"Served"> => t.state === "Served"
+export const isNoShowState = (t: Ticket): t is TicketT<"NoShow"> => t.state === "NoShow"
+export const isCancelled = (t: Ticket): t is TicketT<"Cancelled"> => t.state === "Cancelled"
+
 /** Whether a ticket is in a terminal state. */
 export const isTerminal = (t: Ticket): t is TicketT<TerminalTicketState> =>
   (TERMINAL_TICKET_STATES as readonly TicketState[]).includes(t.state)
+
+/** Whether a ticket is in an active (non-terminal) state. */
+export const isActive = (t: Ticket): t is TicketT<ActiveTicketState> =>
+  (ACTIVE_TICKET_STATES as readonly TicketState[]).includes(t.state)

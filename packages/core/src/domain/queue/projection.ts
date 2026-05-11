@@ -4,7 +4,15 @@ import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import { type CustomerHandle, equalsCustomerHandle } from "../value-objects/CustomerHandle.js"
 import { type Lane, PREFERRED_LANE_CHAIN } from "./Lane.js"
 import { intervalOf, type Slot } from "./Slot.js"
-import type { Called, PendingNoShow, Ticket, Waiting } from "./Ticket.js"
+import {
+  type Called,
+  isCalled,
+  isPendingNoShow,
+  isWaiting,
+  type PendingNoShow,
+  type Ticket,
+  type Waiting,
+} from "./Ticket.js"
 import type { TicketEvent } from "./TicketEvent.js"
 
 /**
@@ -198,10 +206,6 @@ export const applyMany = (snap: QueueSnapshot, events: readonly TicketEvent[]): 
 /* -------------------------------------------------------------------------- */
 /* Derived queries                                                             */
 /* -------------------------------------------------------------------------- */
-
-const isWaiting = (t: Ticket): t is Waiting => t.state === "Waiting"
-const isCalled = (t: Ticket): t is Called => t.state === "Called"
-const isPendingNoShow = (t: Ticket): t is PendingNoShow => t.state === "PendingNoShow"
 
 /**
  * Lane-filter predicate. `filter === undefined` matches every

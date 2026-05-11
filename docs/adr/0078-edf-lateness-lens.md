@@ -14,7 +14,7 @@ staff `+page.svelte` — into a single export from
 `packages/core/src/domain/queue/policies.ts`. The predicate's
 algebraic form is the EDF (Earliest-Deadline-First) lateness check:
 
-```
+```text
 isCallableNow(t, now, grace) ≡
   t.lane ≠ "reservation"               ∨
   t.appointmentAt is null              ∨

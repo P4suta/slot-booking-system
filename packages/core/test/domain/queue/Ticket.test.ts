@@ -1,7 +1,15 @@
 import { Result, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import {
+  ACTIVE_TICKET_STATES,
+  isActive,
+  isCalled,
+  isCancelled,
+  isNoShowState,
+  isPendingNoShow,
+  isServed,
   isTerminal,
+  isWaiting,
   TERMINAL_TICKET_STATES,
   type Ticket,
   TicketSchema,
@@ -151,5 +159,113 @@ describe("TERMINAL_TICKET_STATES / isTerminal", () => {
         }),
       ),
     ).toBe(false)
+  })
+})
+
+describe("ACTIVE_TICKET_STATES / isActive", () => {
+  it("lists Waiting / Called / PendingNoShow", () => {
+    expect(ACTIVE_TICKET_STATES).toEqual(["Waiting", "Called", "PendingNoShow"])
+  })
+
+  it("isActive ↔ ¬isTerminal partition over every variant", () => {
+    const variants: readonly Ticket[] = [
+      decodeOrThrow({ ...baseFields, state: "Waiting" }),
+      decodeOrThrow({
+        ...baseFields,
+        state: "Called",
+        calledAt: "2026-05-08T09:00:00Z",
+        calledBy: "staff",
+      }),
+      decodeOrThrow({
+        ...baseFields,
+        state: "PendingNoShow",
+        calledAt: "2026-05-08T09:00:00Z",
+        calledBy: "staff",
+        markedAt: "2026-05-08T09:05:00Z",
+        markedBy: "staff",
+      }),
+      decodeOrThrow({
+        ...baseFields,
+        state: "Served",
+        calledAt: "2026-05-08T09:00:00Z",
+        calledBy: "staff",
+        servedAt: "2026-05-08T09:05:00Z",
+        servedBy: "staff",
+      }),
+      decodeOrThrow({
+        ...baseFields,
+        state: "NoShow",
+        calledAt: "2026-05-08T09:00:00Z",
+        calledBy: "staff",
+        markedAt: "2026-05-08T09:05:00Z",
+        markedBy: "system",
+      }),
+      decodeOrThrow({
+        ...baseFields,
+        state: "Cancelled",
+        cancelledAt: "2026-05-08T09:00:00Z",
+        cancelledBy: "customer",
+        reason: "x",
+      }),
+    ]
+    for (const t of variants) {
+      expect(isActive(t)).toBe(!isTerminal(t))
+    }
+  })
+})
+
+describe("per-state type guards (ADR-0079)", () => {
+  const variants = {
+    Waiting: decodeOrThrow({ ...baseFields, state: "Waiting" }),
+    Called: decodeOrThrow({
+      ...baseFields,
+      state: "Called",
+      calledAt: "2026-05-08T09:00:00Z",
+      calledBy: "staff",
+    }),
+    PendingNoShow: decodeOrThrow({
+      ...baseFields,
+      state: "PendingNoShow",
+      calledAt: "2026-05-08T09:00:00Z",
+      calledBy: "staff",
+      markedAt: "2026-05-08T09:05:00Z",
+      markedBy: "staff",
+    }),
+    Served: decodeOrThrow({
+      ...baseFields,
+      state: "Served",
+      calledAt: "2026-05-08T09:00:00Z",
+      calledBy: "staff",
+      servedAt: "2026-05-08T09:05:00Z",
+      servedBy: "staff",
+    }),
+    NoShow: decodeOrThrow({
+      ...baseFields,
+      state: "NoShow",
+      calledAt: "2026-05-08T09:00:00Z",
+      calledBy: "staff",
+      markedAt: "2026-05-08T09:05:00Z",
+      markedBy: "system",
+    }),
+    Cancelled: decodeOrThrow({
+      ...baseFields,
+      state: "Cancelled",
+      cancelledAt: "2026-05-08T09:00:00Z",
+      cancelledBy: "customer",
+      reason: "x",
+    }),
+  } as const
+
+  it.each([
+    ["isWaiting", isWaiting, "Waiting"],
+    ["isCalled", isCalled, "Called"],
+    ["isPendingNoShow", isPendingNoShow, "PendingNoShow"],
+    ["isServed", isServed, "Served"],
+    ["isNoShowState", isNoShowState, "NoShow"],
+    ["isCancelled", isCancelled, "Cancelled"],
+  ] as const)("%s narrows iff state matches", (_name, guard, matchState) => {
+    for (const [name, t] of Object.entries(variants)) {
+      expect(guard(t)).toBe(name === matchState)
+    }
   })
 })
