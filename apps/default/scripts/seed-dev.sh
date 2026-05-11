@@ -144,7 +144,11 @@ for spec in \
   staff_cancel "$id"
 done
 
-echo "seed: 履歴 — NoShow × 4"
+# NoShow terminal は AA2 (ADR-0074) で staff button 直接到達不可になった
+# (= staff の「来なかった」 は PendingNoShow を起こすだけ、 terminal NoShow は
+# DO alarm の TTL sweep からしか発生しない)。 seed では一部を「直接 cancel」
+# に置き換えて 履歴 column の埋め合わせをする。
+echo "seed: 履歴 — Cancelled (= NoShow 系の代替) × 4"
 for spec in \
   "カトウ リョウ|1012|" \
   "ヨシダ アキラ|1013|" \
@@ -153,7 +157,7 @@ for spec in \
   IFS='|' read -r kana last4 note <<< "$spec"
   id=$(issue_walkin "$kana" "$last4" "$note")
   staff_call "$id"
-  staff_no_show "$id"
+  staff_cancel "$id"
 done
 
 # ---------------------------------------------------------------------------
@@ -184,6 +188,23 @@ called_ids+=("$(issue_walkin 'オオタ アヤ' '3004' '')")
 called_ids+=("$(issue_reservation 'シマザキ シンジ' '3005' "$(jst_at "$day0" 11 00)" '予約 11:00')")
 for id in "${called_ids[@]}"; do
   staff_call "$id"
+done
+
+# ---------------------------------------------------------------------------
+# 催促中 (PendingNoShow、 ADR-0074) — 2 walk-in。 staff の「来なかった」
+# button を押した直後の状態を demo するため、 issue → call → no-show を
+# 同期実行 (= /no-show endpoint は AA2 で MarkPendingNoShow に re-route 済)。
+# customer の /ticket modal や staff Kanban 「催促中」 column が空のまま
+# 残らないようにする。
+# ---------------------------------------------------------------------------
+echo "seed: 催促中 — 2 件"
+for spec in \
+  "ヤノ ハルカ|9001|" \
+  "シマダ ジロウ|9002|"; do
+  IFS='|' read -r kana last4 note <<< "$spec"
+  id=$(issue_walkin "$kana" "$last4" "$note")
+  staff_call "$id"
+  staff_no_show "$id"
 done
 
 # ---------------------------------------------------------------------------

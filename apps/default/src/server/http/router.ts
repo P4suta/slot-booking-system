@@ -518,6 +518,9 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       if (Number.isNaN(calledMs)) return false
       return calledMs + SERVING_THRESHOLD_MS <= nowMs
     })
+    const pendingNoShow = tickets
+      .filter((t) => t.state === "PendingNoShow")
+      .sort((a, b) => a.displaySeq - b.displaySeq)
     // "Callable now" partition: walk-in + priority always, reservation
     // only inside the 5-min grace before appointmentAt. Mirrors
     // QueueShop.shopState's `isCallableNow` so the landing headline
@@ -577,6 +580,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
           },
           calling,
           serving,
+          pendingNoShow,
           waitingPreview: waiting,
           terminal: terminalRecent,
           nextReservationDeadline,
@@ -597,6 +601,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         },
         calling: calling.map(project),
         serving: serving.map(project),
+        pendingNoShow: pendingNoShow.map(project),
         waitingPreview: waiting.map(project),
         nextReservationDeadline,
       }),

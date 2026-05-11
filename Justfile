@@ -93,6 +93,7 @@ markdownlint:
         "#**/dist/**" \
         "#**/coverage/**" \
         "#.diagnose/**" \
+        "#.serena/**" \
         "#**/PULL_REQUEST_TEMPLATE.md" \
         "#**/ISSUE_TEMPLATE/**" \
         "#apps/web/src/paraglide/**" \

@@ -38,3 +38,5 @@ ignores:
   - "**/PULL_REQUEST_TEMPLATE.md"
   - "**/ISSUE_TEMPLATE/**"
   - "apps/web/src/paraglide/**"
+  # serena MCP の investigation note は gitignore 配下、 lint 対象外。
+  - ".serena/**"

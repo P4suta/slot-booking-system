@@ -33,6 +33,7 @@
   let waiting: ReadonlyArray<Ticket> = $state([])
   let calling: ReadonlyArray<Ticket> = $state([])
   let servingList: ReadonlyArray<Ticket> = $state([])
+  let pendingNoShow: ReadonlyArray<Ticket> = $state([])
   let done: Ticket[] = $state([])
   let busy = $state(false)
   let error: string | null = $state(null)
@@ -99,11 +100,42 @@
     return atMs - RESERVATION_GRACE_MS <= now
   }
 
+  // ADR-0074 — PendingNoShow TTL は server-side `GRACE_TTL_MIN` (default
+  // 10 分) に対応する。 client から env 値は見えないので 10 分仮置き、
+  // server 側を変更したらここも合わせる。
+  const GRACE_TTL_MS = 10 * 60 * 1000
+  const GRACE_IMMINENT_MS = 60 * 1000
+  // markedAt は PendingNoShow variant のみで定義される field。 narrow して
+  // typesafe に取り出し、 不正な ISO 文字列 (= server bug) は 0 に倒す。
+  const pendingMarkedMs = (t: Ticket): number => {
+    if (t.state !== "PendingNoShow") return 0
+    const raw = t.markedAt
+    if (raw === undefined) return 0
+    const ms = Date.parse(raw)
+    return Number.isNaN(ms) ? 0 : ms
+  }
+  const pendingElapsedMin = (t: Ticket): number => {
+    const markedMs = pendingMarkedMs(t)
+    if (markedMs === 0) return 0
+    return Math.max(0, Math.round((now - markedMs) / 60000))
+  }
+  const pendingRemainingMs = (t: Ticket): number => {
+    const markedMs = pendingMarkedMs(t)
+    if (markedMs === 0) return GRACE_TTL_MS
+    return Math.max(0, GRACE_TTL_MS - (now - markedMs))
+  }
+
   /* ---------- derived ---------- */
   const searchHits: Ticket[] = $derived.by(() => {
     const q = searchQuery.trim().toLowerCase()
     if (q.length === 0) return []
-    const pool: ReadonlyArray<Ticket> = [...waiting, ...calling, ...servingList, ...done]
+    const pool: ReadonlyArray<Ticket> = [
+      ...waiting,
+      ...calling,
+      ...pendingNoShow,
+      ...servingList,
+      ...done,
+    ]
     return pool.filter((t) => {
       if (String(t.displaySeq) === q) return true
       if ((t.phoneLast4 ?? "") === q) return true
@@ -150,6 +182,7 @@
       waiting = r.value.waitingPreview
       calling = r.value.calling
       servingList = r.value.serving
+      pendingNoShow = r.value.pendingNoShow
       done = r.value.terminal
       error = null
     } catch (e) {
@@ -247,6 +280,7 @@
     waiting = []
     calling = []
     servingList = []
+    pendingNoShow = []
     done = []
     prevWaitingCount = null
     error = null
@@ -475,6 +509,82 @@
             </Card>
           {/each}
           {#if calling.length === 0}
+            <p class="empty">{emptyState("calling")}</p>
+          {/if}
+        </div>
+      </section>
+
+      <section class="col">
+        <header><h2>催促中 ({pendingNoShow.length})</h2></header>
+        <div class="cards">
+          {#each pendingNoShow as t (t.id)}
+            {@const remainingMs = pendingRemainingMs(t)}
+            {@const elapsedMin = pendingElapsedMin(t)}
+            {@const imminent = remainingMs < GRACE_IMMINENT_MS}
+            {@const remainingMin = Math.max(1, Math.ceil(remainingMs / 60000))}
+            <Card>
+              <div
+                class="ticket pending-noshow-card"
+                role="group"
+                aria-label="催促中の整理券"
+                data-ticket-id={t.id}
+              >
+                <div class="card-content">
+                  <div class="ticket-head">
+                    <div class="numeral-block">
+                      <span class="block-caption">整理券番号</span>
+                      <span class="numeral">{t.displaySeq}</span>
+                    </div>
+                    <span
+                      class="grace-chip"
+                      data-state={imminent ? "imminent" : "active"}
+                    >
+                      <span class="grace-chip-label">催促開始から</span>
+                      <span class="grace-chip-time">{elapsedMin} 分</span>
+                    </span>
+                  </div>
+                  <div class="ticket-body">
+                    <div class="kana-block">
+                      <span class="block-caption">お名前</span>
+                      <span class="kana">{t.nameKana ?? ""}</span>
+                    </div>
+                  </div>
+                  <p class="grace-ttl" data-state={imminent ? "imminent" : "active"}>
+                    {#if imminent}
+                      間もなく自動キャンセル
+                    {:else}
+                      残り {remainingMin} 分
+                    {/if}
+                  </p>
+                </div>
+                <div class="ticket-detail">
+                  <dl>
+                    <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
+                    {#if t.freeText !== null && t.freeText !== undefined}
+                      <dt>ご相談内容</dt><dd class="freetext">{t.freeText}</dd>
+                    {/if}
+                    {#if t.appointmentAt !== null}
+                      <dt>予約時刻</dt><dd>{t.appointmentAt.slice(11, 16)}</dd>
+                    {/if}
+                  </dl>
+                </div>
+                <div class="secondary-actions">
+                  <span class="secondary-actions-label">その他の操作</span>
+                  <div class="secondary-actions-body grace-cancel">
+                    <Button
+                      variant="destructive"
+                      size="md"
+                      onclick={() => onStaffCancel(t.id)}
+                      disabled={busy}
+                    >
+                      もう待てない
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          {/each}
+          {#if pendingNoShow.length === 0}
             <p class="empty">{emptyState("calling")}</p>
           {/if}
         </div>
@@ -879,14 +989,16 @@
      typically only one card to act on. */
   .waiting-card,
   .calling-card,
-  .serving-card {
+  .serving-card,
+  .pending-noshow-card {
     position: relative;
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: stretch;
   }
   .calling-card .card-content,
-  .serving-card .card-content {
+  .serving-card .card-content,
+  .pending-noshow-card .card-content {
     grid-column: 1;
     display: flex;
     flex-direction: column;
@@ -901,8 +1013,53 @@
     text-align: center;
   }
   .calling-card .secondary-actions,
-  .serving-card .secondary-actions {
+  .serving-card .secondary-actions,
+  .pending-noshow-card .secondary-actions {
     grid-column: 1 / -1;
+  }
+  /* ADR-0074 — 催促中 column の card は warning 系の枠線で
+     視覚的に区別。 内部 layout は serving / calling と共有する
+     ことで操作の認知コストを最小化。 */
+  .pending-noshow-card {
+    border-left: 3px solid oklch(75% 0.18 80);
+    padding-left: var(--space-2);
+  }
+  /* markedAt からの経過時間は slot-chip と同じ場所スタイル、
+     色は warning 系で「待っている時間が伸びている」 の意味付け。 */
+  .grace-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-1);
+    font: var(--text-mono-sm);
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+    color: oklch(35% 0.18 80);
+    background: oklch(95% 0.13 80 / 60%);
+  }
+  .grace-chip[data-state="imminent"] {
+    color: oklch(35% 0.22 25);
+    background: oklch(85% 0.18 25 / 70%);
+    font-weight: 700;
+  }
+  .grace-chip-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+    font-family: inherit;
+  }
+  .grace-chip[data-state="imminent"] .grace-chip-label {
+    color: oklch(40% 0.18 25);
+  }
+  .grace-chip-time {
+    font-variant-numeric: tabular-nums;
+  }
+  .grace-ttl {
+    margin: 0;
+    font: var(--text-body-sm);
+    color: oklch(40% 0.13 80);
+  }
+  .grace-ttl[data-state="imminent"] {
+    color: var(--color-state-danger);
+    font-weight: 600;
   }
   /* Card content: head + body stacked. The whole region is
      non-interactive (= no click handler) so it stays a `<div>`,
