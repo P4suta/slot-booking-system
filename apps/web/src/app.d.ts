@@ -13,6 +13,13 @@ import type { Locale } from "./paraglide/runtime.js"
 
 declare global {
   namespace App {
+    interface Error {
+      // Returned by the `handleError` hook so `+error.svelte` can
+      // display the trace id to the customer alongside the
+      // sanitized message (Stage 24 / ADR-0094).
+      readonly message: string
+      readonly traceId?: string
+    }
     interface Locals {
       // Set by `hooks.server.ts` via paraglide middleware so route
       // load functions can branch on the resolved request locale
