@@ -49,7 +49,10 @@ describe("QueueShop WebSocket lifecycle log (C8)", () => {
     await ws.messages.next(2_000)
     await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
     const projection = await ws.messages.next(2_000)
-    expect(projection).toMatchObject({ ok: true })
+    // ADR-0081: the WS envelope shape is `{ v: 6, kind, at,
+    // capability, ... }` — there is no `ok` flag (that is the
+    // REST `dispatchEnvelope` shape, not the projection feed).
+    expect(projection).toMatchObject({ v: 6 })
     const broadcast = events.find((e) => e.type === "broadcast")
     expect(broadcast?.type).toBe("broadcast")
     if (broadcast?.type === "broadcast") {
@@ -83,6 +86,12 @@ describe("QueueShop WebSocket lifecycle log (C8)", () => {
     await ws2.messages.next(2_000)
     const auth = await staffHeaders(SECRET)
     await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
+    // The broadcaster coalesces dispatches inside `BROADCAST_COALESCE_MS`
+    // (default 100 ms — `apps/default/wrangler.toml`). If the two
+    // dispatches land in the same window they collapse to a single
+    // fan-out, which would starve the second `messages.next` below.
+    // Wait past the window so each call produces its own broadcast.
+    await new Promise((r) => setTimeout(r, 200))
     await worker().fetch(req.callNext(auth.bearerHeaders))
     // Wait for both broadcasts (Issue, then CallNext) to arrive.
     await ws1.messages.next(2_000)

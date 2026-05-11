@@ -139,7 +139,11 @@ describe("HTTP queue flow (property, integration)", () => {
         const final = await parseJson<Projection>(finalRes)
 
         expect(final.ok).toBe(true)
-        expect(final.v).toBe(4)
+        // ADR-0081 (S8) bumped the wire envelope to v6 across
+        // both the REST `/api/v1/queue` projection and the WS
+        // FeedMessage. The legacy v4 expectation predated that
+        // migration.
+        expect(final.v).toBe(6)
         expect(typeof final.waitingCount).toBe("number")
         expect(final.waitingCount).toBeGreaterThanOrEqual(0)
         // Total tickets in the system can never exceed what was

@@ -178,7 +178,11 @@ describe("router smoke (HTTP shape contract)", () => {
       slots: readonly { date: string; bucketId: number; capacity: number }[]
     }>(res)
     expect(body.ok).toBe(true)
-    expect(body.slots.length).toBe(48) // 24h / 30min
+    // Business-hours filter (default 09:00–17:00, see
+    // `route_listSlots`) restricts the 30-min grid to 16 buckets.
+    // The cap is intentional — the customer picker never advertises
+    // off-hours slots staff cannot honour.
+    expect(body.slots.length).toBe(16)
     expect(body.slots[0]?.date).toBe(today)
   })
 

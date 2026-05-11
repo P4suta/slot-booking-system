@@ -213,7 +213,16 @@ describe("envelopeLog middleware (HttpEnvelope log)", () => {
     expect(last?.errorTag).toBe("AlreadyCompleted")
   })
 
-  it("AlreadyNoShow 409 — no-show a NoShow ticket", async () => {
+  it("InvalidStateTransition 409 — no-show a PendingNoShow ticket", async () => {
+    // Post-ADR-0074: `/no-show` dispatches `MarkPendingNoShow`
+    // (Called → PendingNoShow); the *alarm sweep* later
+    // transitions PendingNoShow → NoShow once the grace window
+    // elapses. A second `/no-show` against a ticket that is still
+    // in the PendingNoShow grace state hits the from-state guard
+    // and surfaces `InvalidStateTransition`, not `AlreadyNoShow`.
+    // (The `AlreadyNoShow` envelope is reachable only when the
+    // alarm has fired into terminal NoShow — exercised by
+    // domain-layer unit tests rather than the integration runner.)
     const auth = await staffHeaders(SECRET)
     const issue = await worker().fetch(req.issueTicket({ handle: validHandle, freeText: null }))
     const issueBody = await parseJson<{ ticket: { id: string } }>(issue)
@@ -222,6 +231,6 @@ describe("envelopeLog middleware (HttpEnvelope log)", () => {
     const res = await worker().fetch(req.markNoShow(issueBody.ticket.id, auth.bearerHeaders))
     expect(res.status).toBe(409)
     const last = lastErrorEntry(409)
-    expect(last?.errorTag).toBe("AlreadyNoShow")
+    expect(last?.errorTag).toBe("InvalidStateTransition")
   })
 })
