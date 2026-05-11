@@ -1,20 +1,29 @@
 <script lang="ts">
-  import {
-    isCallableNow as coreIsCallableNow,
-    type StaffProjectionEntry,
-    type TicketState,
-  } from "@booking/core"
+  /**
+   * Staff dashboard (S19 / ADR-0087) — the page is a thin shell on
+   * top of the component library:
+   *
+   *   - `<Kanban>` owns the 5-column markup (descriptors.ts table)
+   *   - `<ModalHost>` renders the discriminated `StaffModalState`
+   *     ADT (states.ts) — one variant per confirm flow, so the
+   *     2^N boolean explosion of the pre-refactor page collapses
+   *     to N+1 named tags.
+   *
+   * The page itself only owns: auth (token + login form), the
+   * cross-column search Dialog, the toast, the WS feed lifecycle,
+   * and the API-call dispatcher. Every column-specific filter /
+   * helper that used to live here is gone — the projection from
+   * `StaffShopState` to columns is the descriptor table.
+   */
+  import type { StaffProjectionEntry, StaffShopState, TicketState } from "@booking/core"
   import { onDestroy, onMount } from "svelte"
   import {
     type ApiResult,
-    callNext,
     callSpecific,
     connectQueueFeed,
-    type Lane,
     markNoShow,
     markServed,
     type QueueFeedHandle,
-    type QueueFeedState,
     recall,
     staffCancel,
     type Ticket,
@@ -22,50 +31,46 @@
   import Button from "$lib/components/Button.svelte"
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
-  import Help from "$lib/components/Help.svelte"
+  import Kanban from "$lib/components/kanban/Kanban.svelte"
+  import type { TicketAction } from "$lib/components/kanban/TicketCard.svelte"
+  import ModalHost from "$lib/components/modal/ModalHost.svelte"
+  import { closedStaff, type StaffModalState } from "$lib/components/modal/states.js"
   import Toast from "$lib/components/Toast.svelte"
-  import { emptyState, m } from "$lib/messages.js"
+  import { m } from "$lib/messages.js"
   import { isStaffShopState, shopStateStore } from "$lib/stores/shopState.svelte.js"
   import { clearStaffSession, markStaffLoggedIn } from "$lib/staffSession.js"
-  import { wsStatus } from "$lib/wsStatus.js"
+  import { writeLegacyStatus } from "$lib/wsStatus.js"
 
   /* ---------- state ---------- */
   let token = $state(
     typeof window === "undefined" ? "" : (localStorage.getItem("queue.staffToken") ?? ""),
   )
   let authenticated = $state(token.length > 0)
-  let waitingCount = $state(0)
-  let waiting: ReadonlyArray<StaffProjectionEntry> = $state([])
-  let calling: ReadonlyArray<StaffProjectionEntry> = $state([])
-  let servingList: ReadonlyArray<StaffProjectionEntry> = $state([])
-  let pendingNoShow: ReadonlyArray<StaffProjectionEntry> = $state([])
-  let done: ReadonlyArray<StaffProjectionEntry> = $state([])
   let busy = $state(false)
   let error: string | null = $state(null)
-  let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
   let prevWaitingCount: number | null = null
 
-  // Cross-column search. Surfaces only as a small magnifier button
-  // in the staff page corner; opens a Dialog that hits every column
-  // (waiting / calling / serving / done) by name / last-4 /
-  // displaySeq and lets the operator jump to the matching card.
+  // Single source of modal visibility — `StaffModalState` ADT, one
+  // tag per confirm flow. The pre-refactor page tracked these as
+  // N independent booleans + N payload fields; the ADT makes the
+  // (open?, payload) pairing a type invariant.
+  let modal = $state<StaffModalState>(closedStaff())
+
+  // Cross-column search dialog. Distinct from the confirm-modal
+  // family because it is a *navigation* affordance (find a card and
+  // scroll to it), not a mutation. Kept as a standalone Dialog.
   let searchDialogOpen = $state(false)
   let searchQuery = $state("")
-  let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
-  let now = $state(Date.now())
-  let slotChipTick: ReturnType<typeof setInterval> | undefined
+  let toast: {
+    message: string
+    variant?: "info" | "success" | "warning" | "danger"
+    undoLabel?: string
+    onUndo?: () => void
+  } | null = $state(null)
 
-  // ADR-0067 grace window — same threshold the EDF lane-chain promotes
-  // a reservation. The chip turns "due" within the same 5min window the
-  // backend uses, so the operator sees the same boundary the projection
-  // is computing.
-  const SLOT_CHIP_DUE_MS = 5 * 60 * 1000
-
-  // Single source for state / lane translation across all the
-  // staff-side detail panels (waiting accordion + history accordion).
-  // The customer-facing chips fall through paraglide already; this
-  // helper covers the dl pairs where we render the value text.
+  // Same state→label table the customer chips fall through; covers
+  // the search-hit row badge.
   const stateLabelJa = (s: TicketState): string => {
     switch (s) {
       case "Waiting":
@@ -82,25 +87,6 @@
         return m.state_Cancelled()
     }
   }
-  const slotChipState = (appointmentAt: string): "due" | "overdue" | "soon" | "future" => {
-    const ms = Date.parse(appointmentAt)
-    const delta = ms - now
-    if (delta <= -SLOT_CHIP_DUE_MS) return "overdue"
-    if (delta <= SLOT_CHIP_DUE_MS) return "due"
-    if (delta <= 30 * 60 * 1000) return "soon"
-    return "future"
-  }
-  /**
-   * EDF-grace lens — a reservation isn't callable until
-   * `appointmentAt - RESERVATION_GRACE ≤ now`; walk-in / priority
-   * tickets are always callable (ADR-0078). The 呼び出す button is
-   * `disabled` when this returns false so a stray tap can't pull a
-   * reservation customer to the front 30 minutes early. The core
-   * import keeps server (`QueueShop`, REST `/queue`) and client in
-   * lockstep — change the magnitude there and every callable-now
-   * decision moves together.
-   */
-  const isCallableNow = (t: StaffProjectionEntry): boolean => coreIsCallableNow(t, now)
 
   // ADR-0074 — PendingNoShow grace TTL の elapsed / remaining 表示は
   // `markedAt` を要するが、 staff projection (S17 / ADR-0085) では PII
@@ -108,15 +94,39 @@
   // は projection 拡張時に復活させる。
 
   /* ---------- derived ---------- */
+  // The Kanban consumes a `StaffShopState`. Until the first WS
+  // snapshot arrives the store is `null`; the page renders a
+  // skeleton in that case (the `{#if shopState !== null}` branch).
+  const shopState: StaffShopState | null = $derived.by(() => {
+    const snap = shopStateStore.value
+    if (snap === null) return null
+    if (!isStaffShopState(snap)) return null
+    return snap
+  })
+
+  // Watch the projection waiting count to surface a desktop
+  // notification when new arrivals appear while the tab is hidden.
+  $effect(() => {
+    const snap = shopState
+    if (snap === null) return
+    const next = snap.waitingCount
+    if (prevWaitingCount !== null && next > prevWaitingCount) {
+      notifyArrival(next - prevWaitingCount)
+    }
+    prevWaitingCount = next
+  })
+
   const searchHits: ReadonlyArray<StaffProjectionEntry> = $derived.by(() => {
     const q = searchQuery.trim().toLowerCase()
     if (q.length === 0) return []
+    const snap = shopState
+    if (snap === null) return []
     const pool: ReadonlyArray<StaffProjectionEntry> = [
-      ...waiting,
-      ...calling,
-      ...pendingNoShow,
-      ...servingList,
-      ...done,
+      ...snap.waitingPreview,
+      ...snap.calling,
+      ...snap.pendingNoShow,
+      ...snap.serving,
+      ...snap.terminal,
     ]
     return pool.filter((t) => {
       if (String(t.displaySeq) === q) return true
@@ -128,9 +138,9 @@
 
   /**
    * Close the search dialog and scroll the matching card into
-   * view (the detail panel reveals automatically on hover; the
-   * `.is-search-target` modifier paints a brief highlight so the
-   * operator sees which card matched).
+   * view. The `data-ticket-id` attribute on every TicketCard is
+   * the anchor; the `.is-search-target` modifier paints a brief
+   * highlight so the operator sees which card matched.
    */
   const focusOnTicket = (id: string): void => {
     searchDialogOpen = false
@@ -144,32 +154,6 @@
         setTimeout(() => el.classList.remove("is-search-target"), 1800)
       }
     }, 80)
-  }
-
-  /* ---------- refresh ----------
-   *
-   * S17 / ADR-0085 — staff page is a pure consumer of `shopStateStore`.
-   * The WS path (`connectQueueFeed`) writes every snapshot + delta
-   * into the store; this projection pulls the staff variant out and
-   * updates the local Kanban columns. PII payload arrives through the
-   * staff WS frame (S12) so no REST refetch is needed.
-   */
-  const refresh = (): void => {
-    const snap = shopStateStore.value
-    if (snap === null) return
-    if (!isStaffShopState(snap)) return
-    const nextCount = snap.waitingCount
-    if (prevWaitingCount !== null && nextCount > prevWaitingCount) {
-      notifyArrival(nextCount - prevWaitingCount)
-    }
-    prevWaitingCount = nextCount
-    waitingCount = nextCount
-    waiting = snap.waitingPreview
-    calling = snap.calling
-    servingList = snap.serving
-    pendingNoShow = snap.pendingNoShow
-    done = snap.terminal
-    error = null
   }
 
   /* ---------- desktop notification on new arrival ---------- */
@@ -195,32 +179,46 @@
   const startLiveFeed = (): void => {
     // S17 / ADR-0085 — `shopStateStore` is the single source of truth
     // for the staff projection. `connectQueueFeed` writes every WS
-    // frame into it; the `$effect` below pulls the staff variant into
-    // the local Kanban state. No REST refetch is needed.
-    refresh()
+    // frame into it; the page reads the staff variant via the
+    // `shopState` `$derived` above. No REST refetch is needed.
     if (feed === undefined) {
       feed = connectQueueFeed({
         onProjection: () => {
           // No-op: the store is already updated by `connectQueueFeed`,
-          // and the `$effect` propagates the snapshot into page state.
+          // and `$derived` propagates the snapshot into page state.
         },
         onState: (next) => {
-          feedState = next
-          wsStatus.set(next)
+          writeLegacyStatus(next)
         },
       })
     }
   }
 
-  // Reactive bridge — every time `shopStateStore.value` advances
-  // (snapshot or delta merged in by `connectQueueFeed`), propagate
-  // the staff variant into the page state. The `refresh()` body is
-  // pure projection extraction with no async hops.
-  $effect(() => {
-    // Touch the store value so Svelte tracks it.
-    void shopStateStore.value
-    refresh()
-  })
+  /**
+   * Title table for the confirm-modal family. Returns an empty
+   * string for `"none"` since `<ModalHost>` does not render
+   * anything in that case. The switch is exhaustive over
+   * `StaffModalState` so adding a variant fails to compile until
+   * the title is supplied.
+   */
+  const modalTitle = (state: StaffModalState): string => {
+    switch (state.tag) {
+      case "none":
+        return ""
+      case "callConfirm":
+        return "呼び出しの確認"
+      case "servedConfirm":
+        return "対応完了の確認"
+      case "noShowConfirm":
+        return "催促開始の確認"
+      case "cancelConfirm":
+        return "キャンセルの確認"
+      case "batchCall":
+        return "一括呼び出しの確認"
+      case "ticketDetail":
+        return "整理券の詳細"
+    }
+  }
 
   /* ---------- generic action runner ---------- */
   async function runAction<A>(
@@ -247,15 +245,14 @@
     } finally {
       busy = false
     }
-    // The WS push reflects the server-side mutation into
-    // `shopStateStore` shortly after the action returns; the
-    // `$effect` re-runs `refresh()` automatically so no manual call
-    // is needed here. The local re-projection is also already done
-    // for the snapshot the store carries at this instant.
-    refresh()
   }
 
-  const showToast = (message: string, variant?: "info" | "success" | "warning" | "danger", undoLabel?: string, onUndo?: () => void) => {
+  const showToast = (
+    message: string,
+    variant?: "info" | "success" | "warning" | "danger",
+    undoLabel?: string,
+    onUndo?: () => void,
+  ) => {
     toast = { message, variant, undoLabel, onUndo }
   }
 
@@ -276,26 +273,39 @@
     authenticated = false
     feed?.close()
     feed = undefined
-    waitingCount = 0
-    waiting = []
-    calling = []
-    servingList = []
-    pendingNoShow = []
-    done = []
     prevWaitingCount = null
     error = null
+    modal = closedStaff()
   }
 
-  /* ---------- operator actions ---------- */
-  const onCallNext = (lane?: Lane) =>
-    runAction(
-      "call-next",
-      () => callNext(token, lane !== undefined ? { lane } : {}),
-      (v) => {
-        const t = (v as { ticket: Ticket }).ticket
-        showToast(`#${t.displaySeq} を呼び出しました`, "info", "取消", () => onRecallTicket(t.id))
-      },
-    )
+  /* ---------- operator actions ----------
+   *
+   * `handleKanbanAction` is the single inbound from
+   * `<TicketCard>`. The TicketAction → StaffModalState mapping is
+   * encoded here: mutating actions open a confirm modal, the
+   * `recall` action goes straight through (with undo on the toast).
+   * The corresponding DO RPC is fired from the modal's confirm
+   * button via `runConfirmedAction`.
+   */
+  const handleKanbanAction = (action: TicketAction, entry: StaffProjectionEntry): void => {
+    switch (action) {
+      case "call":
+        modal = { tag: "callConfirm", ticketId: entry.id }
+        return
+      case "served":
+        modal = { tag: "servedConfirm", ticketId: entry.id }
+        return
+      case "noShow":
+        modal = { tag: "noShowConfirm", ticketId: entry.id }
+        return
+      case "cancel":
+        modal = { tag: "cancelConfirm", ticketId: entry.id, reason: "staff-cancel" }
+        return
+      case "recall":
+        void onRecallTicket(entry.id)
+        return
+    }
+  }
 
   const onCallSpecific = (ticketId: string) =>
     runAction(
@@ -323,8 +333,41 @@
   const onRecallTicket = (ticketId: string) =>
     runAction("recall", () => recall(token, ticketId), () => showToast("取り消しました", "info"))
 
-  const onStaffCancel = (ticketId: string) =>
-    runAction("cancel", () => staffCancel(token, ticketId, "staff-cancel"), () => showToast("キャンセル", "warning"))
+  const onStaffCancel = (ticketId: string, reason: string) =>
+    runAction("cancel", () => staffCancel(token, ticketId, reason), () => showToast("キャンセル", "warning"))
+
+  /**
+   * Run the action wired to the open modal, then close it. The
+   * switch is exhaustive over `StaffModalState`; adding a variant
+   * fails to compile until both the wiring here and the body
+   * snippet below are extended.
+   */
+  const runConfirmedAction = async (state: StaffModalState): Promise<void> => {
+    switch (state.tag) {
+      case "none":
+        return
+      case "callConfirm":
+        await onCallSpecific(state.ticketId)
+        break
+      case "servedConfirm":
+        await onMarkServed(state.ticketId)
+        break
+      case "noShowConfirm":
+        await onMarkNoShow(state.ticketId)
+        break
+      case "cancelConfirm":
+        await onStaffCancel(state.ticketId, state.reason)
+        break
+      case "batchCall":
+        // Batch-call flow not wired yet — the variant exists so
+        // the ADT can grow into it without re-shaping the host.
+        break
+      case "ticketDetail":
+        // Read-only modal; no action to run on close.
+        break
+    }
+    modal = closedStaff()
+  }
 
   /* ---------- lifecycle ---------- */
   onMount(() => {
@@ -336,16 +379,11 @@
       ensureNotificationPermission()
       startLiveFeed()
     }
-    // 1Hz tick drives the slot chip due/overdue colour transition.
-    slotChipTick = setInterval(() => {
-      now = Date.now()
-    }, 1000)
   })
 
   onDestroy(() => {
     feed?.close()
-    wsStatus.set("none")
-    if (slotChipTick !== undefined) clearInterval(slotChipTick)
+    writeLegacyStatus("none")
   })
 </script>
 
@@ -391,291 +429,79 @@
       <p class="error" role="alert">{error}</p>
     {/if}
 
-    <!-- 4-column kanban -->
-    <div class="kanban">
-      <section class="col">
-        <header class="col-header">
-          <h2>待機 ({waiting.length})</h2>
-        </header>
-        <div class="cards">
-          {#each waiting as t, idx (t.id)}
-            <Card>
-              <div
-                class="ticket waiting-card" data-ticket-id={t.id}
-                data-head={idx === 0 ? "true" : undefined}
-              >
-                <div class="card-content">
-                  <div class="ticket-head">
-                    <div class="numeral-block">
-                      <span class="block-caption">整理券番号</span>
-                      <span class="numeral">{t.displaySeq}</span>
-                    </div>
-                    {#if t.appointmentAt !== null}
-                      <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                        <span class="slot-chip-label">予約</span>
-                        <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
-                      </span>
-                    {/if}
-                  </div>
-                  <div class="ticket-body">
-                    <div class="kana-block">
-                      <span class="block-caption">お名前</span>
-                      <span class="kana">{t.nameKana ?? ""}</span>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  class="card-call-action"
-                  aria-label={isCallableNow(t) ? "この人を呼ぶ" : "予約時刻が近づいてから呼び出せます"}
-                  title={isCallableNow(t) ? undefined : "予約時刻まで 5 分以内になるまで呼び出せません"}
-                  onclick={() => onCallSpecific(t.id)}
-                  disabled={busy || !isCallableNow(t)}
-                >
-                  <span class="call-label">呼び出す</span>
-                </button>
-                <div class="ticket-detail">
-                  <dl>
-                    <dt>電話末尾</dt>
-                    <dd>{t.phoneLast4 ?? ""}</dd>
-                    {#if t.freeText !== null && t.freeText !== undefined}
-                      <dt>ご相談内容</dt>
-                      <dd class="freetext">{t.freeText}</dd>
-                    {/if}
-                    {#if t.appointmentAt !== null}
-                      <dt>予約時刻</dt>
-                      <dd>{t.appointmentAt.slice(11, 16)}</dd>
-                    {/if}
-                  </dl>
-                </div>
-              </div>
-            </Card>
-          {/each}
-          {#if waiting.length === 0}
-            <p class="empty">{emptyState("waiting")}</p>
-          {/if}
-        </div>
-      </section>
+    {#if shopState !== null}
+      <Kanban state={shopState} onAction={handleKanbanAction} />
+    {:else}
+      <p class="skeleton">読み込み中…</p>
+    {/if}
 
-      <section class="col">
-        <header><h2>呼び出し中 ({calling.length})</h2></header>
-        <div class="cards">
-          {#each calling as t (t.id)}
-            <Card>
-              <div class="ticket calling-card" role="group" aria-label="呼び出し中の整理券" data-ticket-id={t.id}>
-                <div class="card-content">
-                  <div class="ticket-head">
-                    <div class="numeral-block">
-                      <span class="block-caption">整理券番号</span>
-                      <span class="numeral">{t.displaySeq}</span>
-                    </div>
-                    {#if t.appointmentAt !== null}
-                      <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                        <span class="slot-chip-label">予約</span>
-                        <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
-                      </span>
-                    {/if}
-                  </div>
-                  <div class="ticket-body">
-                    <div class="kana-block">
-                      <span class="block-caption">お名前</span>
-                      <span class="kana">{t.nameKana ?? ""}</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="ticket-detail">
-                  <dl>
-                    <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
-                    {#if t.freeText !== null && t.freeText !== undefined}
-                      <dt>ご相談内容</dt><dd class="freetext">{t.freeText}</dd>
-                    {/if}
-                    {#if t.appointmentAt !== null}
-                      <dt>予約時刻</dt><dd>{t.appointmentAt.slice(11, 16)}</dd>
-                    {/if}
-                  </dl>
-                </div>
-                <div class="secondary-actions">
-                  <span class="secondary-actions-label">その他の操作</span>
-                  <div class="secondary-actions-body">
-                    <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>
-                      来なかった
-                    </Button>
-                    <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>
-                      待機に戻す
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          {/each}
-          {#if calling.length === 0}
-            <p class="empty">{emptyState("calling")}</p>
-          {/if}
-        </div>
-      </section>
-
-      <section class="col">
-        <header><h2>催促中 ({pendingNoShow.length})</h2></header>
-        <div class="cards">
-          {#each pendingNoShow as t (t.id)}
-            <Card>
-              <div
-                class="ticket pending-noshow-card"
-                role="group"
-                aria-label="催促中の整理券"
-                data-ticket-id={t.id}
-              >
-                <div class="card-content">
-                  <div class="ticket-head">
-                    <div class="numeral-block">
-                      <span class="block-caption">整理券番号</span>
-                      <span class="numeral">{t.displaySeq}</span>
-                    </div>
-                  </div>
-                  <div class="ticket-body">
-                    <div class="kana-block">
-                      <span class="block-caption">お名前</span>
-                      <span class="kana">{t.nameKana ?? ""}</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="ticket-detail">
-                  <dl>
-                    <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
-                    {#if t.freeText !== null && t.freeText !== undefined}
-                      <dt>ご相談内容</dt><dd class="freetext">{t.freeText}</dd>
-                    {/if}
-                    {#if t.appointmentAt !== null}
-                      <dt>予約時刻</dt><dd>{t.appointmentAt.slice(11, 16)}</dd>
-                    {/if}
-                  </dl>
-                </div>
-                <div class="secondary-actions">
-                  <span class="secondary-actions-label">その他の操作</span>
-                  <div class="secondary-actions-body grace-cancel">
-                    <Button
-                      variant="destructive"
-                      size="md"
-                      onclick={() => onStaffCancel(t.id)}
-                      disabled={busy}
-                    >
-                      もう待てない
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          {/each}
-          {#if pendingNoShow.length === 0}
-            <p class="empty">{emptyState("calling")}</p>
-          {/if}
-        </div>
-      </section>
-
-      <section class="col">
-        <header><h2>対応中 ({servingList.length})</h2></header>
-        <div class="cards">
-          {#each servingList as t (t.id)}
-            <Card>
-              <div class="ticket serving-card" role="group" aria-label="対応中の整理券" data-ticket-id={t.id}>
-                <div class="card-content">
-                  <div class="ticket-head">
-                    <div class="numeral-block">
-                      <span class="block-caption">整理券番号</span>
-                      <span class="numeral">{t.displaySeq}</span>
-                    </div>
-                    {#if t.appointmentAt !== null}
-                      <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
-                        <span class="slot-chip-label">予約</span>
-                        <span class="slot-chip-time">{t.appointmentAt.slice(11, 16)}</span>
-                      </span>
-                    {/if}
-                  </div>
-                  <div class="ticket-body">
-                    <div class="kana-block">
-                      <span class="block-caption">お名前</span>
-                      <span class="kana">{t.nameKana ?? ""}</span>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  class="card-call-action"
-                  aria-label="対応完了"
-                  onclick={() => onMarkServed(t.id)}
-                  disabled={busy}
-                >
-                  <span class="call-label">対応<br />完了</span>
-                </button>
-                <div class="ticket-detail">
-                  <dl>
-                    <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
-                    {#if t.freeText !== null && t.freeText !== undefined}
-                      <dt>ご相談内容</dt><dd class="freetext">{t.freeText}</dd>
-                    {/if}
-                    {#if t.appointmentAt !== null}
-                      <dt>予約時刻</dt><dd>{t.appointmentAt.slice(11, 16)}</dd>
-                    {/if}
-                  </dl>
-                </div>
-                <div class="secondary-actions">
-                  <span class="secondary-actions-label">その他の操作</span>
-                  <div class="secondary-actions-body">
-                    <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>
-                      対応を中止
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          {/each}
-          {#if servingList.length === 0}
-            <p class="empty">{emptyState("serving")}</p>
-          {/if}
-        </div>
-      </section>
-
-      <section class="col">
-        <header><h2>履歴 ({done.length})</h2></header>
-        <div class="cards">
-          {#each done.slice(0, 12) as t (t.id)}
-            <Card>
-              <div class="ticket history-card" data-ticket-id={t.id}>
-                <div class="card-content">
-                  <div class="ticket-head">
-                    <div class="numeral-block">
-                      <span class="block-caption">整理券番号</span>
-                      <span class="numeral">{t.displaySeq}</span>
-                    </div>
-                    <span class="state-badge" data-state={t.state}>{stateLabelJa(t.state)}</span>
-                  </div>
-                  <div class="ticket-body">
-                    <div class="kana-block">
-                      <span class="block-caption">お名前</span>
-                      <span class="kana">{t.nameKana ?? ""}</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="ticket-detail">
-                  <dl>
-                    <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
-                    {#if t.freeText !== null && t.freeText !== undefined}
-                      <dt>ご相談内容</dt><dd class="freetext">{t.freeText}</dd>
-                    {/if}
-                    {#if t.appointmentAt !== null}
-                      <dt>予約時刻</dt><dd>{t.appointmentAt.slice(11, 16)}</dd>
-                    {/if}
-                  </dl>
-                </div>
-              </div>
-            </Card>
-          {/each}
-          {#if done.length === 0}
-            <p class="empty">{emptyState("terminal")}</p>
-          {/if}
-        </div>
-      </section>
-    </div>
+    <!-- Confirm-modal family. The `<ModalHost>` renders nothing
+         when `modal.tag === "none"`; otherwise it wraps a Dialog
+         and the snippet narrows on the discriminator tag. -->
+    <ModalHost
+      state={modal}
+      title={modalTitle(modal)}
+      onClose={() => (modal = closedStaff())}
+    >
+      {#snippet children(state)}
+        {#if state.tag === "callConfirm"}
+          <p>この整理券を呼び出しますか?</p>
+          <div class="modal-actions">
+            <Button variant="ghost" onclick={() => (modal = closedStaff())} disabled={busy}>
+              閉じる
+            </Button>
+            <Button onclick={() => runConfirmedAction(state)} disabled={busy}>
+              呼び出す
+            </Button>
+          </div>
+        {:else if state.tag === "servedConfirm"}
+          <p>対応完了として記録しますか?</p>
+          <div class="modal-actions">
+            <Button variant="ghost" onclick={() => (modal = closedStaff())} disabled={busy}>
+              閉じる
+            </Button>
+            <Button onclick={() => runConfirmedAction(state)} disabled={busy}>
+              対応完了
+            </Button>
+          </div>
+        {:else if state.tag === "noShowConfirm"}
+          <p>来店なしとして催促を開始しますか? お客様の応答を待ちます。</p>
+          <div class="modal-actions">
+            <Button variant="ghost" onclick={() => (modal = closedStaff())} disabled={busy}>
+              閉じる
+            </Button>
+            <Button onclick={() => runConfirmedAction(state)} disabled={busy}>
+              催促開始
+            </Button>
+          </div>
+        {:else if state.tag === "cancelConfirm"}
+          <p>この整理券をキャンセルしますか? 取り消せません。</p>
+          <div class="modal-actions">
+            <Button variant="ghost" onclick={() => (modal = closedStaff())} disabled={busy}>
+              閉じる
+            </Button>
+            <Button variant="destructive" onclick={() => runConfirmedAction(state)} disabled={busy}>
+              キャンセル
+            </Button>
+          </div>
+        {:else if state.tag === "batchCall"}
+          <p>{state.ticketIds.length} 件を呼び出しますか?</p>
+          <div class="modal-actions">
+            <Button variant="ghost" onclick={() => (modal = closedStaff())} disabled={busy}>
+              閉じる
+            </Button>
+            <Button onclick={() => runConfirmedAction(state)} disabled={busy}>
+              呼び出す
+            </Button>
+          </div>
+        {:else if state.tag === "ticketDetail"}
+          <p>整理券 ID: {state.ticketId}</p>
+          <div class="modal-actions">
+            <Button onclick={() => (modal = closedStaff())}>閉じる</Button>
+          </div>
+        {/if}
+      {/snippet}
+    </ModalHost>
 
     <!-- cross-column search dialog -->
     <Dialog
@@ -764,9 +590,8 @@
     padding: var(--space-3) var(--space-4);
   }
   /* Pin the staff dashboard to the viewport below the layout
-     header (4rem) so the whole page never spawns body scroll.
-     Each column's `.cards` does its own overflow-y, keeping the
-     topbar and per-column headers fixed. */
+     header (4rem) so the whole page never spawns body scroll. The
+     `<Kanban>` owns the column overflow internally. */
   .staff {
     position: fixed;
     top: 4rem;
@@ -861,46 +686,6 @@
     font: var(--text-mono-sm);
     color: var(--color-fg-muted);
   }
-
-  .col-title-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-  }
-  .col-title-row h2 {
-    flex: 1;
-  }
-  .primary-action {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-1);
-  }
-  .batch-link {
-    background: transparent;
-    border: 0;
-    padding: 0;
-    color: var(--color-fg-secondary);
-    font: var(--text-body-sm);
-    text-decoration: underline;
-    cursor: pointer;
-    text-align: center;
-  }
-  .batch-link:hover:not(:disabled),
-  .batch-link:focus-visible {
-    color: var(--color-fg-primary);
-  }
-  .batch-link:disabled {
-    color: var(--color-fg-muted);
-    cursor: not-allowed;
-  }
-  .col-header {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
   .error {
     background: oklch(95% 0.05 25);
     color: var(--color-state-danger);
@@ -909,373 +694,12 @@
     margin: 0 0 var(--space-4);
     font: var(--text-body-sm);
   }
-  /* `subgrid` on each `.col` opts every column into the kanban's
-     own row grid, so the header row (row 1) auto-sizes to the
-     tallest column header (= 待機列, which carries search +
-     primary action + filter) and the other columns inherit that
-     same height. Without subgrid the 待機列 header alone would
-     stretch downward and the other columns' cards lists would
-     start above it — visibly uneven. */
-  .kanban {
-    display: grid;
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
-    gap: var(--space-4);
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-  }
-  @media (min-width: 56rem) {
-    .kanban {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-    }
-  }
-  .col {
-    display: grid;
-    grid-template-rows: subgrid;
-    grid-row: span 2;
-    min-height: 0;
-    min-width: 0;
-  }
-  .col > header {
-    margin-bottom: var(--space-3);
-  }
-  .col h2 {
-    font: var(--text-label-md);
-    margin: 0;
-    color: var(--color-fg-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .cards {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding-right: var(--space-1);
-  }
-  .ticket {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  /* Waiting / calling / serving cards share a 2-column grid: the
-     left column is the card content (number + name + slot chip),
-     the right column is the primary call-to-action button morphed
-     to the card edge. On waiting cards the button width animates
-     from 0 on hover / focus / head; on calling and serving it's
-     always pinned because those columns are urgent and there is
-     typically only one card to act on. */
-  .waiting-card,
-  .calling-card,
-  .serving-card,
-  .pending-noshow-card {
-    position: relative;
-    display: grid;
-    grid-template-columns: 1fr auto;
-    align-items: stretch;
-  }
-  .calling-card .card-content,
-  .serving-card .card-content,
-  .pending-noshow-card .card-content {
-    grid-column: 1;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .calling-card .card-call-action,
-  .serving-card .card-call-action {
-    width: 6.5rem;
-    padding: 0 var(--space-3);
-    margin-left: var(--space-3);
-    line-height: 1.2;
-    text-align: center;
-  }
-  .calling-card .secondary-actions,
-  .serving-card .secondary-actions,
-  .pending-noshow-card .secondary-actions {
-    grid-column: 1 / -1;
-  }
-  /* ADR-0074 — 催促中 column の card は warning 系の枠線で
-     視覚的に区別。 内部 layout は serving / calling と共有する
-     ことで操作の認知コストを最小化。 */
-  .pending-noshow-card {
-    border-left: 3px solid oklch(75% 0.18 80);
-    padding-left: var(--space-2);
-  }
-  /* S17 / ADR-0085 — the elapsed / remaining display under each
-     pending-noshow card used to read `markedAt` off a full `Ticket`,
-     but the staff projection no longer carries that timestamp. The
-     `.grace-chip` / `.grace-ttl` styles were removed alongside the
-     markup; revive them when `StaffProjectionEntry` gains a
-     `markedAt` field server-side. */
-  /* Card content: head + body stacked. The whole region is
-     non-interactive (= no click handler) so it stays a `<div>`,
-     not a button. The detail panel below is hover-revealed by
-     `.ticket-detail` (see below). */
-  .waiting-card .card-content {
-    grid-column: 1;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .card-call-action {
-    grid-column: 2;
-    grid-row: 1;
-    align-self: stretch;
-    background: var(--color-accent-primary);
-    color: var(--color-accent-on-primary);
-    border: 0;
-    cursor: pointer;
-    width: 0;
-    overflow: hidden;
-    padding: 0;
-    transition: width 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                padding 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                margin 200ms cubic-bezier(0.4, 0, 0.2, 1);
-    margin-left: 0;
-    border-radius: var(--radius-md);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font: var(--text-label-md);
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .waiting-card:hover .card-call-action,
-  .waiting-card:focus-within .card-call-action,
-  .waiting-card[data-head="true"] .card-call-action {
-    width: 6rem;
-    padding: 0 var(--space-3);
-    margin-left: var(--space-3);
-  }
-  .card-call-action:focus-visible {
-    outline: 2px solid var(--color-fg-primary);
-    outline-offset: 2px;
-  }
-  .card-call-action:disabled {
-    background: var(--color-bg-subtle);
-    color: var(--color-fg-muted);
-    cursor: not-allowed;
-  }
-  @media (hover: none) {
-    /* On touch devices the hover trick doesn't work; the call
-       action is rendered alongside the card body at all times. */
-    .card-call-action {
-      width: 5.5rem;
-      padding: 0 var(--space-2);
-      margin-left: var(--space-2);
-    }
-  }
-  /* Detail panel: hidden by default, revealed on card hover /
-     focus-within. The waiting / calling / serving grids let the
-     detail span both columns; the history card is a 1-col layout
-     so it just stacks below the content. On touch devices the
-     panel stays visible since hover isn't available. */
-  .ticket-detail {
-    grid-column: 1 / -1;
-    opacity: 0;
-    max-height: 0;
-    overflow: hidden;
-    padding: 0;
-    border-top: 0;
-    transition: opacity 180ms ease, max-height 180ms ease,
-                margin-top 180ms ease, padding-top 180ms ease;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
-  .ticket:hover .ticket-detail,
-  .ticket:focus-within .ticket-detail,
-  .ticket.is-search-target .ticket-detail {
-    opacity: 1;
-    max-height: 24rem;
-    margin-top: var(--space-3);
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--color-border-subtle);
-  }
-  @media (hover: none) {
-    .ticket-detail {
-      opacity: 1;
-      max-height: none;
-      margin-top: var(--space-3);
-      padding-top: var(--space-3);
-      border-top: 1px solid var(--color-border-subtle);
-    }
-  }
-  .is-search-target {
-    box-shadow: 0 0 0 2px var(--color-accent-primary);
-    border-radius: var(--radius-lg);
-    transition: box-shadow 1800ms ease-out;
-  }
-  /* dl as a 2-column grid where every row's dt + dd share a
-     baseline. The previous implementation used different fonts
-     for dt (`text-label-sm`) and dd (`text-body-sm`) which fell
-     out of vertical alignment because the line-heights differed.
-     Same font-size + `align-items: baseline` lines them up; the
-     only difference is dt's muted colour. The row gap is wider
-     than the column gap so two-line `freetext` doesn't collide
-     with the next label. */
-  .ticket-detail dl {
-    margin: 0;
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    column-gap: var(--space-4);
-    row-gap: var(--space-2);
-    align-items: baseline;
-    font: var(--text-body-sm);
-  }
-  .ticket-detail dt {
-    color: var(--color-fg-muted);
-    font: var(--text-body-sm);
-    font-weight: 500;
-    white-space: nowrap;
-  }
-  .ticket-detail dd {
-    margin: 0;
-    color: var(--color-fg-primary);
-    font: var(--text-body-sm);
-    font-variant-numeric: tabular-nums;
-  }
-  .ticket-detail dd.freetext {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    font-variant-numeric: normal;
-  }
-  .ticket-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-  }
-  .numeral {
-    font: var(--text-numeral-md);
-    font-variant-numeric: tabular-nums;
-    color: var(--color-fg-primary);
-  }
-  .slot-chip {
-    display: inline-flex;
-    align-items: baseline;
-    gap: var(--space-1);
-    font: var(--text-mono-sm);
-    color: var(--color-fg-secondary);
-    background: var(--color-bg-subtle);
-    border-radius: var(--radius-pill);
-    padding: var(--space-1) var(--space-3);
-  }
-  .slot-chip-label {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-    font-family: inherit;
-  }
-  .slot-chip-time {
-    font-variant-numeric: tabular-nums;
-  }
-  .slot-chip[data-state="soon"] {
-    color: oklch(40% 0.13 65);
-    background: oklch(95% 0.07 65 / 50%);
-  }
-  .slot-chip[data-state="due"] {
-    color: oklch(35% 0.18 30);
-    background: oklch(92% 0.13 30 / 60%);
-    font-weight: 600;
-  }
-  .slot-chip[data-state="overdue"] {
-    color: oklch(35% 0.22 25);
-    background: oklch(85% 0.18 25 / 70%);
-    font-weight: 700;
-  }
-  .ticket-body {
-    display: flex;
-    justify-content: flex-start;
-    font: var(--text-body-sm);
-    color: var(--color-fg-secondary);
-  }
-  /* Each labelled block on a card body: a small muted caption
-     above the value. Used for 整理券番号 and お名前. */
-  .numeral-block,
-  .kana-block {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    min-width: 0;
-  }
-  .block-caption {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-    letter-spacing: 0.05em;
-  }
-  .kana-block .kana {
-    font: var(--text-body-md);
-    color: var(--color-fg-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .row {
-    display: flex;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-  }
-  .primary-action-row {
-    display: flex;
-  }
-  /* Secondary actions on calling / serving cards: 「来なかった」「待機に
-     戻す」 etc. are uncommon — hidden by default, revealed when the
-     card is focused (mouse hover or keyboard focus). Touch devices
-     don't have hover, so `@media (hover: none)` keeps them visible
-     alongside the primary action. */
-  .secondary-actions {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    opacity: 0;
-    max-height: 0;
-    overflow: hidden;
-    transition: opacity 180ms ease, max-height 180ms ease;
-    pointer-events: none;
-  }
-  .ticket:hover .secondary-actions,
-  .ticket:focus-within .secondary-actions {
-    opacity: 1;
-    max-height: 8rem;
-    pointer-events: auto;
-  }
-  .secondary-actions-label {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-  }
-  .secondary-actions-body {
-    display: flex;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-  }
-  @media (hover: none) {
-    .secondary-actions {
-      opacity: 1;
-      max-height: none;
-      pointer-events: auto;
-    }
-  }
-  .empty {
+  .skeleton {
     color: var(--color-fg-muted);
     font: var(--text-body-sm);
     text-align: center;
-    padding: var(--space-4);
-  }
-  .muted {
-    opacity: 0.55;
-  }
-  .history-card {
-    position: relative;
-  }
-  .history-card .card-content {
-    color: var(--color-fg-muted);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
+    padding: var(--space-8);
+    flex: 1;
   }
   .state-badge {
     font: var(--text-label-sm);
@@ -1296,27 +720,21 @@
     background: oklch(95% 0.07 25);
     color: var(--color-state-danger);
   }
-  .detail,
-  .help {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: var(--space-2) var(--space-4);
-    margin: 0;
-  }
-  .detail dt,
-  .help dt {
-    font: var(--text-label-md);
-    color: var(--color-fg-secondary);
-  }
-  .detail dd,
-  .help dd {
-    margin: 0;
-    color: var(--color-fg-primary);
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
   }
   .toast-host {
     position: fixed;
     bottom: var(--space-6);
     right: var(--space-6);
     z-index: 1000;
+  }
+  :global(.is-search-target) {
+    box-shadow: 0 0 0 2px var(--color-accent-primary);
+    border-radius: var(--radius-lg);
+    transition: box-shadow 1800ms ease-out;
   }
 </style>

@@ -26,9 +26,10 @@
   } from "$lib/calledAlert.js"
   import Button from "$lib/components/Button.svelte"
   import Card from "$lib/components/Card.svelte"
-  import Dialog from "$lib/components/Dialog.svelte"
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import Help from "$lib/components/Help.svelte"
+  import ModalHost from "$lib/components/modal/ModalHost.svelte"
+  import { type CustomerModalState, closedCustomer } from "$lib/components/modal/states.js"
   import SlotPicker from "$lib/components/SlotPicker.svelte"
   import { errorMessage, helpText, loadingState, m } from "$lib/messages.js"
   import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
@@ -40,7 +41,7 @@
     readTicketCache,
     writeTicketCache,
   } from "$lib/ticketCache.js"
-  import { wsStatus } from "$lib/wsStatus.js"
+  import { writeLegacyStatus, wsStatus } from "$lib/wsStatus.js"
 
   type Stored = { ticketId: string; nameKana: string; phoneLast4: string }
 
@@ -63,22 +64,30 @@
   let qrDataUrl: string | null = $state(null)
   let shareUrl: string | null = $state(null)
   let error: { tag: string; code: string; message: string } | null = $state(null)
-  let cancelDialogOpen = $state(false)
+  // S19 / ADR-0087 — modal state ADT. Five customer-facing variants
+  // (cancelConfirm / reschedulePicker / lateAcknowledge /
+  // noComeConfirm / recoveryHelp) collapse into a single discriminated
+  // union; the 2^N flag combinatorial state space is unrepresentable.
+  // Per-variant payload (ticketId for the action-bound modals, plus
+  // local picker / reason / eta state below) keeps the constructor
+  // call site readable while the union value drives `ModalHost`.
+  let modal = $state<CustomerModalState>(closedCustomer())
   let cancelReason = $state("")
   let cancelBusy = $state(false)
-  // ADR-0070 — atomic appointmentAt swap. The Dialog is only
-  // openable while the ticket is reservation-laned and active; the
-  // handle is read from the localStorage cache (already populated by
-  // /ticket boot) so the customer just picks the new slot.
-  let rescheduleDialogOpen = $state(false)
+  // ADR-0070 — atomic appointmentAt swap. The reschedule modal is
+  // only openable while the ticket is reservation-laned and active;
+  // the handle is read from the localStorage cache (already populated
+  // by /ticket boot) so the customer just picks the new slot.
   let rescheduleNewISO: string | null = $state(null)
   let rescheduleBusy = $state(false)
   let rescheduleError: { tag: string; code: string; message: string } | null = $state(null)
-  // ADR-0074 — PendingNoShow grace-window response. Modal is open
+  // ADR-0074 — PendingNoShow grace-window response. The modal is open
   // whenever the ticket sits in PendingNoShow; it is not dismissable
   // (no 「戻る」 button) — the only exits are the customer
-  // responding 「遅れる」 / 「来ない」 or the DO TTL alarm rolling
-  // the ticket into terminal NoShow.
+  // responding 「遅れる」 (lateAcknowledge) / 「来ない」 (noComeConfirm)
+  // or the DO TTL alarm rolling the ticket into terminal NoShow. The
+  // PendingNoShow → lateAcknowledge variant binding lives in an
+  // $effect below so the modal opens automatically on state entry.
   let graceBusy = $state(false)
   let graceError: { tag: string; code: string; message: string } | null = $state(null)
   let feedState: QueueFeedState = $state("connecting")
@@ -450,7 +459,7 @@
         return
       }
       ticket = r.value.ticket
-      cancelDialogOpen = false
+      modal = closedCustomer()
       cancelReason = ""
     } finally {
       cancelBusy = false
@@ -462,9 +471,10 @@
   }
 
   const openRescheduleDialog = (): void => {
-    rescheduleNewISO = ticket?.appointmentAt ?? null
+    if (ticket === null) return
+    rescheduleNewISO = ticket.appointmentAt ?? null
     rescheduleError = null
-    rescheduleDialogOpen = true
+    modal = { tag: "reschedulePicker", ticketId: ticket.id }
   }
 
   const onRescheduleConfirm = async (): Promise<void> => {
@@ -485,7 +495,7 @@
         return
       }
       ticket = r.value.ticket
-      rescheduleDialogOpen = false
+      modal = closedCustomer()
       rescheduleNewISO = null
       // The mutation response is the authoritative ticket; the WS
       // projection broadcast that the server emits next will keep
@@ -494,6 +504,24 @@
       rescheduleBusy = false
     }
   }
+
+  // PendingNoShow → lateAcknowledge modal auto-bind. The grace-window
+  // modal is not customer-dismissable (the DO TTL alarm or one of the
+  // grace responses is the only exit), so we drive it directly from
+  // ticket.state rather than from a click handler. Entering
+  // PendingNoShow opens `lateAcknowledge`; leaving it (transition to
+  // Waiting via /late-acknowledge, terminal NoShow via alarm, or any
+  // other state) closes the modal.
+  $effect(() => {
+    if (ticket === null) return
+    if (ticket.state === "PendingNoShow") {
+      if (modal.tag !== "lateAcknowledge" && modal.tag !== "noComeConfirm") {
+        modal = { tag: "lateAcknowledge", ticketId: ticket.id }
+      }
+    } else if (modal.tag === "lateAcknowledge" || modal.tag === "noComeConfirm") {
+      modal = closedCustomer()
+    }
+  })
 
   // ADR-0085 / S17 — single-source projection sync. The store is the
   // canonical wire-frame holder; this effect mirrors the legacy
@@ -578,7 +606,7 @@
       onProjection: () => {},
       onState: (next) => {
         feedState = next
-        wsStatus.set(next)
+        writeLegacyStatus(next)
       },
     })
     // 1Hz countdown tick — only mounts client-side via onMount, so
@@ -590,7 +618,7 @@
 
   onDestroy(() => {
     feed?.close()
-    wsStatus.set("none")
+    writeLegacyStatus("none")
     if (countdownTick !== undefined) clearInterval(countdownTick)
   })
 </script>
@@ -758,7 +786,9 @@
           variant="ghost"
           size="md"
           disabled={feedState !== "open"}
-          onclick={() => (cancelDialogOpen = true)}
+          onclick={() => {
+            if (ticket !== null) modal = { tag: "cancelConfirm", ticketId: ticket.id }
+          }}
         >
           キャンセル
         </Button>
@@ -768,102 +798,117 @@
     <p class="loading">{loadingState("ticket")}</p>
   {/if}
 
-  <Dialog
-    open={ticket?.state === "PendingNoShow"}
-    title="ご来店確認"
+  <!--
+    S19 / ADR-0087 — single ModalHost drives every customer dialog
+    from the `CustomerModalState` ADT. `lateAcknowledge` is not
+    dismissable (the close icon falls through to the no-op handler);
+    cancel / reschedule close on backdrop / × / 戻る. The `children`
+    snippet receives the *narrowed* variant so the per-tag branches
+    type-check exhaustively. The Dialog `actions` snippet is not
+    re-exposed by ModalHost; per-variant footers render their action
+    buttons inline at the bottom of each branch body.
+  -->
+  <ModalHost
+    state={modal}
+    title={modal.tag === "cancelConfirm"
+      ? "キャンセルしますか?"
+      : modal.tag === "reschedulePicker"
+        ? "予約時刻を変更しますか?"
+        : modal.tag === "lateAcknowledge" || modal.tag === "noComeConfirm"
+          ? "ご来店確認"
+          : modal.tag === "recoveryHelp"
+            ? "整理券を呼び出す"
+            : ""}
     onClose={() => {
-      // not dismissable — the customer must respond
+      // `lateAcknowledge` / `noComeConfirm` are not dismissable —
+      // the customer must respond (ETA / 来られません) or wait for
+      // the DO TTL alarm. Cancel / reschedule close normally.
+      if (modal.tag === "lateAcknowledge" || modal.tag === "noComeConfirm") return
+      modal = closedCustomer()
     }}
   >
-    <p>
-      お声がけしましたが、 ご来店が確認できていません。 どうされますか?
-    </p>
-    {#if ticket !== null && ticket.appointmentAt !== null && ticket.appointmentAt !== undefined}
-      <p class="dialog-hint">「あと N 分で着く」 を選ぶと予約時刻を自動で繰り下げます。</p>
-      <div class="grace-eta-row">
-        {#each [5, 10, 30, 60] as eta (eta)}
+    {#snippet children(state)}
+      {#if state.tag === "cancelConfirm"}
+        <p>{m.confirm_cancel_body()}</p>
+        <p class="dialog-hint">差し支えなければ理由をお書きください (任意):</p>
+        <textarea bind:value={cancelReason} rows="2" placeholder="例: 都合がつかなくなった"
+        ></textarea>
+        <div class="modal-actions">
+          <Button variant="ghost" onclick={() => (modal = closedCustomer())}>戻る</Button>
+          <Button variant="destructive" disabled={cancelBusy} onclick={onCancelConfirm}>
+            {cancelBusy ? "送信中…" : "キャンセル"}
+          </Button>
+        </div>
+      {:else if state.tag === "reschedulePicker"}
+        {#if ticket !== null && ticket.appointmentAt !== null && ticket.appointmentAt !== undefined}
+          <p class="reschedule-current">
+            現在の予約時刻:
+            <strong>{ticket.appointmentAt.slice(11, 16)}</strong>
+          </p>
+        {/if}
+        <p class="reschedule-help">{m.confirm_reschedule_body()}</p>
+        <SlotPicker
+          selectedISO={rescheduleNewISO}
+          onSelect={(iso) => {
+            rescheduleNewISO = iso
+            rescheduleError = null
+          }}
+        />
+        {#if rescheduleError !== null}
+          <ErrorCard
+            tag={rescheduleError.tag}
+            code={rescheduleError.code}
+            message={rescheduleError.message}
+          />
+        {/if}
+        <div class="modal-actions">
+          <Button variant="ghost" onclick={() => (modal = closedCustomer())}>戻る</Button>
           <Button
             variant="primary"
-            disabled={graceBusy}
-            onclick={() => onLateAcknowledge(eta as 5 | 10 | 30 | 60)}
+            disabled={rescheduleBusy ||
+              rescheduleNewISO === null ||
+              rescheduleNewISO === ticket?.appointmentAt}
+            onclick={onRescheduleConfirm}
           >
-            あと {eta} 分
+            {rescheduleBusy ? "送信中…" : "この時間に変更する"}
           </Button>
-        {/each}
-      </div>
-    {:else}
-      <p class="dialog-hint">「戻る」 を押すと待機列に並び直します。</p>
-      <div class="grace-eta-row">
-        <Button variant="primary" disabled={graceBusy} onclick={() => onLateAcknowledge(10)}>
-          すぐ戻ります
-        </Button>
-      </div>
-    {/if}
-    {#if graceError !== null}
-      <ErrorCard tag={graceError.tag} code={graceError.code} message={graceError.message} />
-    {/if}
-    {#snippet actions()}
-      <Button variant="destructive" disabled={graceBusy} onclick={onNoComeConfirm}>
-        来られません
-      </Button>
+        </div>
+      {:else if state.tag === "lateAcknowledge" || state.tag === "noComeConfirm"}
+        <p>
+          お声がけしましたが、 ご来店が確認できていません。 どうされますか?
+        </p>
+        {#if ticket !== null && ticket.appointmentAt !== null && ticket.appointmentAt !== undefined}
+          <p class="dialog-hint">「あと N 分で着く」 を選ぶと予約時刻を自動で繰り下げます。</p>
+          <div class="grace-eta-row">
+            {#each [5, 10, 30, 60] as eta (eta)}
+              <Button
+                variant="primary"
+                disabled={graceBusy}
+                onclick={() => onLateAcknowledge(eta as 5 | 10 | 30 | 60)}
+              >
+                あと {eta} 分
+              </Button>
+            {/each}
+          </div>
+        {:else}
+          <p class="dialog-hint">「戻る」 を押すと待機列に並び直します。</p>
+          <div class="grace-eta-row">
+            <Button variant="primary" disabled={graceBusy} onclick={() => onLateAcknowledge(10)}>
+              すぐ戻ります
+            </Button>
+          </div>
+        {/if}
+        {#if graceError !== null}
+          <ErrorCard tag={graceError.tag} code={graceError.code} message={graceError.message} />
+        {/if}
+        <div class="modal-actions">
+          <Button variant="destructive" disabled={graceBusy} onclick={onNoComeConfirm}>
+            来られません
+          </Button>
+        </div>
+      {/if}
     {/snippet}
-  </Dialog>
-
-  <Dialog
-    bind:open={cancelDialogOpen}
-    title="キャンセルしますか?"
-    onClose={() => (cancelDialogOpen = false)}
-  >
-    <p>{m.confirm_cancel_body()}</p>
-    <p class="dialog-hint">差し支えなければ理由をお書きください (任意):</p>
-    <textarea bind:value={cancelReason} rows="2" placeholder="例: 都合がつかなくなった"></textarea>
-    {#snippet actions()}
-      <Button variant="ghost" onclick={() => (cancelDialogOpen = false)}>戻る</Button>
-      <Button variant="destructive" disabled={cancelBusy} onclick={onCancelConfirm}>
-        {cancelBusy ? "送信中…" : "キャンセル"}
-      </Button>
-    {/snippet}
-  </Dialog>
-
-  <Dialog
-    bind:open={rescheduleDialogOpen}
-    title="予約時刻を変更しますか?"
-    onClose={() => (rescheduleDialogOpen = false)}
-  >
-    {#if ticket !== null && ticket.appointmentAt !== null && ticket.appointmentAt !== undefined}
-      <p class="reschedule-current">
-        現在の予約時刻:
-        <strong>{ticket.appointmentAt.slice(11, 16)}</strong>
-      </p>
-    {/if}
-    <p class="reschedule-help">{m.confirm_reschedule_body()}</p>
-    <SlotPicker
-      selectedISO={rescheduleNewISO}
-      onSelect={(iso) => {
-        rescheduleNewISO = iso
-        rescheduleError = null
-      }}
-    />
-    {#if rescheduleError !== null}
-      <ErrorCard
-        tag={rescheduleError.tag}
-        code={rescheduleError.code}
-        message={rescheduleError.message}
-      />
-    {/if}
-    {#snippet actions()}
-      <Button variant="ghost" onclick={() => (rescheduleDialogOpen = false)}>戻る</Button>
-      <Button
-        variant="primary"
-        disabled={rescheduleBusy ||
-          rescheduleNewISO === null ||
-          rescheduleNewISO === ticket?.appointmentAt}
-        onclick={onRescheduleConfirm}
-      >
-        {rescheduleBusy ? "送信中…" : "この時間に変更する"}
-      </Button>
-    {/snippet}
-  </Dialog>
+  </ModalHost>
 </section>
 
 <style>
@@ -1229,5 +1274,19 @@
     margin: var(--space-3) 0 var(--space-2);
     color: var(--color-fg-muted);
     font: var(--text-body-sm);
+  }
+  /* Per-variant action row inside the modal body. ModalHost intentionally
+     does not re-expose the Dialog `actions` snippet — each variant lays
+     out its own footer, mirroring the discriminated-union narrowing so
+     no branch leaks props into another. The visual treatment matches
+     the pre-refactor Dialog `<footer>`: right-aligned buttons with a
+     thin separator above. */
+  .modal-actions {
+    display: flex;
+    gap: var(--space-3);
+    justify-content: flex-end;
+    margin-top: var(--space-5);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--color-border-subtle);
   }
 </style>

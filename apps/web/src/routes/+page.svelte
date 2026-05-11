@@ -10,7 +10,7 @@
   } from "$lib/api.js"
   import { loadingState } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache } from "$lib/ticketCache.js"
-  import { wsStatus } from "$lib/wsStatus.js"
+  import { writeLegacyStatus, wsStatus } from "$lib/wsStatus.js"
 
   // 「現在待っている人」 — 予約済み未来分は除外、 walk-in / priority と
   // appointmentAt が 5 分以内に迫った reservation だけを数える。
@@ -94,14 +94,14 @@
       onProjection: (parsed) => refresh(parsed as ShopState),
       onState: (next) => {
         feedState = next
-        wsStatus.set(next)
+        writeLegacyStatus(next)
       },
     })
   })
 
   onDestroy(() => {
     feed?.close()
-    wsStatus.set("none")
+    writeLegacyStatus("none")
   })
 </script>
 

@@ -445,16 +445,6 @@ const staffHeaders = (token: string) => ({
   "x-staff-token": token,
 })
 
-export const callNext = async (
-  token: string,
-  body: { lane?: Lane } = {},
-): Promise<ApiResult<{ ticket: Ticket }>> =>
-  fetchJson(`${baseUrl()}/api/v1/queue/call-next`, {
-    method: "POST",
-    headers: staffHeaders(token),
-    body: body.lane !== undefined ? JSON.stringify({ lane: body.lane }) : undefined,
-  })
-
 export const callSpecific = async (
   token: string,
   ticketId: string,

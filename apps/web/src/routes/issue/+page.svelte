@@ -10,7 +10,7 @@
   import { toKatakana } from "$lib/kana.js"
   import { errorMessage, helpText } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
-  import { wsStatus } from "$lib/wsStatus.js"
+  import { writeLegacyStatus, wsStatus } from "$lib/wsStatus.js"
 
   let nameKana = $state("")
   let phoneLast4 = $state("")
@@ -45,14 +45,14 @@
     feed = connectQueueFeed({
       onProjection: () => undefined,
       onState: (next) => {
-        wsStatus.set(next)
+        writeLegacyStatus(next)
       },
     })
   })
 
   onDestroy(() => {
     feed?.close()
-    wsStatus.set("none")
+    writeLegacyStatus("none")
   })
 
   // ひらがな入力を即座にカタカナへ昇格 (UX 配慮)。

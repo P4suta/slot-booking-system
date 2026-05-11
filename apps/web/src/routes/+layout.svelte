@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation"
   import { onMount } from "svelte"
   import { m } from "$lib/messages.js"
+  import type { WsDisplayState } from "$lib/wsStatus.js"
   import { wsStatus } from "$lib/wsStatus.js"
   import {
     clearStaffSession,
@@ -19,9 +20,10 @@
   // alone fails a11y; the visible text tells screen readers and
   // colour-blind users the same thing.
   const wsDescriptor = (
-    state: string,
+    state: WsDisplayState,
   ): { readonly text: string; readonly tone: "ok" | "pending" | "error" } | null => {
-    switch (state) {
+    if (state === null) return null
+    switch (state.tag) {
       case "open":
         return { text: m.ws_status_open(), tone: "ok" }
       case "connecting":
@@ -30,8 +32,6 @@
         return { text: m.ws_status_reconnecting(), tone: "pending" }
       case "closed":
         return { text: m.ws_status_closed(), tone: "error" }
-      default:
-        return null
     }
   }
 

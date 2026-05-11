@@ -75,6 +75,12 @@ module.exports = {
           "|^apps/web/src/(app\\.d\\.ts|app\\.html|app\\.css|hooks\\.server\\.ts)$" +
           // Imported by .svelte files which dep-cruiser does not parse.
           "|^apps/web/src/lib/(graphql/endpoint|graphql/client|graphql/queries|i18n|kana|qr|ticketCache|staffSession|wsStatus)\\.ts$" +
+          // S19 vocabulary modules — consumed by the Kanban /
+          // Modal Svelte components in the same commit. The
+          // .svelte importers do not flow through dep-cruiser's
+          // parser, so flag them as exempt rather than the
+          // misleading "orphan".
+          "|^apps/web/src/lib/components/(kanban/descriptors|modal/states)\\.ts$" +
           "|^apps/web/src/lib/components/.*\\.svelte$)",
       },
       to: {},
