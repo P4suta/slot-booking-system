@@ -419,7 +419,10 @@
                   onclick={() => toggleExpanded(t.id)}
                 >
                   <div class="ticket-head">
-                    <span class="numeral">{t.displaySeq}</span>
+                    <div class="numeral-block">
+                      <span class="block-caption">整理券番号</span>
+                      <span class="numeral">{t.displaySeq}</span>
+                    </div>
                     {#if t.appointmentAt !== null}
                       <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                         {t.appointmentAt.slice(11, 16)}
@@ -427,8 +430,10 @@
                     {/if}
                   </div>
                   <div class="ticket-body">
-                    <span class="kana">{t.nameKana ?? ""}</span>
-                    <span class="last4">{t.phoneLast4 ?? ""}</span>
+                    <div class="kana-block">
+                      <span class="block-caption">お名前</span>
+                      <span class="kana">{t.nameKana ?? ""}</span>
+                    </div>
                   </div>
                 </button>
                 <button
@@ -443,12 +448,6 @@
                 {#if expanded.has(t.id)}
                   <div id={`ticket-detail-${t.id}`} class="ticket-detail">
                     <dl>
-                      <dt>状態</dt>
-                      <dd>{stateLabelJa(t.state)}</dd>
-                      <dt>受付番号</dt>
-                      <dd>{t.displaySeq}</dd>
-                      <dt>お名前</dt>
-                      <dd>{t.nameKana ?? ""}</dd>
                       <dt>電話末尾</dt>
                       <dd>{t.phoneLast4 ?? ""}</dd>
                       {#if t.freeText !== null && t.freeText !== undefined}
@@ -485,7 +484,10 @@
             <Card>
               <div class="ticket" role="group" aria-label="呼び出し中の整理券" data-ticket-id={t.id}>
                 <div class="ticket-head">
-                  <span class="numeral">{t.displaySeq}</span>
+                  <div class="numeral-block">
+                    <span class="block-caption">整理券番号</span>
+                    <span class="numeral">{t.displaySeq}</span>
+                  </div>
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
@@ -493,8 +495,10 @@
                   {/if}
                 </div>
                 <div class="ticket-body">
-                  <span class="kana">{t.nameKana ?? ""}</span>
-                  <span class="last4">{t.phoneLast4 ?? ""}</span>
+                  <div class="kana-block">
+                    <span class="block-caption">お名前</span>
+                    <span class="kana">{t.nameKana ?? ""}</span>
+                  </div>
                 </div>
                 <div class="row">
                   <Button variant="primary" size="md" onclick={() => onStartServing(t.id)} disabled={busy}>対応開始</Button>
@@ -518,7 +522,10 @@
             <Card>
               <div class="ticket" role="group" aria-label="対応中の整理券" data-ticket-id={t.id}>
                 <div class="ticket-head">
-                  <span class="numeral">{t.displaySeq}</span>
+                  <div class="numeral-block">
+                    <span class="block-caption">整理券番号</span>
+                    <span class="numeral">{t.displaySeq}</span>
+                  </div>
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
@@ -526,8 +533,10 @@
                   {/if}
                 </div>
                 <div class="ticket-body">
-                  <span class="kana">{t.nameKana ?? ""}</span>
-                  <span class="last4">{t.phoneLast4 ?? ""}</span>
+                  <div class="kana-block">
+                    <span class="block-caption">お名前</span>
+                    <span class="kana">{t.nameKana ?? ""}</span>
+                  </div>
                 </div>
                 <div class="row">
                   <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
@@ -559,20 +568,22 @@
                   onclick={() => toggleExpanded(t.id)}
                 >
                   <div class="ticket-head">
-                    <span class="numeral">{t.displaySeq}</span>
+                    <div class="numeral-block">
+                      <span class="block-caption">整理券番号</span>
+                      <span class="numeral">{t.displaySeq}</span>
+                    </div>
                     <span class="state-badge" data-state={t.state}>{stateLabelJa(t.state)}</span>
                   </div>
                   <div class="ticket-body">
-                    <span class="kana">{t.nameKana ?? ""}</span>
-                    <span class="last4">{t.phoneLast4 ?? ""}</span>
+                    <div class="kana-block">
+                      <span class="block-caption">お名前</span>
+                      <span class="kana">{t.nameKana ?? ""}</span>
+                    </div>
                   </div>
                 </button>
                 {#if expanded.has(t.id)}
                   <div id={`history-detail-${t.id}`} class="ticket-detail">
                     <dl>
-                      <dt>状態</dt><dd>{stateLabelJa(t.state)}</dd>
-                      <dt>受付番号</dt><dd>{t.displaySeq}</dd>
-                      <dt>お名前</dt><dd>{t.nameKana ?? ""}</dd>
                       <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>
                       {#if t.freeText !== null && t.freeText !== undefined}
                         <dt>ご相談内容</dt>
@@ -1053,13 +1064,30 @@
   }
   .ticket-body {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-start;
     font: var(--text-body-sm);
     color: var(--color-fg-secondary);
   }
-  .last4 {
-    font: var(--text-mono-sm);
+  /* Each labelled block on a card body: a small muted caption
+     above the value. Used for 整理券番号 and お名前. */
+  .numeral-block,
+  .kana-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-width: 0;
+  }
+  .block-caption {
+    font: var(--text-label-sm);
     color: var(--color-fg-muted);
+    letter-spacing: 0.05em;
+  }
+  .kana-block .kana {
+    font: var(--text-body-md);
+    color: var(--color-fg-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .row {
     display: flex;

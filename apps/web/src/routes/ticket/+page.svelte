@@ -284,6 +284,52 @@
     flipFocused = false
   }
 
+  // Same flip mechanism for the QR card: 表 = QR + URL コピー、
+  // 裏 = 通知許可 (only while the customer hasn't decided yet).
+  // When the customer has already granted / denied, the QR stays
+  // static — no point cycling to a button they don't need.
+  let qrFlipped = $state(false)
+  let qrFlipFocused = $state(false)
+  const qrFlipShowable = $derived(
+    qrDataUrl !== null &&
+      ticket !== null &&
+      ticket.state === "Waiting" &&
+      notificationState === "default",
+  )
+  let qrFlipTimer: ReturnType<typeof setInterval> | undefined
+  const startQrFlipTimer = (): void => {
+    if (qrFlipTimer !== undefined) clearInterval(qrFlipTimer)
+    qrFlipTimer = setInterval(() => {
+      qrFlipped = !qrFlipped
+    }, 7000)
+  }
+  const stopQrFlipTimer = (): void => {
+    if (qrFlipTimer !== undefined) {
+      clearInterval(qrFlipTimer)
+      qrFlipTimer = undefined
+    }
+  }
+  $effect(() => {
+    if (!qrFlipShowable || qrFlipFocused) {
+      stopQrFlipTimer()
+      qrFlipped = false
+      return
+    }
+    startQrFlipTimer()
+    return stopQrFlipTimer
+  })
+  const onQrFlipClick = (): void => {
+    if (!qrFlipShowable) return
+    qrFlipped = !qrFlipped
+    if (!qrFlipFocused) startQrFlipTimer()
+  }
+  const onQrFlipPointerEnter = (): void => {
+    qrFlipFocused = true
+  }
+  const onQrFlipPointerLeave = (): void => {
+    qrFlipFocused = false
+  }
+
   const stateLabel = $derived.by(() => {
     if (ticket === null) return ""
     switch (ticket.state) {
@@ -557,35 +603,64 @@
       </Card>
     {/if}
 
-    {#if ticket.state === "Waiting" && notificationState === "default"}
-      <Card class="notify-card">
-        <div class="notif-opt-in">
-          <p class="notif-msg">
-            {m.notify_permission_question()}
-            <Help text={helpText("notifyPermission")} label="通知の説明を表示" />
-          </p>
-          <p class="notif-help">{m.notify_permission_help()}</p>
-          <Button variant="secondary" size="md" onclick={onRequestNotification}>
-            通知を許可する
-          </Button>
-        </div>
-      </Card>
-    {/if}
-
     {#if feedState === "reconnecting"}
       <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
     {/if}
 
     {#if qrDataUrl !== null}
-      <Card class="qr-card">
-        <div class="qr">
-          <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" />
-          <div class="qr-help">
-            <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
-            <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
+      <div class="qr-card-wrap" data-flipped={qrFlipped ? "true" : undefined}>
+        {#if qrFlipShowable}
+          <button
+            type="button"
+            class="qr-flip"
+            onclick={onQrFlipClick}
+            onmouseenter={onQrFlipPointerEnter}
+            onmouseleave={onQrFlipPointerLeave}
+            onfocus={onQrFlipPointerEnter}
+            onblur={onQrFlipPointerLeave}
+            onpointerdown={onQrFlipPointerEnter}
+            onpointerup={onQrFlipPointerLeave}
+            onpointercancel={onQrFlipPointerLeave}
+            aria-label={qrFlipped ? "QR を表示" : "通知許可の操作を表示"}
+          >
+            <div class="qr-face qr-face-front">
+              <div class="qr">
+                <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" />
+                <div class="qr-help">
+                  <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
+                </div>
+              </div>
+            </div>
+            <div class="qr-face qr-face-back">
+              <div class="notif-opt-in">
+                <p class="notif-msg">{m.notify_permission_question()}</p>
+                <p class="notif-help">{m.notify_permission_help()}</p>
+              </div>
+            </div>
+          </button>
+          <div class="qr-flip-actions">
+            {#if qrFlipped}
+              <Button variant="secondary" size="md" onclick={onRequestNotification}>
+                通知を許可する
+              </Button>
+            {:else}
+              <Button variant="secondary" size="md" onclick={onCopyUrl}>
+                URL をコピー
+              </Button>
+            {/if}
           </div>
-        </div>
-      </Card>
+        {:else}
+          <div class="qr-face qr-face-static">
+            <div class="qr">
+              <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" />
+              <div class="qr-help">
+                <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
+                <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
+              </div>
+            </div>
+          </div>
+        {/if}
+      </div>
     {/if}
 
     {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Serving"}
@@ -670,18 +745,35 @@
     flex-direction: column;
     gap: var(--space-6);
   }
-  /* Desktop tweaks the max-width and the numeral height but keeps
-     the single-column stack from mobile. Previously the page used
-     a 2-column grid (numeral + QR side-by-side) which produced
-     three or four small "islands" floating in a wide viewport;
-     after the numeral became a flip card carrying its own
-     position info, the supporting cards thinned out and the grid
-     read as scattered. A centered narrow column with the flip
-     card as the dominant visual anchor scans better. */
+  /* Mobile: single column stack (numeral → appointment → QR-flip
+     → actions). Desktop ≥ 48rem: 2-column grid so the two big
+     interactive cards (numeral flip + QR flip) sit side-by-side,
+     and the supporting cards span the full width below. With the
+     QR card now flipping to expose the notification opt-in, the
+     two columns balance out — neither side is a thin island. */
   @media (min-width: 48rem) {
     .ticket-page {
-      max-width: 36rem;
+      max-width: 56rem;
       padding: 0 var(--space-6);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      column-gap: var(--space-6);
+      row-gap: var(--space-6);
+      align-items: start;
+    }
+    .ticket-page > .numeral-hero-wrap {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .ticket-page > .qr-card-wrap {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .ticket-page > .appointment-card,
+    .ticket-page > .actions,
+    .ticket-page > .banner,
+    .ticket-page > .loading {
+      grid-column: 1 / -1;
     }
   }
   /* Flip-card structure. The wrap is the grid item; the flip is a
@@ -803,19 +895,73 @@
     color: var(--color-fg-muted);
     margin: 0 0 var(--space-2);
   }
-  .qr {
+  /* QR flip card mirrors the numeral flip: front = QR + 説明、 裏 =
+     通知許可 prompt。 The button only flips while there is no
+     decision yet (`qrFlipShowable`); otherwise the QR renders
+     static via `qr-face-static`. The action button (URL をコピー /
+     通知を許可する) lives outside the flip surface so the click
+     target is unambiguous — tapping the body flips, tapping the
+     dedicated button performs the appropriate action for the
+     currently-visible face. */
+  .qr-card-wrap {
+    perspective: 1200px;
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+  }
+  .qr-flip {
+    position: relative;
+    width: 100%;
+    min-height: 18rem;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    transform-style: preserve-3d;
+    transition: transform 600ms cubic-bezier(0.4, 0, 0.2, 1);
+    display: block;
+  }
+  .qr-card-wrap[data-flipped="true"] .qr-flip {
+    transform: rotateY(180deg);
+  }
+  .qr-flip:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 4px;
+    border-radius: var(--radius-md);
+  }
+  .qr-face {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    justify-content: center;
     align-items: center;
-    height: 100%;
+  }
+  .qr-flip .qr-face {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .qr-face-back {
+    transform: rotateY(180deg);
+  }
+  .qr {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    align-items: center;
     justify-content: center;
   }
   .qr img {
     border-radius: var(--radius-md);
     background: white;
     padding: var(--space-2);
-    width: clamp(12rem, 60%, 18rem);
+    width: clamp(10rem, 55%, 16rem);
     height: auto;
     aspect-ratio: 1 / 1;
   }
@@ -830,6 +976,15 @@
     color: var(--color-fg-secondary);
     font: var(--text-body-sm);
     text-align: center;
+  }
+  .qr-flip-actions {
+    display: flex;
+    justify-content: center;
+  }
+  @media (min-width: 48rem) {
+    .qr-flip {
+      min-height: 22rem;
+    }
   }
   .actions {
     display: flex;
