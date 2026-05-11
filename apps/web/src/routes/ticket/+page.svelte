@@ -236,10 +236,12 @@
   // Flip-card behaviour for the numeral hero. While the ticket is
   // Waiting and we know the position, the hero card has two faces:
   // 表 = 整理券番号、 裏 = 「あなたの前に N 人」。 The card flips
-  // every 5s automatically, and a tap toggles it manually (which
-  // also restarts the auto cycle so the user's intent stays
-  // visible for at least one full interval).
+  // every 5s automatically, a tap toggles it manually (resetting
+  // the timer), and hover / focus / pointerdown forces the front
+  // back into view — the customer staring at the card is almost
+  // always asking "what's my number" so we bias toward showing it.
   let flipped = $state(false)
+  let flipFocused = $state(false)
   const flipShowable = $derived(
     ticket !== null && ticket.state === "Waiting" && positionInfo !== null,
   )
@@ -257,18 +259,29 @@
     }
   }
   $effect(() => {
-    if (flipShowable) {
-      startFlipTimer()
-    } else {
+    if (!flipShowable) {
       stopFlipTimer()
       flipped = false
+      return
     }
+    if (flipFocused) {
+      stopFlipTimer()
+      flipped = false
+      return
+    }
+    startFlipTimer()
     return stopFlipTimer
   })
   const onFlipClick = (): void => {
     if (!flipShowable) return
     flipped = !flipped
-    startFlipTimer()
+    if (!flipFocused) startFlipTimer()
+  }
+  const onFlipPointerEnter = (): void => {
+    flipFocused = true
+  }
+  const onFlipPointerLeave = (): void => {
+    flipFocused = false
   }
 
   const stateLabel = $derived.by(() => {
@@ -470,6 +483,13 @@
           type="button"
           class="numeral-flip"
           onclick={onFlipClick}
+          onmouseenter={onFlipPointerEnter}
+          onmouseleave={onFlipPointerLeave}
+          onfocus={onFlipPointerEnter}
+          onblur={onFlipPointerLeave}
+          onpointerdown={onFlipPointerEnter}
+          onpointerup={onFlipPointerLeave}
+          onpointercancel={onFlipPointerLeave}
           aria-label={flipped ? "整理券番号を表示" : "前の人数を表示"}
         >
           <div class="numeral-face numeral-face-front" data-state={ticket.state}>
@@ -650,39 +670,18 @@
     flex-direction: column;
     gap: var(--space-6);
   }
-  /* Desktop only: pivot the page into a 2-column grid so the
-     numeral and the QR share row 1 (huge number + scannable code
-     side-by-side, as per user request). Every other card spans the
-     full width below. On mobile the page stays a flex column
-     (declared above) — see ticket-page's natural ordering for the
-     mobile read order: numeral → appointment / position →
-     reconnect banner → QR → cancel actions. The QR is intentionally
-     after the position card so a customer scrolling on a phone
-     sees「あなたの前に N 人」 before reaching the share-only QR. */
+  /* Desktop tweaks the max-width and the numeral height but keeps
+     the single-column stack from mobile. Previously the page used
+     a 2-column grid (numeral + QR side-by-side) which produced
+     three or four small "islands" floating in a wide viewport;
+     after the numeral became a flip card carrying its own
+     position info, the supporting cards thinned out and the grid
+     read as scattered. A centered narrow column with the flip
+     card as the dominant visual anchor scans better. */
   @media (min-width: 48rem) {
     .ticket-page {
-      max-width: 56rem;
+      max-width: 36rem;
       padding: 0 var(--space-6);
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      column-gap: var(--space-6);
-      row-gap: var(--space-6);
-      align-items: start;
-    }
-    .ticket-page > .numeral-hero-wrap {
-      grid-column: 1;
-      grid-row: 1;
-    }
-    .ticket-page > .qr-card {
-      grid-column: 2;
-      grid-row: 1;
-    }
-    .ticket-page > .appointment-card,
-    .ticket-page > .notify-card,
-    .ticket-page > .actions,
-    .ticket-page > .banner,
-    .ticket-page > .loading {
-      grid-column: 1 / -1;
     }
   }
   /* Flip-card structure. The wrap is the grid item; the flip is a
@@ -737,13 +736,13 @@
   }
   @media (min-width: 48rem) {
     .numeral-flip {
-      min-height: 20rem;
+      min-height: 22rem;
     }
     .numeral-face {
-      padding: var(--space-10) var(--space-6);
+      padding: var(--space-12) var(--space-6);
     }
     .numeral-face .numeral {
-      font-size: 8rem;
+      font-size: 9rem;
       line-height: 1;
     }
   }

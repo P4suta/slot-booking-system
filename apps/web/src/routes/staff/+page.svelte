@@ -44,6 +44,12 @@
   let prevWaitingCount: number | null = null
   let selected: Set<string> = $state(new Set())
   let expanded: Set<string> = $state(new Set())
+  // Cross-column search. Surfaces only as a small magnifier button
+  // in the staff page corner; opens a Dialog that hits every column
+  // (waiting / calling / serving / done) by name / last-4 /
+  // displaySeq and lets the operator jump to the matching card.
+  let searchDialogOpen = $state(false)
+  let searchQuery = $state("")
   let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
   let now = $state(Date.now())
   let slotChipTick: ReturnType<typeof setInterval> | undefined
@@ -85,6 +91,39 @@
 
   /* ---------- derived ---------- */
   const selectionCount = $derived(selected.size)
+
+  const searchHits: Ticket[] = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (q.length === 0) return []
+    const pool: ReadonlyArray<Ticket> = [...waiting, ...calling, ...servingList, ...done]
+    return pool.filter((t) => {
+      if (String(t.displaySeq) === q) return true
+      if ((t.phoneLast4 ?? "") === q) return true
+      const kana = (t.nameKana ?? "").toLowerCase()
+      return kana.length > 0 && kana.includes(q)
+    })
+  })
+
+  /**
+   * Drop the focused ticket id into the expansion set so the card
+   * opens in place, close the search dialog, and scroll the card
+   * into view in the next frame (after Dialog's modal animation
+   * yields the layout).
+   */
+  const focusOnTicket = (id: string): void => {
+    const next = new Set(expanded)
+    next.add(id)
+    expanded = next
+    searchDialogOpen = false
+    searchQuery = ""
+    if (typeof window === "undefined") return
+    setTimeout(() => {
+      const el = document.querySelector(`[data-ticket-id="${id}"]`)
+      if (el instanceof HTMLElement) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" })
+      }
+    }, 80)
+  }
 
   /* ---------- refresh ---------- */
   const refresh = async (): Promise<void> => {
@@ -241,12 +280,7 @@
     )
   }
 
-  /**
-   * Primary single-customer call surfaced on the column header.
-   * For multi-customer calls, staff tick the per-card checkboxes
-   * and use the bottom action bar (`onCallBatch`).
-   */
-  const onCallNextOne = (): Promise<void> => onCallNext()
+
 
   const onStartServing = (ticketId: string) =>
     runAction("start-serving", () => startServing(token, ticketId), () => showToast("対応中に切り替えました", "success"))
@@ -342,6 +376,16 @@
   </section>
 {:else}
   <div class="staff">
+    <button
+      type="button"
+      class="search-toggle"
+      onclick={() => (searchDialogOpen = true)}
+      aria-label="待機客を検索"
+      title="検索"
+    >
+      🔍
+    </button>
+
     {#if error !== null}
       <p class="error" role="alert">{error}</p>
     {/if}
@@ -350,18 +394,13 @@
     <div class="kanban">
       <section class="col">
         <header class="col-header">
-          <div class="col-title-row">
-            <h2>待機 ({waiting.length})</h2>
-            <Button variant="primary" size="md" onclick={onCallNextOne} disabled={busy}>
-              {m.call_next_one_button()}
-            </Button>
-          </div>
+          <h2>待機 ({waiting.length})</h2>
         </header>
         <div class="cards">
           {#each waiting as t (t.id)}
             <Card interactive>
               <div
-                class="ticket waiting-card"
+                class="ticket waiting-card" data-ticket-id={t.id}
                 data-selected={selected.has(t.id) ? "true" : undefined}
                 data-expanded={expanded.has(t.id) ? "true" : undefined}
               >
@@ -372,6 +411,16 @@
                     onchange={() => toggleSelect(t.id)}
                   />
                 </label>
+                <div class="quick-call">
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onclick={() => onCallSpecific(t.id)}
+                    disabled={busy}
+                  >
+                    この人を呼ぶ
+                  </Button>
+                </div>
                 <button
                   type="button"
                   class="ticket-body-button"
@@ -436,7 +485,7 @@
         <div class="cards">
           {#each calling as t (t.id)}
             <Card>
-              <div class="ticket" role="group" aria-label="呼び出し中の整理券">
+              <div class="ticket" role="group" aria-label="呼び出し中の整理券" data-ticket-id={t.id}>
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   {#if t.appointmentAt !== null}
@@ -469,7 +518,7 @@
         <div class="cards">
           {#each servingList as t (t.id)}
             <Card>
-              <div class="ticket" role="group" aria-label="対応中の整理券">
+              <div class="ticket" role="group" aria-label="対応中の整理券" data-ticket-id={t.id}>
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   {#if t.appointmentAt !== null}
@@ -501,7 +550,7 @@
           {#each done.slice(0, 12) as t (t.id)}
             <Card interactive>
               <div
-                class="ticket history-card"
+                class="ticket history-card" data-ticket-id={t.id}
                 data-expanded={expanded.has(t.id) ? "true" : undefined}
               >
                 <button
@@ -556,6 +605,50 @@
         <Button variant="ghost" onclick={() => (selected = new Set())}>選択解除</Button>
       </footer>
     {/if}
+
+    <!-- cross-column search dialog -->
+    <Dialog
+      bind:open={searchDialogOpen}
+      title="待機客を検索"
+      onClose={() => {
+        searchDialogOpen = false
+        searchQuery = ""
+      }}
+    >
+      <input
+        type="search"
+        bind:value={searchQuery}
+        placeholder="名前 (一部) / 末尾4桁 / 受付番号"
+        aria-label="検索キーワード"
+        class="search-input"
+      />
+      {#if searchQuery.trim().length > 0}
+        {#if searchHits.length === 0}
+          <p class="search-empty">該当する整理券は見つかりませんでした。</p>
+        {:else}
+          <ul class="search-hits" role="list">
+            {#each searchHits as t (t.id)}
+              <li>
+                <button
+                  type="button"
+                  class="search-hit"
+                  onclick={() => focusOnTicket(t.id)}
+                >
+                  <span class="hit-displayseq">{t.displaySeq}</span>
+                  <span class="hit-meta">
+                    <span class="hit-kana">{t.nameKana ?? ""}</span>
+                    <span class="hit-last4">{t.phoneLast4 ?? ""}</span>
+                  </span>
+                  <span class="state-badge" data-state={t.state}>{stateLabelJa(t.state)}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {:else}
+        <p class="search-empty">名前・電話末尾 4 桁・受付番号 のいずれかを入力してください。</p>
+      {/if}
+    </Dialog>
 
     <!-- toast -->
     {#if toast !== null}
@@ -614,6 +707,113 @@
     flex-direction: column;
     overflow: hidden;
     box-sizing: border-box;
+  }
+  .search-toggle {
+    position: absolute;
+    top: var(--space-3);
+    right: var(--space-3);
+    z-index: 5;
+    width: 2.5rem;
+    height: 2.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    font-size: 1.1rem;
+  }
+  .search-toggle:hover,
+  .search-toggle:focus-visible {
+    background: var(--color-bg-subtle);
+    border-color: var(--color-fg-secondary);
+  }
+  .search-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-bg-subtle);
+    color: var(--color-fg-primary);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-3);
+  }
+  .search-empty {
+    color: var(--color-fg-muted);
+    font: var(--text-body-sm);
+    margin: 0;
+  }
+  .search-hits {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    max-height: 24rem;
+    overflow-y: auto;
+  }
+  .search-hit {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+  }
+  .search-hit:hover,
+  .search-hit:focus-visible {
+    background: var(--color-bg-raised);
+    border-color: var(--color-fg-secondary);
+  }
+  .hit-displayseq {
+    font: var(--text-numeral-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-fg-primary);
+  }
+  .hit-meta {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    flex: 1;
+    min-width: 0;
+    font: var(--text-body-sm);
+    color: var(--color-fg-secondary);
+  }
+  .hit-last4 {
+    font: var(--text-mono-sm);
+    color: var(--color-fg-muted);
+  }
+  .quick-call {
+    position: absolute;
+    bottom: var(--space-2);
+    right: var(--space-2);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+    z-index: 2;
+  }
+  .waiting-card:hover .quick-call,
+  .waiting-card:focus-within .quick-call,
+  .waiting-card[data-expanded="true"] .quick-call {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  @media (hover: none) {
+    /* On touch devices the hover trick doesn't work; always show. */
+    .quick-call {
+      opacity: 1;
+      pointer-events: auto;
+      position: static;
+      align-self: stretch;
+      margin-top: var(--space-2);
+    }
   }
   .col-title-row {
     display: flex;
