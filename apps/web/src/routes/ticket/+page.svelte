@@ -309,10 +309,21 @@
       qrFlipTimer = undefined
     }
   }
+  // QR flip diverges from numeral flip on the hover behaviour.
+  // Numeral biases toward 整理券番号 (= the customer asking "what's
+  // my number"). QR biases the other way: when the customer hovers
+  // / focuses / touches the QR card, what they almost always want
+  // is the「通知を許可する」 prompt — the QR itself is for someone
+  // else to scan. So focus pins the back face here, not the front.
   $effect(() => {
-    if (!qrFlipShowable || qrFlipFocused) {
+    if (!qrFlipShowable) {
       stopQrFlipTimer()
       qrFlipped = false
+      return
+    }
+    if (qrFlipFocused) {
+      stopQrFlipTimer()
+      qrFlipped = true
       return
     }
     startQrFlipTimer()

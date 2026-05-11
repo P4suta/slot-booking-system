@@ -274,6 +274,24 @@ dev-web:
 migrate-local:
     {{DEV}} {{PNPM}} -F default exec wrangler d1 migrations apply DB --local
 
+# Populate a freshly-restarted `wrangler dev` with a realistic mix of
+# tickets across every staff-dashboard column (待機 / 呼び出し中 /
+# 対応中 / 履歴). The script waits for the server to be ready then
+# POSTs ~12 tickets through the queue lifecycle. Use after
+# `just dev-reset` (or against a running `just dev-default`).
+dev-seed:
+    bash apps/default/scripts/seed-dev.sh
+
+# Full local reset: stop any running wrangler dev / dev containers,
+# wipe the Durable Object SQLite state under `.wrangler/state`,
+# bring the dev shell back up, and re-launch `wrangler dev` in the
+# background. Follow with `just dev-seed` to repopulate the queue.
+dev-reset:
+    -docker compose stop dev dev-web
+    -docker compose rm -f dev dev-web
+    rm -rf apps/default/.wrangler/state apps/default/.wrangler/tmp
+    scripts/dev-exec.ts true
+
 # ---------------------------------------------------------------------------
 # Observability stack
 # ---------------------------------------------------------------------------
