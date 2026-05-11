@@ -1,10 +1,8 @@
 <script lang="ts">
   import { goto } from "$app/navigation"
   import { onDestroy, onMount } from "svelte"
-  import Card from "$lib/components/Card.svelte"
   import {
     connectQueueFeed,
-    type LaneCounts,
     type QueueFeedHandle,
     type QueueFeedState,
     type ShopState,
@@ -15,8 +13,7 @@
   import { wsStatus } from "$lib/wsStatus.js"
 
   let waitingCount = $state(0)
-  let laneCounts: LaneCounts = $state({ walkIn: 0, priority: 0, reservation: 0 })
-  let calling = $state(0)
+  let activeCount = $state(0)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
   // ADR-0069 §Stage 8 — if the customer already has an active ticket
@@ -26,10 +23,48 @@
   // frame so the customer does not see the landing flash.
   let booting = $state(true)
 
-  const refresh = (data: ShopState) => {
+  // Flip-card cycle for the two-figure summary. We show 待ち人数 and
+  // 対応窓口 (= called + serving = staff currently engaged with a
+  // customer) on alternating sides of a single card; flips every
+  // 5s and pauses while the customer is engaging with the card.
+  let summaryFlipped = $state(false)
+  let summaryFocused = $state(false)
+  let summaryTimer: ReturnType<typeof setInterval> | undefined
+  const startSummaryTimer = (): void => {
+    if (summaryTimer !== undefined) clearInterval(summaryTimer)
+    summaryTimer = setInterval(() => {
+      summaryFlipped = !summaryFlipped
+    }, 5000)
+  }
+  const stopSummaryTimer = (): void => {
+    if (summaryTimer !== undefined) {
+      clearInterval(summaryTimer)
+      summaryTimer = undefined
+    }
+  }
+  $effect(() => {
+    if (summaryFocused) {
+      stopSummaryTimer()
+      summaryFlipped = false
+      return
+    }
+    startSummaryTimer()
+    return stopSummaryTimer
+  })
+  const onSummaryClick = (): void => {
+    summaryFlipped = !summaryFlipped
+    if (!summaryFocused) startSummaryTimer()
+  }
+  const onSummaryPointerEnter = (): void => {
+    summaryFocused = true
+  }
+  const onSummaryPointerLeave = (): void => {
+    summaryFocused = false
+  }
+
+  const refresh = (data: ShopState): void => {
     waitingCount = data.waitingCount
-    laneCounts = data.laneCounts
-    calling = data.calling.length + data.serving.length
+    activeCount = data.calling.length + data.serving.length
   }
 
   onMount(async () => {
@@ -77,30 +112,31 @@
       <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
     {/if}
 
-    <div class="status">
-      <Card>
-        <div class="status-grid">
-          <div class="metric">
-            <span class="metric-label">待ち人数</span>
-            <span class="metric-value">{waitingCount}</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">対応中</span>
-            <span class="metric-value">{calling}</span>
-          </div>
+    <div class="summary-wrap" data-flipped={summaryFlipped ? "true" : undefined}>
+      <button
+        type="button"
+        class="summary-flip"
+        onclick={onSummaryClick}
+        onmouseenter={onSummaryPointerEnter}
+        onmouseleave={onSummaryPointerLeave}
+        onfocus={onSummaryPointerEnter}
+        onblur={onSummaryPointerLeave}
+        onpointerdown={onSummaryPointerEnter}
+        onpointerup={onSummaryPointerLeave}
+        onpointercancel={onSummaryPointerLeave}
+        aria-label={summaryFlipped ? "待ち人数を表示" : "対応窓口の数を表示"}
+      >
+        <div class="summary-face summary-face-front">
+          <span class="summary-caption">待ち人数</span>
+          <span class="summary-value">{waitingCount}</span>
+          <span class="summary-unit">人</span>
         </div>
-        {#if waitingCount > 0}
-          <div class="lanes">
-            {#if laneCounts.priority > 0}
-              <span class="lane-chip priority">優先 {laneCounts.priority}</span>
-            {/if}
-            <span class="lane-chip">通常 {laneCounts.walkIn}</span>
-            {#if laneCounts.reservation > 0}
-              <span class="lane-chip">予約 {laneCounts.reservation}</span>
-            {/if}
-          </div>
-        {/if}
-      </Card>
+        <div class="summary-face summary-face-back">
+          <span class="summary-caption">対応窓口</span>
+          <span class="summary-value">{activeCount}</span>
+          <span class="summary-unit">件</span>
+        </div>
+      </button>
     </div>
 
     <div class="actions">
@@ -133,45 +169,70 @@
     font: var(--text-body-lg);
     margin: 0 0 var(--space-8);
   }
-  .status {
+  .summary-wrap {
+    perspective: 1200px;
     margin: 0 0 var(--space-8);
   }
-  .status-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-6);
+  .summary-flip {
+    position: relative;
+    width: 100%;
+    min-height: 12rem;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    transform-style: preserve-3d;
+    transition: transform 600ms cubic-bezier(0.4, 0, 0.2, 1);
+    display: block;
   }
-  .metric {
+  .summary-wrap[data-flipped="true"] .summary-flip {
+    transform: rotateY(180deg);
+  }
+  .summary-flip:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 4px;
+    border-radius: var(--radius-lg);
+  }
+  .summary-face {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6) var(--space-4);
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
-  }
-  .metric-label {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-  }
-  .metric-value {
-    font: var(--text-numeral-md);
-    color: var(--color-fg-primary);
-    font-variant-numeric: tabular-nums;
-  }
-  .lanes {
-    display: flex;
     gap: var(--space-2);
     justify-content: center;
-    margin-top: var(--space-4);
-    flex-wrap: wrap;
+    align-items: center;
   }
-  .lane-chip {
-    font: var(--text-label-sm);
+  .summary-face-back {
+    transform: rotateY(180deg);
+  }
+  .summary-caption {
+    font: var(--text-label-md);
+    color: var(--color-fg-muted);
+    letter-spacing: 0.05em;
+  }
+  .summary-value {
+    font: var(--text-numeral-xl);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-fg-primary);
+    line-height: 1;
+  }
+  .summary-unit {
+    font: var(--text-body-md);
     color: var(--color-fg-secondary);
-    background: var(--color-bg-subtle);
-    border-radius: var(--radius-pill);
-    padding: var(--space-1) var(--space-3);
   }
-  .lane-chip.priority {
-    color: var(--color-state-called);
-    background: oklch(95% 0.05 65 / 30%);
+  @media (min-width: 48rem) {
+    .summary-flip {
+      min-height: 16rem;
+    }
+    .summary-value {
+      font-size: 8rem;
+    }
   }
   .actions {
     display: flex;

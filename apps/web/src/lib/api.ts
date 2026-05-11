@@ -47,7 +47,7 @@ export type ProjectionEntry = {
   readonly state: "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
 }
 
-export type LaneCounts = {
+type LaneCounts = {
   readonly walkIn: number
   readonly priority: number
   readonly reservation: number
@@ -292,14 +292,31 @@ export type QueueFeedCallbacks = {
   readonly onError?: (kind: "ParseError" | "NetworkError", err?: unknown) => void
 }
 
-const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 4000, 4000, 4000, 4000, 4000, 4000] as const
+/**
+ * Exponential-backoff schedule for WebSocket reconnects. Capped at
+ * 30s after a few quick attempts so a long network outage does not
+ * spam the server, but **never gives up** — the customer who left
+ * /ticket open on their phone overnight will still be connected
+ * when staff calls them in the morning. The previous "give up after
+ * 10 attempts" behaviour stranded idle tabs after ~36s of
+ * connectivity trouble (or after a Cloudflare DO hibernation cycle
+ * during a quiet shop hour); both are routine, not terminal.
+ */
+const reconnectDelayMs = (attempt: number): number => {
+  if (attempt === 0) return 500
+  if (attempt === 1) return 1000
+  if (attempt === 2) return 2000
+  if (attempt < 8) return 4000
+  if (attempt < 16) return 10_000
+  return 30_000
+}
 
 /**
  * Reconnecting WebSocket projection feed (C12). The handler owns:
  *
- *   - exponential-backoff reconnect (0.5 / 1 / 2 / 4 s, capped at
- *     4 s for attempts past the fourth, max 10 attempts) so a
- *     transient outage doesn't strand the customer landing.
+ *   - infinite exponential-backoff reconnect (0.5 / 1 / 2 / 4×5 /
+ *     10×8 / 30 s) so a transient outage or a DO hibernation cycle
+ *     never strands an idle tab.
  *   - JSON-parse failure isolation: a malformed message surfaces
  *     through `onError("ParseError", err)` rather than tripping
  *     the message handler's own try/catch silently.
@@ -314,10 +331,21 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
   let manualClose = false
   let socket: WebSocket | null = null
   let currentState: QueueFeedState = "connecting"
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 
   const setState = (next: QueueFeedState): void => {
     currentState = next
     callbacks.onState?.(next)
+  }
+
+  let keepaliveTimer: ReturnType<typeof setInterval> | undefined
+  const KEEPALIVE_INTERVAL_MS = 30_000
+
+  const stopKeepalive = (): void => {
+    if (keepaliveTimer !== undefined) {
+      clearInterval(keepaliveTimer)
+      keepaliveTimer = undefined
+    }
   }
 
   const connect = (): void => {
@@ -325,8 +353,24 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
     socket.onopen = () => {
       attempt = 0
       setState("open")
+      // Client-side keepalive: send an empty text frame every 30s.
+      // The runtime's Hibernating WebSocket can otherwise idle-close
+      // a quiet broadcast feed (no mutations during a slow hour);
+      // the DO's `webSocketMessage` handler is a no-op so this is
+      // safe traffic. The matching server-side `setWebSocketAuto
+      // Response("ping" → "pong")` keeps the DO hibernated for these
+      // frames so the ping doesn't cost an actor wake.
+      stopKeepalive()
+      keepaliveTimer = setInterval(() => {
+        if (socket?.readyState === WebSocket.OPEN) {
+          socket.send("ping")
+        }
+      }, KEEPALIVE_INTERVAL_MS)
     }
     socket.onmessage = (event: MessageEvent<string>) => {
+      // The keepalive auto-response echoes "pong"; ignore those so
+      // the projection handler only sees genuine state payloads.
+      if (event.data === "pong") return
       try {
         const parsed: unknown = JSON.parse(event.data)
         callbacks.onProjection(parsed)
@@ -338,14 +382,15 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
       callbacks.onError?.("NetworkError", err)
     }
     socket.onclose = () => {
-      if (manualClose || attempt >= RECONNECT_DELAYS_MS.length) {
+      stopKeepalive()
+      if (manualClose) {
         setState("closed")
         return
       }
-      const delay = RECONNECT_DELAYS_MS[attempt]
+      const delay = reconnectDelayMs(attempt)
       attempt += 1
       setState("reconnecting")
-      setTimeout(connect, delay)
+      reconnectTimer = setTimeout(connect, delay)
     }
   }
 
@@ -354,6 +399,8 @@ export const connectQueueFeed = (callbacks: QueueFeedCallbacks): QueueFeedHandle
   return {
     close: (): void => {
       manualClose = true
+      if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
+      stopKeepalive()
       socket?.close(1000, "client-done")
     },
     state: (): QueueFeedState => currentState,

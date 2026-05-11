@@ -361,6 +361,12 @@ export class QueueShop extends DurableObject<Env> {
     const client = pair[0]
     const server = pair[1]
     this.ctx.acceptWebSocket(server)
+    // Auto-respond "pong" to client keepalive "ping" frames so the
+    // DO stays hibernated for the keepalive traffic. Without this,
+    // every 30s ping wakes the actor; with it, the runtime handles
+    // the exchange entirely. Idempotent — setting it on every
+    // accept just refreshes the same registration.
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"))
     logWsAccept()
     // Send the current projection on connect so the new client has
     // full state immediately rather than waiting for the next mutation.
