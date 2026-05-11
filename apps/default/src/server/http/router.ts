@@ -51,7 +51,6 @@ import type { Env } from "./types.js"
  *   POST  /tickets/:id/served            staff: mark served (Called | Serving)
  *   POST  /tickets/:id/no-show           staff: mark no-show (Called only)
  *   POST  /tickets/:id/recall            staff: recall (Called -> Waiting)
- *   POST  /tickets/:id/start-serving     staff: Called -> Serving (ADR-0063)
  *   GET   /queue                         shop state v2 (calling[]/serving[],
  *                                        PII for staff, anon otherwise)
  *   POST  /queue/call-next               staff: call next (body lane?)
@@ -381,7 +380,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       (t) =>
         t.lane === "reservation" &&
         t.appointmentAt !== null &&
-        (t.state === "Waiting" || t.state === "Called" || t.state === "Serving"),
+        (t.state === "Waiting" || t.state === "Called"),
     )
     const reservationStartMs = reservations.map((t) =>
       t.appointmentAt !== null ? Date.parse(t.appointmentAt) : Number.NaN,
@@ -497,17 +496,30 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const waiting = tickets
       .filter((t) => t.state === "Waiting")
       .sort((a, b) => a.displaySeq - b.displaySeq)
-    const calling = tickets
+    // ADR-0073 — Serving was withdrawn as a domain state. The
+    // "対応中" array is derived from Called: any Called ticket whose
+    // calledAt is older than SERVING_THRESHOLD_MS (default 30s) is
+    // assumed to be at the counter. The two arrays are mutually
+    // exclusive subsets of Called.
+    const nowMs = Date.now()
+    const SERVING_THRESHOLD_MS = Number(c.env.SERVING_THRESHOLD_MS) || 30_000
+    const calledAll = tickets
       .filter((t) => t.state === "Called")
       .sort((a, b) => a.displaySeq - b.displaySeq)
-    const serving = tickets
-      .filter((t) => t.state === "Serving")
-      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const calling = calledAll.filter((t) => {
+      const calledMs = Date.parse(t.calledAt)
+      if (Number.isNaN(calledMs)) return true
+      return calledMs + SERVING_THRESHOLD_MS > nowMs
+    })
+    const serving = calledAll.filter((t) => {
+      const calledMs = Date.parse(t.calledAt)
+      if (Number.isNaN(calledMs)) return false
+      return calledMs + SERVING_THRESHOLD_MS <= nowMs
+    })
     // "Callable now" partition: walk-in + priority always, reservation
     // only inside the 5-min grace before appointmentAt. Mirrors
     // QueueShop.shopState's `isCallableNow` so the landing headline
     // number matches the staff card's call-button enabled state.
-    const nowMs = Date.now()
     const RESERVATION_GRACE_MS = 5 * 60 * 1000
     const isCallableNow = (t: (typeof tickets)[number]): boolean => {
       if (t.lane !== "reservation") return true
@@ -667,21 +679,6 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       await stub(c.env).dispatch({
         type: "CallBatch",
         ticketIds: [head, ...ids.slice(1)] as const,
-        actor: "staff",
-      }),
-    )
-  })
-
-  // POST /api/v1/tickets/:id/start-serving — staff (ADR-0063).
-  app.post("/api/v1/tickets/:id/start-serving", rateLimitMiddleware("RL_OPERATE"), async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const idR = decodeTicketIdParam(c.req.param("id"))
-    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({
-        type: "StartServing",
-        ticketId: idR.success,
         actor: "staff",
       }),
     )

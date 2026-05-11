@@ -76,30 +76,11 @@ export const CalledSchema = Schema.Struct({
 })
 export type Called = Schema.Schema.Type<typeof CalledSchema>
 
-/**
- * `Serving` sits between `Called` and `Served` (ADR-0063). The
- * NoShow alarm sweeps `Called` only — once a ticket reaches
- * `Serving`, the customer is at the counter and the alarm no
- * longer applies. From the customer's perspective Serving is
- * indistinguishable from Called ("you have been called").
- */
-export const ServingSchema = Schema.Struct({
-  ...CommonFields,
-  state: Schema.Literal("Serving"),
-  calledAt: InstantSchema,
-  calledBy: ActorSchema,
-  servingStartedAt: InstantSchema,
-  servingStartedBy: ActorSchema,
-})
-export type Serving = Schema.Schema.Type<typeof ServingSchema>
-
 export const ServedSchema = Schema.Struct({
   ...CommonFields,
   state: Schema.Literal("Served"),
   calledAt: InstantSchema,
   calledBy: ActorSchema,
-  servingStartedAt: Schema.optional(InstantSchema),
-  servingStartedBy: Schema.optional(ActorSchema),
   servedAt: InstantSchema,
   servedBy: ActorSchema,
 })
@@ -131,7 +112,6 @@ export type Cancelled = Schema.Schema.Type<typeof CancelledSchema>
 export const TicketSchema = Schema.Union([
   WaitingSchema,
   CalledSchema,
-  ServingSchema,
   ServedSchema,
   NoShowSchema,
   CancelledSchema,

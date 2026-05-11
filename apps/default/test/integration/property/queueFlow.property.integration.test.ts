@@ -59,7 +59,7 @@ type ProjectionEntry = {
   readonly seq: number
   readonly lane: "walkIn" | "priority" | "reservation"
   readonly displaySeq: number
-  readonly state: "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
+  readonly state: "Waiting" | "Called" | "Served" | "NoShow" | "Cancelled"
 }
 
 type Projection = {

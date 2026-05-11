@@ -13,7 +13,6 @@
     recall,
     staffCancel,
     staffShopState,
-    startServing,
     type Ticket,
   } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
@@ -67,8 +66,6 @@
         return m.state_Waiting()
       case "Called":
         return m.state_Called()
-      case "Serving":
-        return m.state_Serving()
       case "Served":
         return m.state_Served()
       case "NoShow":
@@ -276,9 +273,6 @@
       },
     )
 
-  const onStartServing = (ticketId: string) =>
-    runAction("start-serving", () => startServing(token, ticketId), () => showToast("対応中に切り替えました", "success"))
-
   const onMarkServed = (ticketId: string) =>
     runAction("mark-served", () => markServed(token, ticketId), () => showToast("対応完了", "success"))
 
@@ -448,15 +442,6 @@
                     </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  class="card-call-action"
-                  aria-label="対応を始める"
-                  onclick={() => onStartServing(t.id)}
-                  disabled={busy}
-                >
-                  <span class="call-label">対応を<br />始める</span>
-                </button>
                 <div class="ticket-detail">
                   <dl>
                     <dt>電話末尾</dt><dd>{t.phoneLast4 ?? ""}</dd>

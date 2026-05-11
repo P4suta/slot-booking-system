@@ -4,7 +4,7 @@ import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import { type CustomerHandle, equalsCustomerHandle } from "../value-objects/CustomerHandle.js"
 import { type Lane, PREFERRED_LANE_CHAIN } from "./Lane.js"
 import { intervalOf, type Slot } from "./Slot.js"
-import type { Called, Serving, Ticket, Waiting } from "./Ticket.js"
+import type { Called, Ticket, Waiting } from "./Ticket.js"
 import type { TicketEvent } from "./TicketEvent.js"
 
 /**
@@ -72,38 +72,15 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
       tickets.set(event.ticketId, next)
       return { tickets }
     }
-    case "ServingStarted": {
-      const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Called") return snap
-      const next: Serving = {
-        ...prior,
-        state: "Serving",
-        servingStartedAt: event.occurredAt,
-        servingStartedBy: event.servingStartedBy,
-      }
-      tickets.set(event.ticketId, next)
-      return { tickets }
-    }
     case "Served": {
       const prior = tickets.get(event.ticketId)
-      if (prior === undefined) return snap
-      if (prior.state !== "Called" && prior.state !== "Serving") return snap
-      const next: Ticket =
-        prior.state === "Serving"
-          ? {
-              ...prior,
-              state: "Served",
-              servingStartedAt: prior.servingStartedAt,
-              servingStartedBy: prior.servingStartedBy,
-              servedAt: event.occurredAt,
-              servedBy: event.servedBy,
-            }
-          : {
-              ...prior,
-              state: "Served",
-              servedAt: event.occurredAt,
-              servedBy: event.servedBy,
-            }
+      if (prior?.state !== "Called") return snap
+      const next: Ticket = {
+        ...prior,
+        state: "Served",
+        servedAt: event.occurredAt,
+        servedBy: event.servedBy,
+      }
       tickets.set(event.ticketId, next)
       return { tickets }
     }
@@ -170,9 +147,7 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     case "Rescheduled": {
       const prior = tickets.get(event.ticketId)
       if (prior === undefined) return snap
-      if (prior.state !== "Waiting" && prior.state !== "Called" && prior.state !== "Serving") {
-        return snap
-      }
+      if (prior.state !== "Waiting" && prior.state !== "Called") return snap
       // Lane invariant: only reservation tickets carry an
       // appointmentAt. Walk-in / priority tickets that somehow reach
       // here are ignored — the usecase already gates on lane.
@@ -206,7 +181,6 @@ export const applyMany = (snap: QueueSnapshot, events: readonly TicketEvent[]): 
 
 const isWaiting = (t: Ticket): t is Waiting => t.state === "Waiting"
 const isCalled = (t: Ticket): t is Called => t.state === "Called"
-const isServing = (t: Ticket): t is Serving => t.state === "Serving"
 
 /**
  * Lane-filter predicate. `filter === undefined` matches every
@@ -399,20 +373,16 @@ export const head = (snap: QueueSnapshot, lane?: Lane): Waiting | null => {
 }
 
 /**
- * The lowest-`displaySeq` Called or Serving ticket — the ticket the
- * customer-facing page treats as "currently being called" (Serving
- * is indistinguishable from Called from the customer's perspective
- * per ADR-0063). Returns `null` when no ticket is in Called or
- * Serving.
- *
- * If multiple tickets are simultaneously Called/Serving (a bug in
- * single-writer mode but theoretically possible in the projection),
- * the lowest-`displaySeq` one is returned.
+ * The lowest-`displaySeq` Called ticket — the ticket the customer-
+ * facing page treats as "currently being called or served" (ADR-0073
+ * dropped the explicit Serving variant; the Kanban "対応中" badge is
+ * a projection-time hint, not a domain state). Returns `null` when
+ * no ticket is in Called.
  */
-export const currentlyServing = (snap: QueueSnapshot): Called | Serving | null => {
-  let best: Called | Serving | null = null
+export const currentlyServing = (snap: QueueSnapshot): Called | null => {
+  let best: Called | null = null
   for (const t of snap.tickets.values()) {
-    if (!isCalled(t) && !isServing(t)) continue
+    if (!isCalled(t)) continue
     if (best === null || t.displaySeq < best.displaySeq) best = t
   }
   return best
@@ -426,21 +396,6 @@ export const callingTickets = (snap: QueueSnapshot, lane?: Lane): readonly Calle
   const out: Called[] = []
   for (const t of snap.tickets.values()) {
     if (!isCalled(t)) continue
-    if (!matchesLane(t.lane, lane)) continue
-    out.push(t)
-  }
-  out.sort((a, b) => a.displaySeq - b.displaySeq)
-  return out
-}
-
-/**
- * All tickets in the given lane (or every lane when omitted) that
- * are currently Serving, sorted by `displaySeq`.
- */
-export const servingTickets = (snap: QueueSnapshot, lane?: Lane): readonly Serving[] => {
-  const out: Serving[] = []
-  for (const t of snap.tickets.values()) {
-    if (!isServing(t)) continue
     if (!matchesLane(t.lane, lane)) continue
     out.push(t)
   }
@@ -539,14 +494,14 @@ export const nextDisplaySeqInLane = (snap: QueueSnapshot, lane: Lane): number =>
 /* -------------------------------------------------------------------------- */
 
 /**
- * A ticket "holds" the customer's handle while in any of the three
+ * A ticket "holds" the customer's handle while in any of the two
  * pre-terminal states. `CheckedIn` is an audit field on top of
  * `Waiting`, not a state, so it does not appear here. Once a ticket
  * transitions to `Served / Cancelled / NoShow` the handle is
  * released and may be re-used by a fresh issue.
  */
 export const isActiveForHandle = (t: Ticket): boolean =>
-  t.state === "Waiting" || t.state === "Called" || t.state === "Serving"
+  t.state === "Waiting" || t.state === "Called"
 
 /**
  * `(nameKana, phoneLast4)` is enforced as the **active-set primary key**

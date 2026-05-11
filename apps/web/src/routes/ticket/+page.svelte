@@ -71,11 +71,7 @@
   const isReservation = $derived(
     ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined,
   )
-  const isActive = $derived(
-    ticket?.state === "Waiting" ||
-      ticket?.state === "Called" ||
-      ticket?.state === "Serving",
-  )
+  const isActive = $derived(ticket?.state === "Waiting" || ticket?.state === "Called")
   // Visibility guard for the reschedule button. Disable-on-WS-drop
   // is delegated to the button itself, mirroring how cancel handles
   // a feedState !== "open" tab.
@@ -347,7 +343,6 @@
       case "Waiting":
         return "お待ちください"
       case "Called":
-      case "Serving":
         return "呼ばれました"
       case "Served":
         return "対応完了"
@@ -675,7 +670,7 @@
       </div>
     {/if}
 
-    {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Serving"}
+    {#if ticket.state === "Waiting" || ticket.state === "Called"}
       <div class="actions">
         <Button
           variant="ghost"
@@ -860,8 +855,7 @@
       font: var(--text-body-md);
     }
   }
-  .numeral-face[data-state="Called"],
-  .numeral-face[data-state="Serving"] {
+  .numeral-face[data-state="Called"] {
     background: oklch(95% 0.07 65);
     border-color: var(--color-state-called);
   }

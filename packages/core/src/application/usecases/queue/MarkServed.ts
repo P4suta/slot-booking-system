@@ -15,10 +15,11 @@ import { loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * MarkServed — `Called | Serving → Served` (ADR-0063 broadens the
- * source). Staff-only command; the GraphQL resolver upstream already
- * enforces the `operate_queue` scope, so the use case body trusts
- * the caller and focuses on the state machine.
+ * MarkServed — `Called → Served`. ADR-0073 dropped the explicit
+ * Serving variant; the use case now narrows the source to Called
+ * only and the projection-time "対応中" hint is a Kanban-side
+ * derivation. Staff-only command; the upstream resolver already
+ * enforces the `operate_queue` scope.
  */
 export const MarkServed = (
   ticketId: TicketId,
@@ -31,7 +32,7 @@ export const MarkServed = (
     const loaded = yield* loadOrTicketNotFound(ticketId)
     const terminal = guardActive(loaded.state)
     if (terminal !== null) return yield* Effect.fail(terminal)
-    if (loaded.state.state !== "Called" && loaded.state.state !== "Serving") {
+    if (loaded.state.state !== "Called") {
       return yield* Effect.fail(invalidTransition(loaded.state.state, "MarkServed"))
     }
     const source = loaded.state

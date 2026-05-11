@@ -22,7 +22,6 @@ import {
   Recall,
   RescheduleTicket,
   reservationsByDeadline,
-  StartServing,
   type StorageError,
   SystemClockLive,
   type Ticket,
@@ -40,6 +39,7 @@ import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecyc
 type Env = {
   DB: D1Database
   NO_SHOW_TIMEOUT_SECONDS?: string
+  SERVING_THRESHOLD_MS?: string
 }
 
 /**
@@ -47,10 +47,10 @@ type Env = {
  * Discriminated union over the use cases; the DO routes each action
  * through the matching `application/usecases/queue/` entry point.
  *
- * Per ADR-0062 / ADR-0063 / ADR-0065 the operator-grade actions
- * (CallSpecific / CallBatch / StartServing) join the original
- * five so the action surface stays small (9 total) but each
- * operator intent has a named entry.
+ * Per ADR-0062 / ADR-0065 the operator-grade actions (CallSpecific
+ * / CallBatch) join the original five so the action surface stays
+ * small (8 total) but each operator intent has a named entry.
+ * ADR-0063's StartServing was withdrawn in ADR-0073.
  */
 export type QueueAction =
   | {
@@ -67,7 +67,6 @@ export type QueueAction =
   | { type: "CallNext"; actor: "staff" | "system"; lane?: Lane }
   | { type: "CallSpecific"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "CallBatch"; ticketIds: NonEmptyReadonlyArray<TicketId>; actor: "staff" | "system" }
-  | { type: "StartServing"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "MarkServed"; ticketId: TicketId }
   | { type: "MarkNoShow"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "Recall"; ticketId: TicketId; actor: "staff" | "system" }
@@ -159,7 +158,7 @@ export class QueueShop extends DurableObject<Env> {
     if (action.type === "IssueTicket") {
       const row = this.sql
         .exec(
-          "SELECT id FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','Serving') LIMIT 1",
+          "SELECT id FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called') LIMIT 1",
           action.handle.nameKana,
           action.handle.phoneLast4,
         )
@@ -188,9 +187,6 @@ export class QueueShop extends DurableObject<Env> {
         break
       case "CallBatch":
         eff = CallBatch(action.ticketIds, action.actor)
-        break
-      case "StartServing":
-        eff = StartServing(action.ticketId, action.actor)
         break
       case "MarkServed":
         eff = MarkServed(action.ticketId)
@@ -322,7 +318,7 @@ export class QueueShop extends DurableObject<Env> {
   getByHandle(handle: CustomerHandle): Promise<EncodedTicket | null> {
     const rows = this.sql
       .exec(
-        "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','Serving') LIMIT 1",
+        "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called') LIMIT 1",
         handle.nameKana,
         handle.phoneLast4,
       )
@@ -411,7 +407,7 @@ export class QueueShop extends DurableObject<Env> {
    * fetch.
    *
    * v4 (ADR-0071, refines ADR-0061): every ProjectionEntry carries
-   * `state` (Waiting / Called / Serving / ...) and `waitingPreview`
+   * `state` (Waiting / Called / Served / ...) and `waitingPreview`
    * exposes every Waiting ticket (cap removed). `state` is public
    * information (the in-store monitor already shows it) — only the
    * customer-identifying fields (kana, last4, freeText) remain
@@ -466,12 +462,25 @@ export class QueueShop extends DurableObject<Env> {
         }
         return a.displaySeq - b.displaySeq
       })
-    const calling = tickets
+    // ADR-0073 — Serving is no longer a domain state. The Kanban
+    // "対応中" column is derived from Called: any Called ticket whose
+    // calledAt is older than SERVING_THRESHOLD_MS (default 30s) is
+    // assumed to be at the counter, the rest are still "calling out".
+    // The two arrays are mutually exclusive subsets of Called.
+    const SERVING_THRESHOLD_MS = Number(this.env.SERVING_THRESHOLD_MS) || 30_000
+    const calledAll = tickets
       .filter((t) => t.state === "Called")
       .sort((a, b) => a.displaySeq - b.displaySeq)
-    const serving = tickets
-      .filter((t) => t.state === "Serving")
-      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const calling = calledAll.filter((t) => {
+      const calledMs = Date.parse(t.calledAt)
+      if (Number.isNaN(calledMs)) return true
+      return calledMs + SERVING_THRESHOLD_MS > nowMs
+    })
+    const serving = calledAll.filter((t) => {
+      const calledMs = Date.parse(t.calledAt)
+      if (Number.isNaN(calledMs)) return false
+      return calledMs + SERVING_THRESHOLD_MS <= nowMs
+    })
     const laneCount = (lane: Lane) => waiting.filter((t) => t.lane === lane).length
     // Decode just the waiting subset to drive the EDF deadline read;
     // the rest of the payload stays in encoded form to keep the wire

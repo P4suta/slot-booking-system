@@ -45,7 +45,7 @@ const TICKET_SCHEMA = {
     displaySeq: { type: "integer", minimum: 1 },
     state: {
       type: "string",
-      enum: ["Waiting", "Called", "Serving", "Served", "NoShow", "Cancelled"],
+      enum: ["Waiting", "Called", "Served", "NoShow", "Cancelled"],
     },
     nameKana: { type: "string" },
     phoneLast4: { type: "string", pattern: "^[0-9]{4}$" },

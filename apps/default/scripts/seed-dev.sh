@@ -81,12 +81,6 @@ staff_call () {
     -H "x-staff-token: $STAFF_TOKEN" >/dev/null
 }
 
-staff_start_serving () {
-  local id="$1"
-  post_json "/api/v1/tickets/$id/start-serving" '{}' \
-    -H "x-staff-token: $STAFF_TOKEN" >/dev/null
-}
-
 staff_served () {
   local id="$1"
   post_json "/api/v1/tickets/$id/served" '{}' \
@@ -136,7 +130,6 @@ for spec in \
   IFS='|' read -r kana last4 note <<< "$spec"
   id=$(issue_walkin "$kana" "$last4" "$note")
   staff_call "$id"
-  staff_start_serving "$id"
   staff_served "$id"
 done
 
@@ -164,9 +157,12 @@ for spec in \
 done
 
 # ---------------------------------------------------------------------------
-# 対応中 (Serving) — 3 walk-in, all on today
+# 対応中 (= Called で calledAt 経過 >= SERVING_THRESHOLD_MS の derived 分類、
+# ADR-0073)。 seed 直後は SERVING_THRESHOLD_MS (default 30s) より calledAt が
+# 新しいので、 30 秒待つと Kanban の「対応中」 列に滑り込む。 ここでは単に
+# Called の walk-in を 3 件追加する。
 # ---------------------------------------------------------------------------
-echo "seed: 対応中 — 3 件"
+echo "seed: 対応中 (Called で 30s 経過予定) — 3 件"
 for spec in \
   "ヤマモト ケンジ|2001|肩こりの相談" \
   "イノウエ サクラ|2002|" \
@@ -174,7 +170,6 @@ for spec in \
   IFS='|' read -r kana last4 note <<< "$spec"
   id=$(issue_walkin "$kana" "$last4" "$note")
   staff_call "$id"
-  staff_start_serving "$id"
 done
 
 # ---------------------------------------------------------------------------

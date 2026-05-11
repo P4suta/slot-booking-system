@@ -189,11 +189,6 @@ describe("ADR-0069 Stage 7 — called alert", () => {
     const notif = stubNotification("granted")
     maybeTriggerCalledAlert({ state: "Waiting", calledAt: null, displaySeq: 42 })
     maybeTriggerCalledAlert({
-      state: "Serving",
-      calledAt: "2026-05-11T10:00:00.000Z",
-      displaySeq: 42,
-    })
-    maybeTriggerCalledAlert({
       state: "Served",
       calledAt: "2026-05-11T10:00:00.000Z",
       displaySeq: 42,

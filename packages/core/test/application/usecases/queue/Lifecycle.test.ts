@@ -13,7 +13,6 @@ import {
   MarkServed,
   Recall,
   RescheduleTicket,
-  StartServing,
 } from "../../../../src/application/usecases/queue/index.js"
 import { AggregateNotFoundError } from "../../../../src/domain/errors/Errors.js"
 import { applyIssue } from "../../../../src/domain/queue/transitions.js"
@@ -307,16 +306,15 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
-  it("ADR-0069: CancelTicket from Serving recovers a misclick (staff path)", async () =>
+  it("ADR-0069: CancelTicket from Called recovers a misclick (staff path)", async () =>
     runScenario(
       Effect.gen(function* () {
         const t1 = yield* IssueTicket({
           handle: handle("ヤマダ タロウ", "1234"),
           freeText: null,
         })
-        yield* CallNext()
-        const serving = yield* StartServing(t1.id)
-        expect(serving.state).toBe("Serving")
+        const called = yield* CallNext()
+        expect(called.state).toBe("Called")
         const cancelled = yield* CancelTicket(t1.id, "staff", "misclick-recovery")
         expect(cancelled.state).toBe("Cancelled")
         if (cancelled.state === "Cancelled") {
@@ -325,13 +323,12 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
-  it("ADR-0069: customer CancelTicket from Serving with handle succeeds", async () =>
+  it("ADR-0069: customer CancelTicket from Called with handle succeeds", async () =>
     runScenario(
       Effect.gen(function* () {
         const h = handle("ヤマダ タロウ", "1234")
         const t1 = yield* IssueTicket({ handle: h, freeText: null })
         yield* CallNext()
-        yield* StartServing(t1.id)
         const cancelled = yield* CancelTicket(t1.id, "customer", "abort", h)
         expect(cancelled.state).toBe("Cancelled")
       }),
@@ -415,67 +412,6 @@ describe("queue lifecycle round-trip", () => {
         const r = yield* eitherEffect(CallSpecific("tkt_00000000000000000000000000" as never))
         expect(r.ok).toBe(false)
         if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
-      }),
-    ))
-
-  it("StartServing transitions Called → Serving (ADR-0063)", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const t1 = yield* IssueTicket({
-          handle: handle("ヤマダ タロウ", "1234"),
-          freeText: null,
-        })
-        yield* CallNext()
-        const serving = yield* StartServing(t1.id)
-        expect(serving.state).toBe("Serving")
-      }),
-    ))
-
-  it("StartServing on a Waiting ticket yields InvalidStateTransition", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const t1 = yield* IssueTicket({
-          handle: handle("ヤマダ タロウ", "1234"),
-          freeText: null,
-        })
-        const r = yield* eitherEffect(StartServing(t1.id))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("InvalidStateTransition")
-      }),
-    ))
-
-  it("StartServing on a Cancelled ticket yields AlreadyCancelled", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const h = handle("ヤマダ タロウ", "1234")
-        const t1 = yield* IssueTicket({ handle: h, freeText: null })
-        yield* CancelTicket(t1.id, "customer", "x", h)
-        const r = yield* eitherEffect(StartServing(t1.id))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
-      }),
-    ))
-
-  it("StartServing on a non-existent ticket yields TicketNotFound", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const r = yield* eitherEffect(StartServing("tkt_00000000000000000000000000" as never))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
-      }),
-    ))
-
-  it("MarkServed accepts a Serving ticket as source (ADR-0063 broadens)", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const t1 = yield* IssueTicket({
-          handle: handle("ヤマダ タロウ", "1234"),
-          freeText: null,
-        })
-        yield* CallNext()
-        yield* StartServing(t1.id)
-        const served = yield* MarkServed(t1.id)
-        expect(served.state).toBe("Served")
       }),
     ))
 
@@ -1005,7 +941,7 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
-  it("RescheduleTicket via staff path succeeds from Serving", async () =>
+  it("RescheduleTicket via staff path succeeds from Called", async () =>
     runScenario(
       Effect.gen(function* () {
         const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
@@ -1018,7 +954,6 @@ describe("queue lifecycle round-trip", () => {
           appointmentAt: apptA,
         })
         yield* CallNext()
-        yield* StartServing(t1.id)
         const t2 = yield* RescheduleTicket({
           ticketId: t1.id,
           newAppointmentAt: apptB,
@@ -1028,7 +963,7 @@ describe("queue lifecycle round-trip", () => {
           actor: "staff",
         })
         expect(t2.id).toBe(t1.id)
-        expect(t2.state).toBe("Serving")
+        expect(t2.state).toBe("Called")
       }),
     ))
 

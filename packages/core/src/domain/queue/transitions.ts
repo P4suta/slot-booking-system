@@ -17,7 +17,6 @@ import type {
   Cancelled,
   NoShow,
   Served,
-  Serving,
   Ticket,
   TicketCommon,
   TicketState,
@@ -32,7 +31,6 @@ import type {
   RecalledEvent,
   RescheduledEvent,
   ServedEvent,
-  ServingStartedEvent,
   TicketEvent,
 } from "./TicketEvent.js"
 
@@ -46,9 +44,9 @@ import type {
  * The right-side helpers (`applyIssue`, `applyCall`, …) return
  * this directly rather than `Result.Result<ApplyResult, DomainError>`:
  * the source-state argument is type-narrowed at the boundary
- * (`applyMarkServed(t: Called | Serving, …)`), so a failure path has
- * no inputs that could trigger it. The use cases are responsible for
- * the pre-condition check (`guardActive` + state-equality), and the
+ * (`applyMarkServed(t: Called, …)`), so a failure path has no inputs
+ * that could trigger it. The use cases are responsible for the
+ * pre-condition check (`guardActive` + state-equality), and the
  * helpers commit to a total transformation once those have passed.
  */
 export type ApplyResult = {
@@ -157,41 +155,14 @@ export const applyCall = (t: Waiting, args: CallArgs): ApplyResult => {
 }
 
 /* -------------------------------------------------------------------------- */
-/* StartServing — Called → Serving (ADR-0063). The customer reached the       */
-/* counter; NoShow alarm no longer applies.                                   */
-/* -------------------------------------------------------------------------- */
-
-export const applyStartServing = (
-  t: Called,
-  at: Temporal.Instant,
-  eventId: TicketEventId,
-  servingStartedBy: Actor = "staff",
-): ApplyResult => {
-  const ticket: Serving = {
-    ...common(t),
-    state: "Serving",
-    calledAt: t.calledAt,
-    calledBy: t.calledBy,
-    servingStartedAt: at,
-    servingStartedBy,
-  }
-  const event: ServingStartedEvent = {
-    ...baseEvent(eventId, t.id, at),
-    type: "ServingStarted",
-    servingStartedBy,
-  }
-  return { ticket, event }
-}
-
-/* -------------------------------------------------------------------------- */
-/* MarkServed — Called | Serving → Served (ADR-0063 broadens the source).     */
-/* When the source is Serving the served ticket carries the                   */
-/* `servingStartedAt + servingStartedBy` audit fields; from Called those      */
-/* fields are absent.                                                         */
+/* MarkServed — Called → Served. ADR-0073 dropped the explicit Serving        */
+/* state, so the source narrows to Called only; the projection-time           */
+/* "対応中" classification (= called for >= SERVING_THRESHOLD_MS) is a UI     */
+/* hint, not a domain state.                                                   */
 /* -------------------------------------------------------------------------- */
 
 export const applyMarkServed = (
-  t: Called | Serving,
+  t: Called,
   at: Temporal.Instant,
   eventId: TicketEventId,
   servedBy: Actor = "staff",
@@ -201,12 +172,6 @@ export const applyMarkServed = (
     state: "Served",
     calledAt: t.calledAt,
     calledBy: t.calledBy,
-    ...(t.state === "Serving"
-      ? {
-          servingStartedAt: t.servingStartedAt,
-          servingStartedBy: t.servingStartedBy,
-        }
-      : {}),
     servedAt: at,
     servedBy,
   }
@@ -219,8 +184,10 @@ export const applyMarkServed = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* MarkNoShow — Called → NoShow only (ADR-0063 narrows the source). Once a    */
-/* ticket is being served, the alarm-driven NoShow sweep no longer applies.   */
+/* MarkNoShow — Called → NoShow. The alarm-driven NoShow sweep targets        */
+/* tickets that have been Called past NO_SHOW_TIMEOUT_SECONDS without staff   */
+/* intervention; the staff-side flow goes through PendingNoShow first         */
+/* (ADR-0074) so this transition is the system / TTL path.                    */
 /* -------------------------------------------------------------------------- */
 
 export const applyMarkNoShow = (
@@ -276,16 +243,14 @@ export const applyRecall = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* Cancel — Waiting | Called | Serving → Cancelled. Both customer-issued      */
-/* (self-service) and staff-issued cancellations land here; the actor records */
-/* who. Serving is included so a mistaken `StartServing` (= staff misclick)   */
-/* is recoverable from the customer's keyboard too; the Cancelled event's     */
-/* `reason` carries the operational context. ADR-0063 keeps Serving as the    */
-/* "in-progress" state — but in-progress ≠ uncancellable.                     */
+/* Cancel — Waiting | Called → Cancelled. Both customer-issued (self-service) */
+/* and staff-issued cancellations land here; the actor records who.           */
+/* ADR-0073 dropped the Serving variant, so the source narrows to the two    */
+/* pre-terminal states the wire actually carries.                             */
 /* -------------------------------------------------------------------------- */
 
 export const applyCancel = (
-  t: Waiting | Called | Serving,
+  t: Waiting | Called,
   at: Temporal.Instant,
   eventId: TicketEventId,
   cancelledBy: Actor,
@@ -342,7 +307,7 @@ export const applyCheckIn = (
 /* -------------------------------------------------------------------------- */
 
 export const applyReschedule = (
-  t: Waiting | Called | Serving,
+  t: Waiting | Called,
   newAppointmentAt: Temporal.Instant,
   at: Temporal.Instant,
   eventId: TicketEventId,
@@ -356,9 +321,8 @@ export const applyReschedule = (
   if (t.appointmentAt === null) throw new Error("applyReschedule: appointmentAt is null")
   const fromAppointmentAt = t.appointmentAt
   // Preserve `state` exactly — Waiting stays Waiting, Called stays
-  // Called, Serving stays Serving. Only `appointmentAt` mutates.
-  // The spread preserves the discriminant tag; the result type is
-  // the same variant as `t`.
+  // Called. Only `appointmentAt` mutates. The spread preserves the
+  // discriminant tag; the result type is the same variant as `t`.
   const ticket: Ticket = { ...t, appointmentAt: newAppointmentAt }
   const event: RescheduledEvent = {
     ...baseEvent(eventId, t.id, at),
@@ -381,7 +345,6 @@ export type TicketCommand =
   | "CallNext"
   | "CallSpecific"
   | "CallBatch"
-  | "StartServing"
   | "MarkServed"
   | "MarkNoShow"
   | "Cancel"
@@ -399,7 +362,7 @@ const terminalError = (state: TicketState): DomainError | null => {
  * Guard the state machine against a command issued against a terminal
  * ticket. Returns the matching `Already*Error` when the state has no
  * outgoing transition; returns `null` when the ticket is still active
- * (Waiting / Called / Serving).
+ * (Waiting / Called).
  */
 export const guardActive = (t: Ticket): DomainError | null => terminalError(t.state)
 

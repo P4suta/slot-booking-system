@@ -106,7 +106,6 @@ describe("ADR-0069 ticket cache", () => {
     expect(isTerminalState("NoShow")).toBe(true)
     expect(isTerminalState("Waiting")).toBe(false)
     expect(isTerminalState("Called")).toBe(false)
-    expect(isTerminalState("Serving")).toBe(false)
     expect(isTerminalState("CheckedIn")).toBe(false)
   })
 

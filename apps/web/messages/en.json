@@ -34,7 +34,6 @@
   "lane_reservation": "Reservation",
   "state_Waiting": "Waiting",
   "state_Called": "Called",
-  "state_Serving": "Serving",
   "state_Served": "Served",
   "state_NoShow": "No-show (timed out)",
   "state_Cancelled": "Cancelled",

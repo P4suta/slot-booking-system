@@ -1,7 +1,7 @@
 import { Temporal } from "@js-temporal/polyfill"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import type { Called, Serving, Waiting } from "../../../src/domain/queue/Ticket.js"
+import type { Called, Waiting } from "../../../src/domain/queue/Ticket.js"
 import {
   applyCall,
   applyCancel,
@@ -10,7 +10,6 @@ import {
   applyMarkNoShow,
   applyMarkServed,
   applyRecall,
-  applyStartServing,
   guardActive,
   invalidTransition,
 } from "../../../src/domain/queue/transitions.js"
@@ -122,7 +121,7 @@ describe("applyCall", () => {
   })
 })
 
-describe("applyMarkServed / applyMarkNoShow / applyCancel / applyStartServing", () => {
+describe("applyMarkServed / applyMarkNoShow / applyCancel", () => {
   const called = (): Called => {
     const { ticket } = applyCall(issued(), {
       at: at("2026-05-08T09:05:00Z"),
@@ -131,47 +130,9 @@ describe("applyMarkServed / applyMarkNoShow / applyCancel / applyStartServing", 
     return ticket as Called
   }
 
-  it("applyStartServing transitions Called → Serving", () => {
-    const { ticket, event } = applyStartServing(
-      called(),
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-    )
-    expect(ticket.state).toBe("Serving")
-    expect(event.type).toBe("ServingStarted")
-    if (ticket.state === "Serving") {
-      expect(ticket.servingStartedBy).toBe("staff")
-    }
-  })
-
-  it("applyStartServing accepts an explicit servingStartedBy actor", () => {
-    const { ticket } = applyStartServing(
-      called(),
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-      "system",
-    )
-    if (ticket.state === "Serving") expect(ticket.servingStartedBy).toBe("system")
-  })
-
   it("applyMarkServed transitions Called → Served", () => {
     const { ticket } = applyMarkServed(called(), at("2026-05-08T09:10:00Z"), newTicketEventId())
     expect(ticket.state).toBe("Served")
-  })
-
-  it("applyMarkServed transitions Serving → Served and carries the serving audit fields", () => {
-    const c = called()
-    const { ticket: serving } = applyStartServing(c, at("2026-05-08T09:07:00Z"), newTicketEventId())
-    const { ticket: served } = applyMarkServed(
-      serving as Serving,
-      at("2026-05-08T09:10:00Z"),
-      newTicketEventId(),
-    )
-    expect(served.state).toBe("Served")
-    if (served.state === "Served") {
-      expect(served.servingStartedAt).toBeDefined()
-      expect(served.servingStartedBy).toBe("staff")
-    }
   })
 
   it("applyMarkServed honours an explicit servedBy", () => {
@@ -270,15 +231,6 @@ describe("guardActive", () => {
     }).ticket as Called
     expect(guardActive(c)).toBeNull()
   })
-
-  it("returns null for Serving (active per ADR-0063)", () => {
-    const c = applyCall(issued(), {
-      at: at("2026-05-08T09:05:00Z"),
-      eventId: newTicketEventId(),
-    }).ticket as Called
-    const { ticket: serving } = applyStartServing(c, at("2026-05-08T09:07:00Z"), newTicketEventId())
-    expect(guardActive(serving)).toBeNull()
-  })
 })
 
 describe("applyRecall", () => {
@@ -360,7 +312,6 @@ describe("invalidTransition", () => {
   it("accepts the new ADR-0065 command names", () => {
     expect(invalidTransition("Served", "CallSpecific").command).toBe("CallSpecific")
     expect(invalidTransition("Cancelled", "CallBatch").command).toBe("CallBatch")
-    expect(invalidTransition("Waiting", "StartServing").command).toBe("StartServing")
   })
 
   it("accepts CheckIn as a command name (ADR-0068)", () => {

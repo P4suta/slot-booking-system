@@ -1,8 +1,17 @@
 # ADR-0063: Serving intermediate state + NoShow alarm cutoff
 
-- Status: Accepted
+- Status: Superseded by ADR-0073 (2026-05-12)
 - Date: 2026-05-09
 - Refines: ADR-0050 (queue pivot), ADR-0052 (type-state Ticket), ADR-0059 (event-log SoT)
+- Superseded by: ADR-0073 (Serving as derived classification)
+
+> **Note (2026-05-12).** ADR-0073 withdrew the `Serving` domain
+> state introduced here. The "対応中" classification is now a
+> projection-time derivation (= a Called ticket whose `calledAt`
+> elapsed past `SERVING_THRESHOLD_MS`, default 30s) — no domain
+> state, no `ServingStarted` event, no operator click required.
+> The text below is kept as the historical record; consult
+> ADR-0073 for the current Called → Served lifecycle.
 
 ## Decision
 

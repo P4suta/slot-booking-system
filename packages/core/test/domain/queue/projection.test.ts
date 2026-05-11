@@ -18,12 +18,11 @@ import {
   positionOf,
   replay,
   reservationsByDeadline,
-  servingTickets,
   slotOccupancy,
   waitingCount,
   waitingTickets,
 } from "../../../src/domain/queue/projection.js"
-import type { Called, Serving, Waiting } from "../../../src/domain/queue/Ticket.js"
+import type { Called, Waiting } from "../../../src/domain/queue/Ticket.js"
 import {
   applyCall,
   applyCancel,
@@ -32,7 +31,6 @@ import {
   applyMarkNoShow,
   applyMarkServed,
   applyRecall,
-  applyStartServing,
 } from "../../../src/domain/queue/transitions.js"
 import { newTicketEventId, newTicketId, type TicketId } from "../../../src/domain/types/EntityId.js"
 import { BusinessTimeZoneSchema } from "../../../src/domain/value-objects/BusinessTimeZone.js"
@@ -137,22 +135,6 @@ describe("derived queries — head / currentlyServing / positionOf / waitingCoun
     )
     const snap = replay([a.event, callA.event, served.event])
     expect(currentlyServing(snap)).toBeNull()
-  })
-
-  it("currentlyServing returns Serving tickets too (ADR-0063 customer view)", () => {
-    const a = issue(1)
-    const callA = applyCall(a.ticket as Waiting, {
-      at: at("2026-05-08T09:05:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const serving = applyStartServing(
-      callA.ticket as Called,
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-    )
-    const snap = replay([a.event, callA.event, serving.event])
-    const cs = currentlyServing(snap)
-    expect(cs?.state).toBe("Serving")
   })
 
   it("positionOf reports the number of waiting tickets ahead in the same lane", () => {
@@ -335,33 +317,7 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     expect(nextDisplaySeqInLane(snap, "priority")).toBe(10)
   })
 
-  it("servingTickets sorts by displaySeq across multiple Serving variants", () => {
-    const a = issue(1, { lane: "walkIn", displaySeq: 2 })
-    const b = issue(2, { lane: "walkIn", displaySeq: 1 })
-    const ca = applyCall(a.ticket as Waiting, {
-      at: at("2026-05-08T09:05:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const cb = applyCall(b.ticket as Waiting, {
-      at: at("2026-05-08T09:06:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const sa = applyStartServing(
-      ca.ticket as Called,
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-    )
-    const sb = applyStartServing(
-      cb.ticket as Called,
-      at("2026-05-08T09:08:00Z"),
-      newTicketEventId(),
-    )
-    const snap = replay([a.event, b.event, ca.event, cb.event, sa.event, sb.event])
-    const order = servingTickets(snap).map((t) => t.id)
-    expect(order).toEqual([b.ticket.id, a.ticket.id])
-  })
-
-  it("callingTickets / servingTickets honour lane filter against cross-lane peers", () => {
+  it("callingTickets honours lane filter against cross-lane peers", () => {
     const w = issue(1, { lane: "walkIn", displaySeq: 1 })
     const p = issue(2, { lane: "priority", displaySeq: 1 })
     const cw = applyCall(w.ticket as Waiting, {
@@ -375,14 +331,6 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     const snap = replay([w.event, p.event, cw.event, cp.event])
     expect(callingTickets(snap, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
     expect(callingTickets(snap, "priority").map((t) => t.id)).toEqual([p.ticket.id])
-    const sw = applyStartServing(
-      cw.ticket as Called,
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-    )
-    const snap2 = replay([w.event, p.event, cw.event, cp.event, sw.event])
-    expect(servingTickets(snap2, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
-    expect(servingTickets(snap2, "priority").map((t) => t.id)).toEqual([])
   })
 
   it("positionOf scopes counts to the ticket's own lane (cross-lane peers ignored)", () => {
@@ -395,7 +343,7 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     expect(positionOf(snap, p1.ticket.id)).toBe(0)
   })
 
-  it("globalPositionOf skips Called/Serving peers in the target's own lane", () => {
+  it("globalPositionOf skips Called peers in the target's own lane", () => {
     // Called peer in same lane as target should NOT count toward
     // the customer-facing position.
     const head = issue(1, { lane: "walkIn", displaySeq: 1 })
@@ -413,6 +361,8 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
   it("callingTickets returns only Called variants, sorted by displaySeq", () => {
     const a = issue(1)
     const b = issue(2)
+    // c stays Waiting — the predicate must skip it.
+    const c = issue(3)
     const ca = applyCall(a.ticket as Waiting, {
       at: at("2026-05-08T09:05:00Z"),
       eventId: newTicketEventId(),
@@ -421,50 +371,8 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
       at: at("2026-05-08T09:06:00Z"),
       eventId: newTicketEventId(),
     })
-    const snap = replay([a.event, b.event, ca.event, cb.event])
+    const snap = replay([a.event, b.event, c.event, ca.event, cb.event])
     expect(callingTickets(snap).map((t) => t.id)).toEqual([a.ticket.id, b.ticket.id])
-  })
-
-  it("servingTickets returns only Serving variants", () => {
-    const a = issue(1)
-    const ca = applyCall(a.ticket as Waiting, {
-      at: at("2026-05-08T09:05:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const sa = applyStartServing(
-      ca.ticket as Called,
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-    )
-    const snap = replay([a.event, ca.event, sa.event])
-    expect(servingTickets(snap).map((t) => t.id)).toEqual([a.ticket.id])
-    expect(callingTickets(snap)).toEqual([])
-  })
-
-  it("servingTickets honours lane filter", () => {
-    const w = issue(1, { lane: "walkIn", displaySeq: 1 })
-    const p = issue(2, { lane: "priority", displaySeq: 1 })
-    const cw = applyCall(w.ticket as Waiting, {
-      at: at("2026-05-08T09:05:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const cp = applyCall(p.ticket as Waiting, {
-      at: at("2026-05-08T09:06:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const sw = applyStartServing(
-      cw.ticket as Called,
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-    )
-    const sp = applyStartServing(
-      cp.ticket as Called,
-      at("2026-05-08T09:08:00Z"),
-      newTicketEventId(),
-    )
-    const snap = replay([w.event, p.event, cw.event, cp.event, sw.event, sp.event])
-    expect(servingTickets(snap, "priority").map((t) => t.id)).toEqual([p.ticket.id])
-    expect(servingTickets(snap, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
   })
 
   it("globalPositionOf sums Waiting in upstream lanes plus position in own lane", () => {
@@ -551,34 +459,6 @@ describe("applyEvent ignores no-op transitions", () => {
     const t = snap.tickets.get(a.ticket.id)
     expect(t?.state).toBe("Waiting")
   })
-
-  it("a ServingStarted event for a non-Called ticket is a no-op", () => {
-    const a = issue(1)
-    const ssEv = {
-      id: newTicketEventId(),
-      ticketId: a.ticket.id,
-      version: 1 as const,
-      occurredAt: at("2026-05-08T09:01:00Z"),
-      recordedAt: at("2026-05-08T09:01:00Z"),
-      type: "ServingStarted" as const,
-      servingStartedBy: "staff" as const,
-    }
-    const snap = replay([a.event, ssEv])
-    expect(snap.tickets.get(a.ticket.id)?.state).toBe("Waiting")
-  })
-
-  it("a ServingStarted event for an unknown ticket is a no-op", () => {
-    const ghostEv = {
-      id: newTicketEventId(),
-      ticketId: newTicketId(),
-      version: 1 as const,
-      occurredAt: at("2026-05-08T09:00:00Z"),
-      recordedAt: at("2026-05-08T09:00:00Z"),
-      type: "ServingStarted" as const,
-      servingStartedBy: "staff" as const,
-    }
-    expect(applyEvent(empty, ghostEv).tickets.size).toBe(0)
-  })
 })
 
 describe("Recalled fold", () => {
@@ -616,48 +496,6 @@ describe("Recalled fold", () => {
     const afterRecall = applyMany(beforeRecall, [recall.event])
     expect(waitingCount(afterRecall)).toBe(2)
     expect(head(afterRecall)?.id).toBe(a.ticket.id)
-  })
-})
-
-describe("ServingStarted fold (ADR-0063)", () => {
-  it("Issue → Called → ServingStarted projects to Serving", () => {
-    const a = issue(1)
-    const call = applyCall(a.ticket as Waiting, {
-      at: at("2026-05-08T09:05:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const start = applyStartServing(
-      call.ticket as Called,
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-    )
-    const snap = replay([a.event, call.event, start.event])
-    const t = snap.tickets.get(a.ticket.id)
-    expect(t?.state).toBe("Serving")
-  })
-
-  it("Issue → Called → ServingStarted → MarkServed projects to Served carrying serving fields", () => {
-    const a = issue(1)
-    const call = applyCall(a.ticket as Waiting, {
-      at: at("2026-05-08T09:05:00Z"),
-      eventId: newTicketEventId(),
-    })
-    const start = applyStartServing(
-      call.ticket as Called,
-      at("2026-05-08T09:07:00Z"),
-      newTicketEventId(),
-    )
-    const served = applyMarkServed(
-      start.ticket as Serving,
-      at("2026-05-08T09:10:00Z"),
-      newTicketEventId(),
-    )
-    const snap = replay([a.event, call.event, start.event, served.event])
-    const t = snap.tickets.get(a.ticket.id)
-    expect(t?.state).toBe("Served")
-    if (t?.state === "Served") {
-      expect(t.servingStartedBy).toBe("staff")
-    }
   })
 })
 
@@ -704,7 +542,7 @@ describe("Cancelled fold (projection coverage)", () => {
     expect(applyEvent(empty, ghostEv).tickets.size).toBe(0)
   })
 
-  it("a Served event for a non-Called/Serving ticket is a no-op", () => {
+  it("a Served event for a non-Called ticket is a no-op", () => {
     const a = issue(1)
     const servedEv = {
       id: newTicketEventId(),
@@ -878,7 +716,7 @@ describe("ADR-0066 / ADR-0067 — slot-aware projection", () => {
     expect(firstLaneWithCallable(snap, now, Temporal.Duration.from({ minutes: 5 }))).toBe("walkIn")
   })
 
-  it("slotOccupancy counts Waiting + Called + Serving reservations sharing the bucket startAt", () => {
+  it("slotOccupancy counts Waiting + Called reservations sharing the bucket startAt", () => {
     const slot = {
       date: Temporal.PlainDate.from("2026-05-08"),
       bucketId: (14 * 2) as never, // 14:00 in 30-min granularity (UTC)

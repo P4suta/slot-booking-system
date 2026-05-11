@@ -34,7 +34,6 @@
   "lane_reservation": "予約",
   "state_Waiting": "お待ちください",
   "state_Called": "呼ばれました",
-  "state_Serving": "対応中",
   "state_Served": "対応完了",
   "state_NoShow": "キャンセル扱い (時間切れ)",
   "state_Cancelled": "キャンセル済",

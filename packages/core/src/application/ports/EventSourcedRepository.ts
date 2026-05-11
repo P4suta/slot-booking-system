@@ -62,11 +62,11 @@ export type BatchedSave = {
  *      and `ConcurrencyError` carries the offending member's
  *      `(expected, actual)` pair.
  *   5. `findActiveByHandle(handle)` resolves the active-set primary
- *      key (ADR-0069). The pre-terminal set `{Waiting, Called,
- *      Serving}` is filtered on `(nameKana, phoneLast4)` for an
- *      O(log N) index lookup; the same method backs both the
- *      idempotent `IssueTicket` early-return and the customer
- *      recovery endpoint `GET /tickets/by-handle`.
+ *      key (ADR-0069). The pre-terminal set `{Waiting, Called}` is
+ *      filtered on `(nameKana, phoneLast4)` for an O(log N) index
+ *      lookup; the same method backs both the idempotent
+ *      `IssueTicket` early-return and the customer recovery
+ *      endpoint `GET /tickets/by-handle`.
  */
 export class TicketRepository extends Context.Service<
   TicketRepository,
@@ -94,8 +94,8 @@ export class TicketRepository extends Context.Service<
      * Active-set lookup by handle (ADR-0069). Returns the **unique**
      * active ticket whose stored `(nameKana, phoneLast4)` matches the
      * supplied handle, or `null` if none. "Active" is the pre-terminal
-     * set `{Waiting, Called, Serving}` — terminal states release the
-     * handle for re-use. The adapter is free to back this with an
+     * set `{Waiting, Called}` — terminal states release the handle
+     * for re-use. The adapter is free to back this with an
      * index (SQLite partial UNIQUE in the DO adapter) or a linear
      * scan (in-memory adapter); the contract is on uniqueness, not
      * implementation strategy. Used by both the idempotent

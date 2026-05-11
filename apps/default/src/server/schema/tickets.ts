@@ -56,6 +56,6 @@ export const tickets = sqliteTable(
     // bypasses the use case.
     uniqueIndex("uq_tickets_handle_active")
       .on(t.nameKana, t.phoneLast4)
-      .where(sql`state IN ('Waiting', 'Called', 'Serving')`),
+      .where(sql`state IN ('Waiting', 'Called')`),
   ],
 )

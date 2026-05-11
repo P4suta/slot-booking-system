@@ -77,9 +77,9 @@ export const updateMetric = (
  * scheduler).
  *
  * Returns `null` for unknown ticket ids and for non-Waiting tickets
- * (Called / Serving / Served / NoShow / Cancelled have no
- * meaningful "wait time remaining" in this scheme — the customer-
- * facing page renders state-specific copy instead).
+ * (Called / Served / NoShow / Cancelled have no meaningful "wait
+ * time remaining" in this scheme — the customer-facing page renders
+ * state-specific copy instead).
  */
 export const etaOf = (
   snap: QueueSnapshot,

@@ -58,18 +58,6 @@ export const CalledEventSchema = Schema.Struct({
 })
 export type CalledEvent = Schema.Schema.Type<typeof CalledEventSchema>
 
-/**
- * Operator-grade `Called → Serving` transition (ADR-0063). Marks
- * the moment the customer reached the counter; the NoShow alarm
- * sweep no longer applies past this point.
- */
-export const ServingStartedEventSchema = Schema.Struct({
-  ...TicketEventBaseFields,
-  type: Schema.Literal("ServingStarted"),
-  servingStartedBy: ActorSchema,
-})
-export type ServingStartedEvent = Schema.Schema.Type<typeof ServingStartedEventSchema>
-
 export const ServedEventSchema = Schema.Struct({
   ...TicketEventBaseFields,
   type: Schema.Literal("Served"),
@@ -131,7 +119,7 @@ export type CheckedInEvent = Schema.Schema.Type<typeof CheckedInEventSchema>
  * Ticket's `appointmentAt` in place and (transitively) the slot
  * occupancy on both the old and the new slot.
  *
- * Allowed on `state ∈ {Waiting, Called, Serving}` and `lane ===
+ * Allowed on `state ∈ {Waiting, Called}` and `lane ===
  * "reservation"`; walk-in / priority tickets carry `appointmentAt
  * === null` by lane invariant and are not rescheduleable. The
  * audit-log keeps both `from` and `to` so a no-show analysis can
@@ -154,7 +142,6 @@ export type RescheduledEvent = Schema.Schema.Type<typeof RescheduledEventSchema>
 export const TicketEventSchema = Schema.Union([
   IssuedEventSchema,
   CalledEventSchema,
-  ServingStartedEventSchema,
   ServedEventSchema,
   NoShowedEventSchema,
   CancelledEventSchema,
@@ -169,7 +156,6 @@ export type TicketEventType = TicketEvent["type"]
 export const ALL_TICKET_EVENT_TYPES: readonly TicketEventType[] = [
   "Issued",
   "Called",
-  "ServingStarted",
   "Served",
   "NoShowed",
   "Cancelled",

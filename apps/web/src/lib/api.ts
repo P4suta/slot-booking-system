@@ -15,7 +15,7 @@ export type Ticket = {
   readonly seq: number
   readonly lane: Lane
   readonly displaySeq: number
-  readonly state: "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
+  readonly state: "Waiting" | "Called" | "Served" | "NoShow" | "Cancelled"
   readonly nameKana: string | null
   readonly phoneLast4: string | null
   readonly freeText: string | null
@@ -44,7 +44,7 @@ export type ProjectionEntry = {
   readonly lane: Lane
   readonly displaySeq: number
   readonly appointmentAt: string | null
-  readonly state: "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
+  readonly state: "Waiting" | "Called" | "Served" | "NoShow" | "Cancelled"
 }
 
 type LaneCounts = {
@@ -437,15 +437,6 @@ export const callSpecific = async (
     method: "POST",
     headers: staffHeaders(token),
     body: JSON.stringify({ ticketId }),
-  })
-
-export const startServing = async (
-  token: string,
-  ticketId: string,
-): Promise<ApiResult<{ ticket: Ticket }>> =>
-  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/start-serving`, {
-    method: "POST",
-    headers: staffHeaders(token),
   })
 
 export const markServed = async (
