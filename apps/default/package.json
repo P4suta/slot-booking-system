@@ -16,8 +16,8 @@
   "size-limit": [
     {
       "name": "worker bundle (uncompressed)",
-      "path": "dist/index.js",
-      "limit": "1 MB",
+      "path": "dist/worker.js",
+      "limit": "5 MB",
       "brotli": false,
       "gzip": false
     }

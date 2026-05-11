@@ -101,12 +101,43 @@ markdownlint:
 
 lint: lint-biome lint-eslint markdownlint
 
+# Spell-check across the whole working tree. `typos` is fast
+# enough (~50 ms cold) to run on every gate. Exit non-zero on any
+# misspelling; the project's `_typos.toml` carries the
+# domain-specific allowlist (e.g., "Mattern", "kana").
+typos:
+    typos
+
+# GitHub Actions workflow lint. Catches deprecated syntax,
+# unused workflow inputs, and shell quoting bugs the workflow
+# author would otherwise discover only after a failed run.
+actionlint:
+    actionlint .github/workflows/*.yml
+
+# Paraglide i18n compile drift gate. `paraglide-js compile`
+# regenerates `apps/web/src/paraglide/` from `apps/web/messages/`;
+# if a message key was added without committing the regenerated
+# output the working tree diff fails the gate. Same intent as
+# `error-docs-drift-check` for the error registry.
+paraglide-check:
+    {{DEV}} bash -c "cd apps/web && corepack pnpm run paraglide"
+    git diff --exit-code -- apps/web/src/paraglide
+
 # ---------------------------------------------------------------------------
 # Type / arch / strict-code / dead-code gates
 # ---------------------------------------------------------------------------
 
 typecheck:
     {{DEV}} ./node_modules/.bin/tsc -b --pretty
+
+# Svelte-specific type / a11y / unused-css check. svelte-check runs
+# the Svelte compiler over `.svelte` files (which `tsc` alone does
+# not parse) and surfaces TS / a11y / CSS warnings. Treated as a
+# hard gate (zero errors / zero warnings) — Stage 20+ ADR-0088
+# baseline: every Svelte 5 rune narrow and every CSS selector is
+# accountable.
+svelte-check:
+    {{DEV}} {{PNPM}} -F web run check
 
 # Architecture: dependency-cruiser enforces layer direction + forbidden
 # constructs (cloudflare:, … inside packages/core).

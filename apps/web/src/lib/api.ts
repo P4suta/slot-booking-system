@@ -301,6 +301,26 @@ export const rescheduleTicket = async (
 export const shopState = async (): Promise<ApiResult<ShopState>> =>
   fetchJson(`${baseUrl()}/api/v1/queue`)
 
+/**
+ * POST /api/v1/staff/login — exchange the deployment secret for a
+ * JWT (response body) + an HMAC-signed `__Host-staff_session`
+ * cookie (response Set-Cookie). Same-origin via vite proxy in
+ * dev + same Cloudflare zone in prod, so the cookie round-trips
+ * intact and rides the next WebSocket `/queue/feed` upgrade —
+ * which is how the worker tags the socket `cap:staff` (ADR-0083
+ * part 2). Without this call no staff cookie exists, the WS
+ * upgrade falls back to anonymous, and the staff Kanban stays
+ * at the "読み込み中..." skeleton (ADR-0085).
+ */
+export const staffLogin = async (
+  password: string,
+): Promise<ApiResult<{ token: string; expiresIn: number }>> =>
+  fetchJson(`${baseUrl()}/api/v1/staff/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password }),
+  })
+
 const wsUrl = (): string => {
   const http = baseUrl()
   return http === ""

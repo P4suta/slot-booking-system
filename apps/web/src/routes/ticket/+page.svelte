@@ -100,29 +100,45 @@
   // ADR-0068: customer can hit 「到着しました」 once `now ≥ appointmentAt - 10min`.
   const CHECK_IN_WINDOW_MS = 10 * 60 * 1000
 
-  const isReservation = $derived(
-    ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined,
-  )
-  const isActive = $derived(ticket?.state === "Waiting" || ticket?.state === "Called")
+  // Each `$derived.by` binds `ticket` to a local const before
+  // accessing fields, because Svelte 5's arrow-shorthand `$derived`
+  // collapses `Ticket | null` to `never` once the optional-chain
+  // narrows the snapshot. The `.by` form with a `const t = ticket`
+  // anchor keeps the discriminated narrow alive across reads.
+  const isReservation = $derived.by(() => {
+    const t = ticket
+    return t !== null && t.appointmentAt !== null
+  })
+  const isActive = $derived.by(() => {
+    const t = ticket
+    return t !== null && (t.state === "Waiting" || t.state === "Called")
+  })
   // Visibility guard for the reschedule button. Disable-on-WS-drop
   // is delegated to the button itself, mirroring how cancel handles
   // a feedState !== "open" tab.
   const canReschedule = $derived(isReservation && isActive)
-  const appointmentMs = $derived(
-    ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined
-      ? Date.parse(ticket.appointmentAt)
-      : null,
-  )
+  const appointmentMs = $derived.by(() => {
+    const t = ticket
+    if (t === null || t.appointmentAt === null) return null
+    return Date.parse(t.appointmentAt)
+  })
   const minutesUntilAppointment = $derived(
     appointmentMs !== null ? Math.round((appointmentMs - now) / 60000) : null,
   )
-  const checkInAvailable = $derived(
-    appointmentMs !== null &&
-      ticket?.state === "Waiting" &&
-      ticket.checkedInAt === null &&
-      now >= appointmentMs - CHECK_IN_WINDOW_MS,
-  )
-  const alreadyCheckedIn = $derived(ticket?.checkedInAt !== null && ticket?.checkedInAt !== undefined)
+  const checkInAvailable = $derived.by(() => {
+    const t = ticket
+    return (
+      appointmentMs !== null &&
+      t !== null &&
+      t.state === "Waiting" &&
+      t.checkedInAt === null &&
+      now >= appointmentMs - CHECK_IN_WINDOW_MS
+    )
+  })
+  const alreadyCheckedIn = $derived.by(() => {
+    const t = ticket
+    return t !== null && t.checkedInAt !== null
+  })
 
   const onCheckIn = async (): Promise<void> => {
     if (stored === null || ticket === null) return
@@ -252,12 +268,12 @@
   }
 
   const positionInfo = $derived.by(() => {
-    if (ticket === null || snapshot === null) return null
-    if (ticket.state !== "Waiting") return null
-    const sameLane = snapshot.waitingPreview.filter(
-      (t: ProjectionEntry) => t.lane === ticket?.lane,
-    )
-    const idx = sameLane.findIndex((t) => t.id === ticket?.id)
+    const t = ticket
+    const snap = snapshot
+    if (t === null || snap === null) return null
+    if (t.state !== "Waiting") return null
+    const sameLane = snap.waitingPreview.filter((e: ProjectionEntry) => e.lane === t.lane)
+    const idx = sameLane.findIndex((e) => e.id === t.id)
     return idx >= 0 ? idx : null
   })
 
@@ -270,9 +286,10 @@
   // always asking "what's my number" so we bias toward showing it.
   let flipped = $state(false)
   let flipFocused = $state(false)
-  const flipShowable = $derived(
-    ticket !== null && ticket.state === "Waiting" && positionInfo !== null,
-  )
+  const flipShowable = $derived.by(() => {
+    const t = ticket
+    return t !== null && t.state === "Waiting" && positionInfo !== null
+  })
   let flipTimer: ReturnType<typeof setInterval> | undefined
   const startFlipTimer = (): void => {
     if (flipTimer !== undefined) clearInterval(flipTimer)
@@ -318,12 +335,15 @@
   // static — no point cycling to a button they don't need.
   let qrFlipped = $state(false)
   let qrFlipFocused = $state(false)
-  const qrFlipShowable = $derived(
-    qrDataUrl !== null &&
-      ticket !== null &&
-      ticket.state === "Waiting" &&
-      notificationState === "default",
-  )
+  const qrFlipShowable = $derived.by(() => {
+    const t = ticket
+    return (
+      qrDataUrl !== null &&
+      t !== null &&
+      t.state === "Waiting" &&
+      notificationState === "default"
+    )
+  })
   let qrFlipTimer: ReturnType<typeof setInterval> | undefined
   const startQrFlipTimer = (): void => {
     if (qrFlipTimer !== undefined) clearInterval(qrFlipTimer)
@@ -945,12 +965,6 @@
       grid-column: 2;
       grid-row: 1;
     }
-    .ticket-page > .appointment-card,
-    .ticket-page > .actions,
-    .ticket-page > .banner,
-    .ticket-page > .loading {
-      grid-column: 1 / -1;
-    }
   }
   /* Flip-card structure. The wrap is the grid item; the flip is a
      position:relative container that hosts the two absolutely-
@@ -1051,17 +1065,6 @@
     color: var(--color-fg-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-  }
-  .position {
-    text-align: center;
-    margin: 0;
-    font: var(--text-body-md);
-  }
-  .position strong {
-    font: var(--text-numeral-md);
-    color: var(--color-fg-primary);
-    font-variant-numeric: tabular-nums;
-    margin: 0 var(--space-2);
   }
   .notif-opt-in {
     display: flex;

@@ -56,6 +56,13 @@ pre-push:
       run: scripts/dev-exec.ts bash -c "cd apps/web && corepack pnpm run paraglide"
     typecheck:
       run: scripts/dev-exec.ts ./node_modules/.bin/tsc -b --pretty
+    svelte-check:
+      # svelte-check parses .svelte files (which tsc -b alone does
+      # not) and surfaces TS / a11y / unused-CSS diagnostics. Run as
+      # a hard gate: any svelte-check error OR warning fails the
+      # push. Same intent as biome --error-on-warnings + eslint
+      # --max-warnings 0 — "fix later" warnings never silently drift.
+      run: scripts/dev-exec.ts bash -c "cd apps/web && corepack pnpm run check"
     biome-full:
       run: scripts/dev-exec.ts ./node_modules/.bin/biome check --error-on-warnings .
     eslint-full:

@@ -26,6 +26,7 @@
     type QueueFeedHandle,
     recall,
     staffCancel,
+    staffLogin,
     type Ticket,
   } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
@@ -42,9 +43,19 @@
   import { writeLegacyStatus } from "$lib/wsStatus.js"
 
   /* ---------- state ---------- */
+  // svelte-ignore state_referenced_locally
+  // The initial value of `token` is read once from localStorage at
+  // module init so the login form pre-fills when the staff has logged
+  // in before. After mount the `bind:value` on the input drives the
+  // reactive updates; we never want to "follow" localStorage past
+  // the initial bootstrap.
   let token = $state(
     typeof window === "undefined" ? "" : (localStorage.getItem("queue.staffToken") ?? ""),
   )
+  // svelte-ignore state_referenced_locally
+  // `authenticated` snapshots the initial token presence at module
+  // init only; subsequent state lives behind `onLogin` /
+  // `onLogout` which assign `authenticated` explicitly.
   let authenticated = $state(token.length > 0)
   let busy = $state(false)
   let error: string | null = $state(null)
@@ -256,15 +267,48 @@
     toast = { message, variant, undoLabel, onUndo }
   }
 
-  /* ---------- auth ---------- */
-  const onLogin = (event: SubmitEvent): void => {
+  /* ---------- auth ----------
+   *
+   * The staff login round-trip discards the response body's JWT
+   * (REST mutations keep using `x-staff-token` for now) but the
+   * `Set-Cookie` side-effect installs `__Host-staff_session`,
+   * which the WebSocket `/queue/feed` upgrade carries so the
+   * worker tags the socket `cap:staff` (ADR-0083 part 2).
+   * Without that cookie the WS opens anonymous and the Kanban
+   * stays at the "読み込み中..." skeleton (ADR-0085). The
+   * envelope's `debug` field (ADR-0089) surfaces the failure
+   * reason on a 401 so the operator sees *why* the credential
+   * was rejected (length / value mismatch with sanitized
+   * head/tail preview).
+   */
+  const installSessionCookie = async (rawToken: string): Promise<boolean> => {
+    const r = await staffLogin(rawToken)
+    if (!r.ok) {
+      const debug = (r.error as { readonly debug?: { readonly hint?: string } }).debug
+      error =
+        debug?.hint !== undefined
+          ? `login: ${r.error._tag} — ${debug.hint}`
+          : `login: ${r.error._tag}`
+      return false
+    }
+    return true
+  }
+
+  const onLogin = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
     if (token.length === 0) return
-    localStorage.setItem("queue.staffToken", token)
-    markStaffLoggedIn()
-    authenticated = true
-    ensureNotificationPermission()
-    startLiveFeed()
+    busy = true
+    error = null
+    try {
+      if (!(await installSessionCookie(token))) return
+      localStorage.setItem("queue.staffToken", token)
+      markStaffLoggedIn()
+      authenticated = true
+      ensureNotificationPermission()
+      await startLiveFeed()
+    } finally {
+      busy = false
+    }
   }
 
   const onLogout = (): void => {
@@ -377,7 +421,20 @@
       // renders without waiting for an explicit login event.
       markStaffLoggedIn()
       ensureNotificationPermission()
-      startLiveFeed()
+      // Refresh the __Host-staff_session cookie via a silent
+      // login round-trip. The cookie has an 8h TTL — past that
+      // (or after a manual cookie-jar wipe) the WS upgrade falls
+      // back to anonymous and the Kanban stays at the
+      // "読み込み中..." skeleton. Re-installing the cookie up
+      // front keeps the page reload path symmetric with the
+      // explicit login form (ADR-0085).
+      void (async () => {
+        if (await installSessionCookie(token)) {
+          await startLiveFeed()
+        } else {
+          authenticated = false
+        }
+      })()
     }
   })
 

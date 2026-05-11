@@ -176,6 +176,7 @@
     padding: 0;
     /* iOS / macOS Safari: numbers spinner suppression */
     -moz-appearance: textfield;
+    appearance: textfield;
   }
   input::-webkit-outer-spin-button,
   input::-webkit-inner-spin-button {

@@ -32,7 +32,10 @@ const GATES: readonly Gate[] = [
   { name: "lint-biome", timeoutSec: 30 },
   { name: "lint-eslint", timeoutSec: 60 },
   { name: "markdownlint", timeoutSec: 30 },
+  { name: "typos", timeoutSec: 30 },
+  { name: "actionlint", timeoutSec: 30 },
   { name: "typecheck", timeoutSec: 60 },
+  { name: "svelte-check", timeoutSec: 90 },
   { name: "arch", timeoutSec: 30 },
   { name: "comment-bans", timeoutSec: 30 },
   { name: "strict-code", timeoutSec: 30 },
@@ -40,6 +43,9 @@ const GATES: readonly Gate[] = [
   { name: "type-coverage", timeoutSec: 60 },
   { name: "test-coverage", timeoutSec: 120 },
   { name: "size-limit-core", timeoutSec: 120 },
+  { name: "size-limit-default", timeoutSec: 180 },
+  { name: "size-limit-web", timeoutSec: 180 },
+  { name: "paraglide-check", timeoutSec: 60 },
   { name: "error-docs-drift-check", timeoutSec: 60 },
 ]
 
