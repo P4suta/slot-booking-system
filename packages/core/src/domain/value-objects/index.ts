@@ -1,5 +1,6 @@
 export * from "./BusinessTimeZone.js"
 export * from "./CustomerHandle.js"
+export * from "./Duration.js"
 export * from "./FreeText.js"
 export * from "./NameKana.js"
 export * from "./PhoneLast4.js"
