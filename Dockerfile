@@ -25,6 +25,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         xz-utils \
     && corepack enable
 
+# Pre-trust the bind-mounted workspace: the host bind-mount is owned by a
+# non-root uid, so Git 2.35.2+ otherwise rejects with "detected dubious
+# ownership" and `just hooks` (lefthook install) fails on first bootstrap.
+RUN git config --system --add safe.directory /workspace
+
 ARG JUST_VERSION=1.36.0
 RUN curl -fsSL https://just.systems/install.sh \
     | bash -s -- --to /usr/local/bin --tag ${JUST_VERSION}
