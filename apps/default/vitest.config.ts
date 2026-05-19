@@ -46,6 +46,20 @@ export default defineConfig({
             wrangler: { configPath: "./wrangler.toml" },
             miniflare: {
               compatibilityFlags: ["nodejs_compat"],
+              // STAFF_SESSION_SECRET is normally injected via
+              // `.dev.vars` for `wrangler dev` (and via
+              // `wrangler secret put` in prod). Miniflare under
+              // vitest-pool-workers does not pick `.dev.vars` up,
+              // so `requireStaff` would return 503 `absent` for
+              // every staff-touching request. The value mirrors
+              // the `SECRET` literal each integration test file
+              // signs its `staffHeaders()` envelope with, so
+              // both ends of the JWT / session-cookie round-trip
+              // see the same key.
+              bindings: {
+                STAFF_SESSION_SECRET:
+                  "dev-local-secret-do-not-use-in-prod-32bytes-hex-cafebabedeadbeef",
+              },
             },
           }),
         ],
