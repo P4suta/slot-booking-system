@@ -52,10 +52,17 @@ jobs:
             stryker-${{ runner.os }}-
 
       - name: Run Stryker (incremental)
+        env:
+          STRYKER_THRESHOLD: ${{ inputs.threshold }}
         run: |
-          docker compose run --rm dev corepack pnpm \
-            -F @booking/core run test:mutation -- --incremental \
-            ${{ inputs.threshold && format('--threshold-break {0}', inputs.threshold) || '' }}
+          if [ -n "$STRYKER_THRESHOLD" ]; then
+            docker compose run --rm dev corepack pnpm \
+              -F @booking/core run test:mutation -- --incremental \
+              --threshold-break "$STRYKER_THRESHOLD"
+          else
+            docker compose run --rm dev corepack pnpm \
+              -F @booking/core run test:mutation -- --incremental
+          fi
 
       - name: Upload mutation HTML report
         if: always()
