@@ -16,3 +16,7 @@ allowBuilds:
   protobufjs: true
   sharp: true
   workerd: true
+
+overrides:
+  "cookie@<0.7.0": "^0.7.0"
+  "ws@<8.20.1": "^8.20.1"
