@@ -52,7 +52,7 @@ importers:
         version: 4.0.0-beta.67
       hono:
         specifier: latest
-        version: 4.12.19
+        version: 4.12.21
       jose:
         specifier: latest
         version: 6.2.3
@@ -2817,8 +2817,8 @@ packages:
   highlight.js@10.7.3:
     resolution: {integrity: sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A==}
 
-  hono@4.12.19:
-    resolution: {integrity: sha512-xa3eYXYXx68XTT4hZ7dRzsXBhaq85ToSrlUJNoR0gwz/1Ap/CNwX47wfvV7pc/xWhjKVVkLT7zBJy8chhNguqQ==}
+  hono@4.12.21:
+    resolution: {integrity: sha512-uV63apnb0kyPtAUwoWgaGh9HyIFcv8lgmzPZSiTBQAFOFGIzka5EZ1dZocmGnn0XdX0+XTqJ6Tqv7selMuGLRQ==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@2.0.2:
@@ -6261,7 +6261,7 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  hono@4.12.19: {}
+  hono@4.12.21: {}
 
   html-escaper@2.0.2: {}
 
