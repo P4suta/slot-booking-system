@@ -77,13 +77,13 @@ export const sendPush = async (params: SendPushParams): Promise<SendPushResult> 
         TTL: String(params.ttl ?? 60),
       },
       // TS 6 narrowed `BodyInit`: `Uint8Array<ArrayBufferLike>` does
-      // not match `Uint8Array<ArrayBuffer>`. The wire bytes we send
-      // are guaranteed ArrayBuffer-backed (the encrypted record is
-      // built via `new Uint8Array(total)`); the cast is safe.
-      // TODO: revisit when the boundary-cast cleanup lands; the
-      // `payload.ts` pattern of an explicit `as BufferSource` with a
-      // justifying comment may also satisfy this site.
-      body: body as unknown as BodyInit,
+      // not match `Uint8Array<ArrayBuffer>` even though every byte
+      // path in this file builds through `new Uint8Array(total)`
+      // (private `ArrayBuffer`, not `SharedArrayBuffer`). The
+      // `as BufferSource` cast matches the `payload.ts` pattern
+      // (commented over each SubtleCrypto call) and shrinks the
+      // narrow-then-rewiden chain to a single named-type assertion.
+      body: body as BufferSource,
     })
   } catch (cause) {
     return { kind: "transportError", cause }

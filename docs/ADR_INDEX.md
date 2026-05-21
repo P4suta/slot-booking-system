@@ -75,6 +75,7 @@ back.
 | [0075](./adr/0075-appointment-lapse-auto-cancel.md) | Appointment-lapse auto-cancel                                 | accepted |
 | [0076](./adr/0076-schema-driven-action-handler-table.md) | Schema-driven QueueAction handler table                   | accepted |
 | [0077](./adr/0077-push-subscription-port.md)        | Push subscription as a separate aggregate port                | accepted |
+| [0078](./adr/0078-openapi-derived-from-schema.md)   | OpenAPI derived from Effect.Schema boundary registry          | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).

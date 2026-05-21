@@ -1,5 +1,5 @@
 import type { Context, Next } from "hono"
-import type { Env } from "./types.js"
+import type { Env, RateLimitBinding } from "./types.js"
 
 /**
  * Cloudflare Workers rate-limit binding wrapper. The binding shape
@@ -31,10 +31,6 @@ import type { Env } from "./types.js"
  * rejects with 429 + Retry-After.
  */
 
-type RateLimitBinding = {
-  readonly limit: (args: { key: string }) => Promise<{ success: boolean }>
-}
-
 export type RateLimitNamespace = "RL_ISSUE" | "RL_OPERATE" | "RL_VERIFY"
 
 const KEY_FNS: Record<RateLimitNamespace, (c: Context<{ Bindings: Env }>) => string> = {
@@ -48,13 +44,7 @@ const RETRY_AFTER_SECONDS = 60
 const getBinding = (
   c: Context<{ Bindings: Env }>,
   ns: RateLimitNamespace,
-): RateLimitBinding | undefined => {
-  // The binding type is opaque; treat the env access as a runtime
-  // probe so wrangler-dev (no binding) and production (real
-  // binding) both compile.
-  const env = c.env as unknown as Record<string, RateLimitBinding | undefined>
-  return env[ns]
-}
+): RateLimitBinding | undefined => c.env[ns]
 
 export const rateLimitMiddleware = (
   ns: RateLimitNamespace,
