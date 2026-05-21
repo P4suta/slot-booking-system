@@ -68,4 +68,34 @@ export default tseslint.config(
       ],
     },
   },
+  // Schema-mediated persistence gate (ADR-0019 / ADR-0059).
+  // `apps/default/src/server/{adapters,durableObjects}/` is the
+  // boundary where `tickets.payload` / `ticket_events.payload` round-
+  // trip; the only legitimate `JSON.parse` and identifier-argument
+  // `JSON.stringify` sites live under
+  // `apps/default/src/server/adapters/codec/`. Object-literal
+  // `JSON.stringify({...})` (structured logging) is explicitly OK.
+  {
+    files: [
+      "apps/default/src/server/adapters/**/*.ts",
+      "apps/default/src/server/durableObjects/**/*.ts",
+    ],
+    ignores: ["apps/default/src/server/adapters/codec/**"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.object.name='JSON'][callee.property.name='parse']",
+          message:
+            "JSON.parse on storage payloads belongs in apps/default/src/server/adapters/codec/. Route ticket / event row deserialization through ./codec/ticketRowCodec.ts (decodeTicketRowPayload / decodeEventRowPayload / decodeTicketRowToEncoded).",
+        },
+        {
+          selector:
+            "CallExpression[callee.object.name='JSON'][callee.property.name='stringify'][arguments.0.type!='ObjectExpression']",
+          message:
+            "JSON.stringify on storage payloads belongs in apps/default/src/server/adapters/codec/. Object-literal stringify (structured logging) is OK; identifier / expression stringify of ticket / event payloads must go through ./codec/ticketRowCodec.ts.",
+        },
+      ],
+    },
+  },
 )

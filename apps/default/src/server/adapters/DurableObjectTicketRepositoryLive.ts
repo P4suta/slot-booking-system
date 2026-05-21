@@ -9,12 +9,16 @@ import {
   StorageError,
   type Ticket,
   type TicketEvent,
-  TicketEventSchema,
   type TicketId,
   TicketRepository,
-  TicketSchema,
 } from "@booking/core"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer } from "effect"
+import {
+  decodeEventRowPayload,
+  decodeTicketRowPayload,
+  encodeEventRowPayload,
+  encodeTicketRowPayload,
+} from "./codec/ticketRowCodec.js"
 
 /**
  * Aggregate snapshots emit every K events so `load(id)` can hydrate
@@ -62,11 +66,7 @@ ON CONFLICT(id) DO UPDATE SET
   revision = excluded.revision,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
 
-const ticketColumns = (
-  next: Ticket,
-  encodedTicket: unknown,
-  revision: number,
-): readonly unknown[] => [
+const ticketColumns = (next: Ticket, revision: number): readonly unknown[] => [
   next.id,
   next.seq,
   next.state,
@@ -89,7 +89,7 @@ const ticketColumns = (
   "calledBy" in next ? next.calledBy : null,
   "servedBy" in next ? next.servedBy : null,
   "markedBy" in next ? next.markedBy : null,
-  JSON.stringify(encodedTicket),
+  encodeTicketRowPayload(next),
   revision,
 ]
 
@@ -111,6 +111,11 @@ const ticketColumns = (
  * (`sql.exec` calls inside a single transaction) so partial-success
  * is impossible — the revision check, event log append, snapshot
  * upsert, projection refresh, and outbox enqueue all land or none do.
+ *
+ * Every `payload TEXT` round-trip goes through
+ * `./codec/ticketRowCodec.ts` so the Schema-mediated boundary
+ * regression (ADR-0019 / ADR-0059) cannot reopen — see the codec
+ * module for the lint gate that pins this property.
  */
 export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
   Layer.succeed(TicketRepository, {
@@ -135,7 +140,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
         if (snap !== undefined) {
           baseRevision = Number(snap.revision ?? 0)
           baseTicket = yield* Effect.try({
-            try: () => Schema.decodeUnknownSync(TicketSchema)(JSON.parse(snap.payload as string)),
+            try: () => decodeTicketRowPayload(snap.payload),
             catch: (e) => new StorageError({ reason: "decode.snapshot", cause: e }),
           })
         }
@@ -154,8 +159,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           let acc: QueueSnapshot = { tickets: new Map([[id, baseTicket]]) }
           for (const r of evRows) {
             const ev = yield* Effect.try({
-              try: () =>
-                Schema.decodeUnknownSync(TicketEventSchema)(JSON.parse(r.payload as string)),
+              try: () => decodeEventRowPayload(r.payload),
               catch: (e) => new StorageError({ reason: "decode.event", cause: e }),
             })
             acc = applyEvent(acc, ev)
@@ -169,8 +173,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           let acc: QueueSnapshot = emptySnapshot
           for (const r of evRows) {
             const ev = yield* Effect.try({
-              try: () =>
-                Schema.decodeUnknownSync(TicketEventSchema)(JSON.parse(r.payload as string)),
+              try: () => decodeEventRowPayload(r.payload),
               catch: (e) => new StorageError({ reason: "decode.event", cause: e }),
             })
             acc = applyEvent(acc, ev)
@@ -190,7 +193,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
         const row = rows[0]
         if (row === undefined) return yield* Effect.fail(new AggregateNotFoundError({}))
         const decoded = yield* Effect.try({
-          try: () => Schema.decodeUnknownSync(TicketSchema)(JSON.parse(row.payload as string)),
+          try: () => decodeTicketRowPayload(row.payload),
           catch: (e) => new StorageError({ reason: "decode.ticket", cause: e }),
         })
         return { state: decoded, revision: Number(row.revision ?? 0) }
@@ -212,7 +215,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           let seq = current
           for (const ev of events) {
             seq += 1
-            const encoded = Schema.encodeUnknownSync(TicketEventSchema)(ev)
+            const encoded = encodeEventRowPayload(ev)
             sql.exec(
               "INSERT INTO ticket_events (id, ticket_id, seq, type, occurred_at, recorded_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
               ev.id,
@@ -221,20 +224,19 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
               ev.type,
               String(ev.occurredAt),
               String(ev.recordedAt),
-              JSON.stringify(encoded),
+              encoded,
             )
             sql.exec(
               "INSERT OR IGNORE INTO outbox (id, ticket_id, payload) VALUES (?, ?, ?)",
               ev.id,
               ev.ticketId,
-              JSON.stringify(encoded),
+              encoded,
             )
           }
-          const encodedTicket = Schema.encodeUnknownSync(TicketSchema)(next)
           const nextRevision = current + events.length
-          sql.exec(TICKET_INSERT_SQL, ...ticketColumns(next, encodedTicket, nextRevision))
+          sql.exec(TICKET_INSERT_SQL, ...ticketColumns(next, nextRevision))
           if (nextRevision % SNAPSHOT_INTERVAL === 0) {
-            sql.exec(SNAPSHOT_UPSERT_SQL, id, nextRevision, JSON.stringify(encodedTicket))
+            sql.exec(SNAPSHOT_UPSERT_SQL, id, nextRevision, encodeTicketRowPayload(next))
           }
         },
         catch: (e) => {
@@ -248,7 +250,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           let seq = 0
           for (const ev of events) {
             seq += 1
-            const encoded = Schema.encodeUnknownSync(TicketEventSchema)(ev)
+            const encoded = encodeEventRowPayload(ev)
             sql.exec(
               "INSERT INTO ticket_events (id, ticket_id, seq, type, occurred_at, recorded_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
               ev.id,
@@ -257,20 +259,19 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
               ev.type,
               String(ev.occurredAt),
               String(ev.recordedAt),
-              JSON.stringify(encoded),
+              encoded,
             )
             sql.exec(
               "INSERT OR IGNORE INTO outbox (id, ticket_id, payload) VALUES (?, ?, ?)",
               ev.id,
               ev.ticketId,
-              JSON.stringify(encoded),
+              encoded,
             )
           }
-          const encodedTicket = Schema.encodeUnknownSync(TicketSchema)(next)
           const nextRevision = events.length
-          sql.exec(TICKET_INSERT_SQL, ...ticketColumns(next, encodedTicket, nextRevision))
+          sql.exec(TICKET_INSERT_SQL, ...ticketColumns(next, nextRevision))
           if (nextRevision % SNAPSHOT_INTERVAL === 0) {
-            sql.exec(SNAPSHOT_UPSERT_SQL, next.id, nextRevision, JSON.stringify(encodedTicket))
+            sql.exec(SNAPSHOT_UPSERT_SQL, next.id, nextRevision, encodeTicketRowPayload(next))
           }
         },
         catch: (e) => new StorageError({ reason: "issue", cause: e }),
@@ -295,7 +296,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
             let seq = u.expected
             for (const ev of u.events) {
               seq += 1
-              const encoded = Schema.encodeUnknownSync(TicketEventSchema)(ev)
+              const encoded = encodeEventRowPayload(ev)
               sql.exec(
                 "INSERT INTO ticket_events (id, ticket_id, seq, type, occurred_at, recorded_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 ev.id,
@@ -304,20 +305,19 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
                 ev.type,
                 String(ev.occurredAt),
                 String(ev.recordedAt),
-                JSON.stringify(encoded),
+                encoded,
               )
               sql.exec(
                 "INSERT OR IGNORE INTO outbox (id, ticket_id, payload) VALUES (?, ?, ?)",
                 ev.id,
                 ev.ticketId,
-                JSON.stringify(encoded),
+                encoded,
               )
             }
-            const encodedTicket = Schema.encodeUnknownSync(TicketSchema)(u.next)
             const nextRevision = u.expected + u.events.length
-            sql.exec(TICKET_INSERT_SQL, ...ticketColumns(u.next, encodedTicket, nextRevision))
+            sql.exec(TICKET_INSERT_SQL, ...ticketColumns(u.next, nextRevision))
             if (nextRevision % SNAPSHOT_INTERVAL === 0) {
-              sql.exec(SNAPSHOT_UPSERT_SQL, u.id, nextRevision, JSON.stringify(encodedTicket))
+              sql.exec(SNAPSHOT_UPSERT_SQL, u.id, nextRevision, encodeTicketRowPayload(u.next))
             }
           }
         },
@@ -338,9 +338,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
       Effect.try({
         try: () => {
           const rows = sql.exec("SELECT payload FROM tickets ORDER BY seq ASC").toArray()
-          return rows.map((r) =>
-            Schema.decodeUnknownSync(TicketSchema)(JSON.parse(r.payload as string)),
-          )
+          return rows.map((r) => decodeTicketRowPayload(r.payload))
         },
         catch: (e) => new StorageError({ reason: "listAll", cause: e }),
       }),
@@ -363,7 +361,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
             .toArray()
           const row = rows[0]
           if (row === undefined) return null
-          return Schema.decodeUnknownSync(TicketSchema)(JSON.parse(row.payload as string))
+          return decodeTicketRowPayload(row.payload)
         },
         catch: (e) => new StorageError({ reason: "findActiveByHandle", cause: e }),
       }),
