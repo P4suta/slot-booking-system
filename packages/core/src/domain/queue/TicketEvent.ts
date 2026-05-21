@@ -59,16 +59,64 @@ export const CalledEventSchema = Schema.Struct({
 export type CalledEvent = Schema.Schema.Type<typeof CalledEventSchema>
 
 /**
- * Operator-grade `Called → Serving` transition (ADR-0063). Marks
- * the moment the customer reached the counter; the NoShow alarm
- * sweep no longer applies past this point.
+ * @deprecated Superseded by [[ADR-0071]] — `Serving` is removed; new
+ * code MUST NOT emit `ServingStarted` events. The variant stays in
+ * the union solely so historical event-log records replay without
+ * tripping ADR-0013 exhaustiveness. The projector folds this event
+ * as a no-op (state stays `Called`).
  */
 export const ServingStartedEventSchema = Schema.Struct({
   ...TicketEventBaseFields,
   type: Schema.Literal("ServingStarted"),
   servingStartedBy: ActorSchema,
 })
+/** @deprecated See {@link ServingStartedEventSchema}. */
+// eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional historical alias, see ADR-0071
 export type ServingStartedEvent = Schema.Schema.Type<typeof ServingStartedEventSchema>
+
+/**
+ * Auto-fired by the alarm sweep (ADR-0072) `OVERDUE_AFTER_CALLED_SECONDS`
+ * after the `Called` transition: the customer has not been Served or
+ * Cancelled in time, so the ticket enters the `Overdue` state where
+ * the nudge loop runs.
+ */
+export const MovedToOverdueEventSchema = Schema.Struct({
+  ...TicketEventBaseFields,
+  type: Schema.Literal("MovedToOverdue"),
+  overdueBy: ActorSchema,
+})
+export type MovedToOverdueEvent = Schema.Schema.Type<typeof MovedToOverdueEventSchema>
+
+/**
+ * One nudge fire of the Overdue→customer push loop (ADR-0072).
+ * `nudgeCount` is the post-increment value (1, 2, 3, …) so the
+ * projection can fold the running counter idempotently. `channel`
+ * records the transport used — `"ws"` for the WebSocket broadcast
+ * fallback, `"push"` for Web Push (ADR-0073).
+ */
+export const NudgedEventSchema = Schema.Struct({
+  ...TicketEventBaseFields,
+  type: Schema.Literal("Nudged"),
+  nudgedBy: ActorSchema,
+  nudgeCount: Schema.Number,
+  channel: Schema.Literals(["ws", "push"]),
+})
+export type NudgedEvent = Schema.Schema.Type<typeof NudgedEventSchema>
+
+/**
+ * Reservation-lane ticket whose `appointmentAt + grace < now` is
+ * auto-cancelled by the system (ADR-0075). The resulting ticket
+ * state is `Cancelled` with `reason === "appointment_lapsed"`; the
+ * dedicated event type gives audit consumers a typed signal
+ * distinct from a customer- or staff-issued cancellation.
+ */
+export const AppointmentLapsedEventSchema = Schema.Struct({
+  ...TicketEventBaseFields,
+  type: Schema.Literal("AppointmentLapsed"),
+  lapsedBy: ActorSchema,
+  appointmentAt: InstantSchema,
+})
+export type AppointmentLapsedEvent = Schema.Schema.Type<typeof AppointmentLapsedEventSchema>
 
 export const ServedEventSchema = Schema.Struct({
   ...TicketEventBaseFields,
@@ -146,7 +194,7 @@ export type CheckedInEvent = Schema.Schema.Type<typeof CheckedInEventSchema>
  * Ticket's `appointmentAt` in place and (transitively) the slot
  * occupancy on both the old and the new slot.
  *
- * Allowed on `state ∈ {Waiting, Called, Serving}` and `lane ===
+ * Allowed on `state ∈ {Waiting, Called, Overdue}` and `lane ===
  * "reservation"`; walk-in / priority tickets carry `appointmentAt
  * === null` by lane invariant and are not rescheduleable. The
  * audit-log keeps both `from` and `to` so a no-show analysis can
@@ -169,7 +217,11 @@ export type RescheduledEvent = Schema.Schema.Type<typeof RescheduledEventSchema>
 export const TicketEventSchema = Schema.Union([
   IssuedEventSchema,
   CalledEventSchema,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- ADR-0071 historical replay variant
   ServingStartedEventSchema,
+  MovedToOverdueEventSchema,
+  NudgedEventSchema,
+  AppointmentLapsedEventSchema,
   ServedEventSchema,
   NoShowedEventSchema,
   CancelledEventSchema,
@@ -186,6 +238,9 @@ export const ALL_TICKET_EVENT_TYPES: readonly TicketEventType[] = [
   "Issued",
   "Called",
   "ServingStarted",
+  "MovedToOverdue",
+  "Nudged",
+  "AppointmentLapsed",
   "Served",
   "NoShowed",
   "Cancelled",

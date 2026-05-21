@@ -10,6 +10,22 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Overdue + Web Push sprint (ADR-0071 / ADR-0072 / ADR-0073 / ADR-0074
+  / ADR-0075). `Serving` is removed from the `Ticket` discriminated
+  union — `Called` transitions directly to `Served` or, on the alarm
+  timer, to a new `Overdue` state where a bounded nudge loop fires up
+  to `MAX_NUDGES` times before flipping to `NoShow`. Reservation-lane
+  tickets still in `Waiting` past `appointmentAt + grace` are
+  auto-cancelled with `reason === "appointment_lapsed"`. Customer
+  notifications gain Web Push (VAPID, RFC 8291 aes128gcm) via a new
+  `@booking/push` workspace package; subscriptions are ticket-scoped
+  and payload-anonymous (`{ v, kind, displaySeq }`), reaped on
+  terminal transition and on the push service's 404/410. `/staff`
+  Kanban gains an Overdue column; `calledAlert` dedups on
+  `(calledAt, nudgeCount)` so Nudged events re-fire the chime.
+  QueueShop's `alarm()` runs as a 4-tick sweep (Called→Overdue,
+  Nudge, Overdue→NoShow, appointment-lapse) with strict
+  inequality cutoffs to avoid Tick 2/3 firing in the same alarm.
 - Slot-booking time-axis sprint (ADR-0066 / ADR-0067 / ADR-0068).
   Reservation lane gains `appointmentAt: NullOr<Instant>`; EDF
   promotes the eligible reservation head past the static

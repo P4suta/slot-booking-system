@@ -15,7 +15,6 @@
     reorder,
     staffCancel,
     staffShopState,
-    startServing,
     type Ticket,
   } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
@@ -34,7 +33,7 @@
   let waitingCount = $state(0)
   let waiting: ReadonlyArray<Ticket> = $state([])
   let calling: ReadonlyArray<Ticket> = $state([])
-  let servingList: ReadonlyArray<Ticket> = $state([])
+  let overdueList: ReadonlyArray<Ticket> = $state([])
   let done: Ticket[] = $state([])
   let busy = $state(false)
   let error: string | null = $state(null)
@@ -101,7 +100,7 @@
       waitingCount = nextCount
       waiting = r.value.waitingPreview
       calling = r.value.calling
-      servingList = r.value.serving
+      overdueList = r.value.overdue
       done = r.value.terminal
       error = null
     } catch (e) {
@@ -214,7 +213,7 @@
     waitingCount = 0
     waiting = []
     calling = []
-    servingList = []
+    overdueList = []
     done = []
     selected = new Set()
     prevWaitingCount = null
@@ -264,9 +263,6 @@
       () => showToast(`${ids.length} 件を順次呼び出しました`, "info"),
     )
   }
-
-  const onStartServing = (ticketId: string) =>
-    runAction("start-serving", () => startServing(token, ticketId), () => showToast("対応中に切り替えました", "success"))
 
   const onMarkServed = (ticketId: string) =>
     runAction("mark-served", () => markServed(token, ticketId), () => showToast("対応完了", "success"))
@@ -403,7 +399,7 @@
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
                   {#if t.appointmentAt !== null}
-                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                    <span class="slot-chip" data-time-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
                     </span>
                   {/if}
@@ -431,7 +427,7 @@
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
                   {#if t.appointmentAt !== null}
-                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                    <span class="slot-chip" data-time-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
                     </span>
                   {/if}
@@ -441,10 +437,10 @@
                   <span class="last4">{t.phoneLast4 ?? ""}</span>
                 </div>
                 <div class="row">
-                  <Button variant="primary" size="md" onclick={() => onStartServing(t.id)} disabled={busy}>対応開始</Button>
-                  <Button variant="secondary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
+                  <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
                   <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>不在</Button>
                   <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>取消</Button>
+                  <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>キャンセル</Button>
                 </div>
               </div>
             </Card>
@@ -456,16 +452,19 @@
       </section>
 
       <section class="col">
-        <header><h2>対応中 ({servingList.length})</h2></header>
+        <header><h2>応答待ち ({overdueList.length})</h2></header>
         <div class="cards">
-          {#each servingList as t (t.id)}
+          {#each overdueList as t (t.id)}
             <Card>
-              <div class="ticket" role="group" aria-label="serving ticket">
+              <div class="ticket overdue" role="group" aria-label="overdue ticket">
                 <div class="ticket-head">
                   <span class="numeral">{t.displaySeq}</span>
                   <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  {#if t.nudgeCount !== undefined && t.nudgeCount > 0}
+                    <span class="nudge-badge" aria-label="nudge count">{t.nudgeCount}回催促</span>
+                  {/if}
                   {#if t.appointmentAt !== null}
-                    <span class="slot-chip" data-state={slotChipState(t.appointmentAt)}>
+                    <span class="slot-chip" data-time-state={slotChipState(t.appointmentAt)}>
                       {t.appointmentAt.slice(11, 16)}
                     </span>
                   {/if}
@@ -476,13 +475,15 @@
                 </div>
                 <div class="row">
                   <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
+                  <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>不在</Button>
+                  <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>取消</Button>
                   <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>キャンセル</Button>
                 </div>
               </div>
             </Card>
           {/each}
-          {#if servingList.length === 0}
-            <p class="empty">{emptyState("serving")}</p>
+          {#if overdueList.length === 0}
+            <p class="empty">{emptyState("overdue")}</p>
           {/if}
         </div>
       </section>
@@ -726,16 +727,28 @@
     border-radius: var(--radius-pill);
     padding: var(--space-1) var(--space-3);
   }
-  .slot-chip[data-state="soon"] {
+  .nudge-badge {
+    font: var(--text-label-sm);
+    color: oklch(35% 0.22 25);
+    background: oklch(92% 0.13 30 / 60%);
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+    font-weight: 600;
+  }
+  .ticket.overdue {
+    border-left: 3px solid oklch(70% 0.18 30);
+    padding-left: var(--space-2);
+  }
+  .slot-chip[data-time-state="soon"] {
     color: oklch(40% 0.13 65);
     background: oklch(95% 0.07 65 / 50%);
   }
-  .slot-chip[data-state="due"] {
+  .slot-chip[data-time-state="due"] {
     color: oklch(35% 0.18 30);
     background: oklch(92% 0.13 30 / 60%);
     font-weight: 600;
   }
-  .slot-chip[data-state="overdue"] {
+  .slot-chip[data-time-state="overdue"] {
     color: oklch(35% 0.22 25);
     background: oklch(85% 0.18 25 / 70%);
     font-weight: 700;

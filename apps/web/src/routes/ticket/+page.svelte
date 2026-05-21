@@ -29,7 +29,9 @@
   import Help from "$lib/components/Help.svelte"
   import SlotPicker from "$lib/components/SlotPicker.svelte"
   import { errorMessage, helpText, loadingState, m } from "$lib/messages.js"
+  import { subscribeToPush, unsubscribeFromPush } from "$lib/pushSubscribe.js"
   import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
+  import { vapidPublicKey } from "$lib/vapidPublicKey.js"
   import {
     hasStaffToken,
     isTerminalState,
@@ -60,6 +62,10 @@
   let feedState: QueueFeedState = $state("connecting")
   let notificationState: NotificationPermissionState = $state("unsupported")
   let feed: QueueFeedHandle | undefined
+  // ADR-0073: subscribeToPush is a multi-step async flow; on unmount or
+  // terminal-state observation we abort it so a late-resolving subscribe
+  // does not write a row that we have just decided not to want.
+  const subscribeAbort = new AbortController()
   let now = $state(Date.now())
   let checkInBusy = $state(false)
   let countdownTick: ReturnType<typeof setInterval> | undefined
@@ -67,13 +73,19 @@
   // ADR-0068: customer can hit 「到着しました」 once `now ≥ appointmentAt - 10min`.
   const CHECK_IN_WINDOW_MS = 10 * 60 * 1000
 
+  // M1: lane invariant guarantees reservation ⇔ appointmentAt !== null
+  // (ADR-0066), but a defensive lane check costs nothing and prevents
+  // a misconfigured fixture / future bug from showing reservation UI
+  // to a walk-in customer.
   const isReservation = $derived(
-    ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined,
+    ticket?.lane === "reservation" &&
+      ticket?.appointmentAt !== null &&
+      ticket?.appointmentAt !== undefined,
   )
   const isActive = $derived(
     ticket?.state === "Waiting" ||
       ticket?.state === "Called" ||
-      ticket?.state === "Serving",
+      ticket?.state === "Overdue",
   )
   // Visibility guard for the reschedule button. Disable-on-WS-drop
   // is delegated to the button itself, mirroring how cancel handles
@@ -186,14 +198,22 @@
       maybeTriggerCalledAlert({
         state: t.state,
         calledAt: "calledAt" in t ? t.calledAt : null,
+        nudgeCount: "nudgeCount" in t ? t.nudgeCount : 0,
         displaySeq: t.displaySeq,
       })
       // Terminal observation — keep the view rendered so the
       // customer sees "対応完了" / "キャンセル済", but release the
-      // cache so the next mount falls through to /recover.
+      // cache so the next mount falls through to /recover. The
+      // server reaps push_subscriptions on its end (ADR-0074); we
+      // also unsubscribe on the client so a future visitor on the
+      // same device does not inherit a stale subscription.
       if (isTerminalState(t.state)) {
         purgeTicketCache()
         clearAlertMemory()
+        // Abort any pending subscribeToPush so we don't race the
+        // unsubscribe with a late register.
+        subscribeAbort.abort()
+        void unsubscribeFromPush(t.id, stored)
       }
       const s = await shopState()
       if (s.ok) snapshot = s.value
@@ -226,14 +246,22 @@
       case "Waiting":
         return "お待ちください"
       case "Called":
-      case "Serving":
         return "呼ばれました"
+      case "Overdue": {
+        // M4: surface the nudge count so the customer perceives "more
+        // urgent on the second / third ping". We do NOT expose
+        // MAX_NUDGES to the client (operational info).
+        const n = ticket.nudgeCount ?? 0
+        return n > 0 ? `応答をお願いします（${String(n)} 回目）` : "応答をお願いします"
+      }
       case "Served":
         return "対応完了"
       case "NoShow":
         return "キャンセル扱い (時間切れ)"
       case "Cancelled":
-        return "キャンセル済"
+        return ticket.reason === "appointment_lapsed"
+          ? "予約時刻を過ぎたためキャンセルされました"
+          : "キャンセル済"
     }
   })
 
@@ -328,11 +356,58 @@
       return
     }
     await refresh(stored)
+    // ADR-0073 — best-effort Web Push subscription so the customer
+    // hears the Overdue nudge with the tab closed. Silent failure
+    // is fine; the WS broadcast still fires when the tab is open.
+    // AbortController guards against the case where the page is
+    // destroyed (onDestroy → controller.abort()) while subscribe is
+    // mid-flight: without the abort signal a late-resolving
+    // subscribe could write a row that the unmount unsubscribe
+    // already skipped.
+    {
+      const pub = vapidPublicKey()
+      if (pub !== null && ticket !== null && !isTerminalState(ticket.state)) {
+        void subscribeToPush({
+          ticketId: ticket.id,
+          handle: stored,
+          vapidPublicKey: pub,
+          signal: subscribeAbort.signal,
+        })
+      }
+    }
+    // ADR-0073 §subscriptionchange — the SW posts `push:resubscribe`
+    // when the push service rotates keys. Re-run the subscribe flow;
+    // pushSubscribe's reconcile branch will DELETE the stale endpoint
+    // before registering the fresh one.
+    //
+    // `{ signal: subscribeAbort.signal }` ties the listener lifecycle
+    // to onDestroy → controller.abort(); without it every SPA mount
+    // would stack another listener and one push event would fan out
+    // into N subscribe calls.
+    if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener(
+        "message",
+        (event) => {
+          const data = event.data as { type?: string } | null
+          if (data?.type !== "push:resubscribe") return
+          const pub = vapidPublicKey()
+          if (pub === null || ticket === null || stored === null) return
+          if (isTerminalState(ticket.state)) return
+          void subscribeToPush({
+            ticketId: ticket.id,
+            handle: stored,
+            vapidPublicKey: pub,
+            signal: subscribeAbort.signal,
+          })
+        },
+        { signal: subscribeAbort.signal },
+      )
+    }
     feed = connectQueueFeed({
       onProjection: (parsed) => {
         snapshot = parsed as ShopState
         // ADR-0061 — the WS broadcasts the public projection only.
-        // The customer's own state (Waiting → Called → Serving →
+        // The customer's own state (Waiting → Called → Overdue →
         // Served) lives behind /api/v1/tickets/me and is never
         // serialised onto the feed. Refetch on every broadcast so a
         // staff CallNext / MarkServed / Recall flips this tab's
@@ -356,6 +431,7 @@
   onDestroy(() => {
     feed?.close()
     if (countdownTick !== undefined) clearInterval(countdownTick)
+    subscribeAbort.abort()
   })
 </script>
 
@@ -470,7 +546,12 @@
       </Card>
     {/if}
 
-    {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Serving"}
+    {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Overdue"}
+      {#if ticket.state === "Overdue"}
+        <p class="overdue-note" role="status">
+          応答が確認できていません。窓口にお越しいただけない場合はキャンセルしてください。
+        </p>
+      {/if}
       <div class="actions">
         <Button
           variant="ghost"
@@ -562,14 +643,25 @@
     flex-direction: column;
     gap: var(--space-2);
   }
-  .numeral-hero[data-state="Called"],
-  .numeral-hero[data-state="Serving"] {
+  .numeral-hero[data-state="Called"] {
     background: oklch(95% 0.07 65);
     border-color: var(--color-state-called);
+  }
+  .numeral-hero[data-state="Overdue"] {
+    background: oklch(92% 0.13 30 / 60%);
+    border-color: oklch(70% 0.18 30);
   }
   .numeral-hero[data-state="Served"] {
     background: oklch(95% 0.07 145);
     border-color: var(--color-state-serving);
+  }
+  .overdue-note {
+    background: oklch(95% 0.07 30 / 50%);
+    color: oklch(35% 0.18 30);
+    border-left: 3px solid oklch(70% 0.18 30);
+    padding: var(--space-3) var(--space-4);
+    margin: var(--space-3) 0;
+    font: var(--text-body-sm);
   }
   .numeral-hero[data-state="Cancelled"],
   .numeral-hero[data-state="NoShow"] {

@@ -25,6 +25,7 @@
   ],
   "dependencies": {
     "@booking/core": "workspace:*",
+    "@booking/push": "workspace:*",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

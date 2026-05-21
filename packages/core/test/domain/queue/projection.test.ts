@@ -15,15 +15,15 @@ import {
   headOfLane,
   nextDisplaySeqInLane,
   occupancyExcludingSelf,
+  overdueTickets,
   positionOf,
   replay,
   reservationsByDeadline,
-  servingTickets,
   slotOccupancy,
   waitingCount,
   waitingTickets,
 } from "../../../src/domain/queue/projection.js"
-import type { Called, Serving, Waiting } from "../../../src/domain/queue/Ticket.js"
+import type { Called, Overdue, Waiting } from "../../../src/domain/queue/Ticket.js"
 import {
   applyCall,
   applyCancel,
@@ -31,9 +31,10 @@ import {
   applyIssue,
   applyMarkNoShow,
   applyMarkServed,
+  applyMoveToOverdue,
+  applyNudge,
   applyRecall,
   applyReorder,
-  applyStartServing,
 } from "../../../src/domain/queue/transitions.js"
 import { newTicketEventId, newTicketId, type TicketId } from "../../../src/domain/types/EntityId.js"
 import { BusinessTimeZoneSchema } from "../../../src/domain/value-objects/BusinessTimeZone.js"
@@ -140,20 +141,20 @@ describe("derived queries — head / currentlyServing / positionOf / waitingCoun
     expect(currentlyServing(snap)).toBeNull()
   })
 
-  it("currentlyServing returns Serving tickets too (ADR-0063 customer view)", () => {
+  it("currentlyServing returns Overdue tickets too (ADR-0072 customer view)", () => {
     const a = issue(1)
     const callA = applyCall(a.ticket as Waiting, {
       at: at("2026-05-08T09:05:00Z"),
       eventId: newTicketEventId(),
     })
-    const serving = applyStartServing(
+    const overdue = applyMoveToOverdue(
       callA.ticket as Called,
       at("2026-05-08T09:07:00Z"),
       newTicketEventId(),
     )
-    const snap = replay([a.event, callA.event, serving.event])
+    const snap = replay([a.event, callA.event, overdue.event])
     const cs = currentlyServing(snap)
-    expect(cs?.state).toBe("Serving")
+    expect(cs?.state).toBe("Overdue")
   })
 
   it("positionOf reports the number of waiting tickets ahead in the same lane", () => {
@@ -336,7 +337,7 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     expect(nextDisplaySeqInLane(snap, "priority")).toBe(10)
   })
 
-  it("servingTickets sorts by displaySeq across multiple Serving variants", () => {
+  it("overdueTickets sorts by displaySeq across multiple Overdue variants", () => {
     const a = issue(1, { lane: "walkIn", displaySeq: 2 })
     const b = issue(2, { lane: "walkIn", displaySeq: 1 })
     const ca = applyCall(a.ticket as Waiting, {
@@ -347,22 +348,22 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
       at: at("2026-05-08T09:06:00Z"),
       eventId: newTicketEventId(),
     })
-    const sa = applyStartServing(
+    const sa = applyMoveToOverdue(
       ca.ticket as Called,
       at("2026-05-08T09:07:00Z"),
       newTicketEventId(),
     )
-    const sb = applyStartServing(
+    const sb = applyMoveToOverdue(
       cb.ticket as Called,
       at("2026-05-08T09:08:00Z"),
       newTicketEventId(),
     )
     const snap = replay([a.event, b.event, ca.event, cb.event, sa.event, sb.event])
-    const order = servingTickets(snap).map((t) => t.id)
+    const order = overdueTickets(snap).map((t) => t.id)
     expect(order).toEqual([b.ticket.id, a.ticket.id])
   })
 
-  it("callingTickets / servingTickets honour lane filter against cross-lane peers", () => {
+  it("callingTickets / overdueTickets honour lane filter against cross-lane peers", () => {
     const w = issue(1, { lane: "walkIn", displaySeq: 1 })
     const p = issue(2, { lane: "priority", displaySeq: 1 })
     const cw = applyCall(w.ticket as Waiting, {
@@ -376,14 +377,14 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     const snap = replay([w.event, p.event, cw.event, cp.event])
     expect(callingTickets(snap, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
     expect(callingTickets(snap, "priority").map((t) => t.id)).toEqual([p.ticket.id])
-    const sw = applyStartServing(
+    const sw = applyMoveToOverdue(
       cw.ticket as Called,
       at("2026-05-08T09:07:00Z"),
       newTicketEventId(),
     )
     const snap2 = replay([w.event, p.event, cw.event, cp.event, sw.event])
-    expect(servingTickets(snap2, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
-    expect(servingTickets(snap2, "priority").map((t) => t.id)).toEqual([])
+    expect(overdueTickets(snap2, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
+    expect(overdueTickets(snap2, "priority").map((t) => t.id)).toEqual([])
   })
 
   it("positionOf scopes counts to the ticket's own lane (cross-lane peers ignored)", () => {
@@ -396,7 +397,7 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     expect(positionOf(snap, p1.ticket.id)).toBe(0)
   })
 
-  it("globalPositionOf skips Called/Serving peers in the target's own lane", () => {
+  it("globalPositionOf skips Called/Overdue peers in the target's own lane", () => {
     // Called peer in same lane as target should NOT count toward
     // the customer-facing position.
     const head = issue(1, { lane: "walkIn", displaySeq: 1 })
@@ -465,23 +466,23 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
     expect(callingTickets(snap).map((t) => t.id)).toEqual([a.ticket.id, b.ticket.id])
   })
 
-  it("servingTickets returns only Serving variants", () => {
+  it("overdueTickets returns only Overdue variants", () => {
     const a = issue(1)
     const ca = applyCall(a.ticket as Waiting, {
       at: at("2026-05-08T09:05:00Z"),
       eventId: newTicketEventId(),
     })
-    const sa = applyStartServing(
+    const sa = applyMoveToOverdue(
       ca.ticket as Called,
       at("2026-05-08T09:07:00Z"),
       newTicketEventId(),
     )
     const snap = replay([a.event, ca.event, sa.event])
-    expect(servingTickets(snap).map((t) => t.id)).toEqual([a.ticket.id])
+    expect(overdueTickets(snap).map((t) => t.id)).toEqual([a.ticket.id])
     expect(callingTickets(snap)).toEqual([])
   })
 
-  it("servingTickets honours lane filter", () => {
+  it("overdueTickets honours lane filter", () => {
     const w = issue(1, { lane: "walkIn", displaySeq: 1 })
     const p = issue(2, { lane: "priority", displaySeq: 1 })
     const cw = applyCall(w.ticket as Waiting, {
@@ -492,19 +493,19 @@ describe("lane-aware queries (ADR-0062 / ADR-0065)", () => {
       at: at("2026-05-08T09:06:00Z"),
       eventId: newTicketEventId(),
     })
-    const sw = applyStartServing(
+    const sw = applyMoveToOverdue(
       cw.ticket as Called,
       at("2026-05-08T09:07:00Z"),
       newTicketEventId(),
     )
-    const sp = applyStartServing(
+    const sp = applyMoveToOverdue(
       cp.ticket as Called,
       at("2026-05-08T09:08:00Z"),
       newTicketEventId(),
     )
     const snap = replay([w.event, p.event, cw.event, cp.event, sw.event, sp.event])
-    expect(servingTickets(snap, "priority").map((t) => t.id)).toEqual([p.ticket.id])
-    expect(servingTickets(snap, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
+    expect(overdueTickets(snap, "priority").map((t) => t.id)).toEqual([p.ticket.id])
+    expect(overdueTickets(snap, "walkIn").map((t) => t.id)).toEqual([w.ticket.id])
   })
 
   it("globalPositionOf sums Waiting in upstream lanes plus position in own lane", () => {
@@ -651,7 +652,10 @@ describe("applyEvent ignores no-op transitions", () => {
     expect(t?.state).toBe("Waiting")
   })
 
-  it("a ServingStarted event for a non-Called ticket is a no-op", () => {
+  it("a ServingStarted event (legacy ADR-0063) is a no-op everywhere (ADR-0071)", () => {
+    // The variant stays in the union for event-log totality; the
+    // projector folds it as a no-op so a historical record does not
+    // corrupt the post-0071 state.
     const a = issue(1)
     const ssEv = {
       id: newTicketEventId(),
@@ -677,6 +681,25 @@ describe("applyEvent ignores no-op transitions", () => {
       servingStartedBy: "staff" as const,
     }
     expect(applyEvent(empty, ghostEv).tickets.size).toBe(0)
+  })
+
+  it("a ServingStarted event against a Called ticket keeps it Called (legacy replay)", () => {
+    const a = issue(1)
+    const callA = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const ssEv = {
+      id: newTicketEventId(),
+      ticketId: a.ticket.id,
+      version: 1 as const,
+      occurredAt: at("2026-05-08T09:07:00Z"),
+      recordedAt: at("2026-05-08T09:07:00Z"),
+      type: "ServingStarted" as const,
+      servingStartedBy: "staff" as const,
+    }
+    const snap = replay([a.event, callA.event, ssEv])
+    expect(snap.tickets.get(a.ticket.id)?.state).toBe("Called")
   })
 
   it("a Reordered event for a non-Waiting ticket is a no-op", () => {
@@ -752,45 +775,236 @@ describe("Recalled fold", () => {
   })
 })
 
-describe("ServingStarted fold (ADR-0063)", () => {
-  it("Issue → Called → ServingStarted projects to Serving", () => {
+describe("MoveToOverdue / Nudge fold (ADR-0072)", () => {
+  it("Issue → Called → MovedToOverdue projects to Overdue with nudgeCount=0", () => {
     const a = issue(1)
     const call = applyCall(a.ticket as Waiting, {
       at: at("2026-05-08T09:05:00Z"),
       eventId: newTicketEventId(),
     })
-    const start = applyStartServing(
+    const overdue = applyMoveToOverdue(
       call.ticket as Called,
       at("2026-05-08T09:07:00Z"),
       newTicketEventId(),
     )
-    const snap = replay([a.event, call.event, start.event])
-    const t = snap.tickets.get(a.ticket.id)
-    expect(t?.state).toBe("Serving")
+    const snap = replay([a.event, call.event, overdue.event])
+    const t = snap.tickets.get(a.ticket.id) as Overdue | undefined
+    expect(t?.state).toBe("Overdue")
+    expect(t?.nudgeCount).toBe(0)
+    expect(t?.lastNudgedAt).toBeNull()
   })
 
-  it("Issue → Called → ServingStarted → MarkServed projects to Served carrying serving fields", () => {
+  it("Issue → Called → MovedToOverdue → Nudge × 2 projects nudgeCount=2", () => {
     const a = issue(1)
     const call = applyCall(a.ticket as Waiting, {
       at: at("2026-05-08T09:05:00Z"),
       eventId: newTicketEventId(),
     })
-    const start = applyStartServing(
+    const overdue = applyMoveToOverdue(
+      call.ticket as Called,
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    const nudge1 = applyNudge(
+      overdue.ticket as Overdue,
+      at("2026-05-08T09:08:30Z"),
+      newTicketEventId(),
+      "ws",
+    )
+    const nudge2 = applyNudge(
+      nudge1.ticket as Overdue,
+      at("2026-05-08T09:10:00Z"),
+      newTicketEventId(),
+      "ws",
+    )
+    const snap = replay([a.event, call.event, overdue.event, nudge1.event, nudge2.event])
+    const t = snap.tickets.get(a.ticket.id) as Overdue | undefined
+    expect(t?.state).toBe("Overdue")
+    expect(t?.nudgeCount).toBe(2)
+    expect(t?.lastNudgedAt?.toString()).toBe(at("2026-05-08T09:10:00Z").toString())
+  })
+
+  it("Issue → Called → MovedToOverdue → MarkServed projects to Served (late-arrival)", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const overdue = applyMoveToOverdue(
       call.ticket as Called,
       at("2026-05-08T09:07:00Z"),
       newTicketEventId(),
     )
     const served = applyMarkServed(
-      start.ticket as Serving,
-      at("2026-05-08T09:10:00Z"),
+      overdue.ticket as Overdue,
+      at("2026-05-08T09:12:00Z"),
       newTicketEventId(),
     )
-    const snap = replay([a.event, call.event, start.event, served.event])
+    const snap = replay([a.event, call.event, overdue.event, served.event])
     const t = snap.tickets.get(a.ticket.id)
     expect(t?.state).toBe("Served")
-    if (t?.state === "Served") {
-      expect(t.servingStartedBy).toBe("staff")
+  })
+
+  it("Issue → Called → MovedToOverdue → MarkNoShow projects to NoShow", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const overdue = applyMoveToOverdue(
+      call.ticket as Called,
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    const noShow = applyMarkNoShow(
+      overdue.ticket as Overdue,
+      at("2026-05-08T09:15:00Z"),
+      newTicketEventId(),
+      "system",
+    )
+    const snap = replay([a.event, call.event, overdue.event, noShow.event])
+    expect(snap.tickets.get(a.ticket.id)?.state).toBe("NoShow")
+  })
+})
+
+describe("variant field-set invariants (regression pin for projection type leak)", () => {
+  // ADR-0071 / ADR-0072: the projection's terminal-state arms must
+  // reconstruct each variant from `CommonFields + <state-specific
+  // fields>` rather than spreading `prior`. A spread would carry the
+  // `Overdue`-only `overdueAt` / `lastNudgedAt` / `nudgeCount` into a
+  // `Served` / `NoShow` runtime object, or `calledAt` / `calledBy` into
+  // a `Cancelled` shape — neither variant's Schema declares those
+  // fields. The Schema encoder strips extras, but downstream consumers
+  // that touch the projection directly (e.g. the DO ticketColumns()
+  // probe `"x" in next ?`) would write phantom data to the projection
+  // table. These tests pin the field-set so a future regression is
+  // caught at the fold level.
+
+  it("Served from Overdue carries only ServedSchema fields", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const overdue = applyMoveToOverdue(
+      call.ticket as Called,
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    const nudge = applyNudge(
+      overdue.ticket as Overdue,
+      at("2026-05-08T09:08:30Z"),
+      newTicketEventId(),
+      "ws",
+    )
+    const served = applyMarkServed(
+      nudge.ticket as Overdue,
+      at("2026-05-08T09:12:00Z"),
+      newTicketEventId(),
+    )
+    const snap = replay([a.event, call.event, overdue.event, nudge.event, served.event])
+    const t = snap.tickets.get(a.ticket.id) as Record<string, unknown> | undefined
+    expect(t?.state).toBe("Served")
+    expect("overdueAt" in (t ?? {})).toBe(false)
+    expect("lastNudgedAt" in (t ?? {})).toBe(false)
+    expect("nudgeCount" in (t ?? {})).toBe(false)
+  })
+
+  it("NoShow from Overdue carries only NoShowSchema fields", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const overdue = applyMoveToOverdue(
+      call.ticket as Called,
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    const noShow = applyMarkNoShow(
+      overdue.ticket as Overdue,
+      at("2026-05-08T09:15:00Z"),
+      newTicketEventId(),
+      "system",
+    )
+    const snap = replay([a.event, call.event, overdue.event, noShow.event])
+    const t = snap.tickets.get(a.ticket.id) as Record<string, unknown> | undefined
+    expect(t?.state).toBe("NoShow")
+    expect("overdueAt" in (t ?? {})).toBe(false)
+    expect("lastNudgedAt" in (t ?? {})).toBe(false)
+    expect("nudgeCount" in (t ?? {})).toBe(false)
+  })
+
+  it("Cancelled from Called drops calledAt / calledBy (matches applyCancel)", () => {
+    // `applyCancel` (transitions.ts) reconstructs via `common(t)` and
+    // does NOT include the Called-only audit fields on the resulting
+    // `Cancelled`. The projection must do the same so that direct
+    // consumers of the snapshot do not see phantom `calledAt`.
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const cancel = applyCancel(
+      call.ticket as Called,
+      at("2026-05-08T09:06:00Z"),
+      newTicketEventId(),
+      "customer",
+      "changed mind",
+    )
+    const snap = replay([a.event, call.event, cancel.event])
+    const t = snap.tickets.get(a.ticket.id) as Record<string, unknown> | undefined
+    expect(t?.state).toBe("Cancelled")
+    expect("calledAt" in (t ?? {})).toBe(false)
+    expect("calledBy" in (t ?? {})).toBe(false)
+  })
+
+  it("Cancelled from Overdue drops the full Called/Overdue field set", () => {
+    const a = issue(1)
+    const call = applyCall(a.ticket as Waiting, {
+      at: at("2026-05-08T09:05:00Z"),
+      eventId: newTicketEventId(),
+    })
+    const overdue = applyMoveToOverdue(
+      call.ticket as Called,
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    const cancel = applyCancel(
+      overdue.ticket as Overdue,
+      at("2026-05-08T09:08:00Z"),
+      newTicketEventId(),
+      "customer",
+      "changed mind",
+    )
+    const snap = replay([a.event, call.event, overdue.event, cancel.event])
+    const t = snap.tickets.get(a.ticket.id) as Record<string, unknown> | undefined
+    expect(t?.state).toBe("Cancelled")
+    expect("calledAt" in (t ?? {})).toBe(false)
+    expect("calledBy" in (t ?? {})).toBe(false)
+    expect("overdueAt" in (t ?? {})).toBe(false)
+    expect("lastNudgedAt" in (t ?? {})).toBe(false)
+    expect("nudgeCount" in (t ?? {})).toBe(false)
+  })
+
+  it("AppointmentLapsed-driven Cancelled has no Called fields", () => {
+    const a = issue(1)
+    const lapsedEv = {
+      id: newTicketEventId(),
+      ticketId: a.ticket.id,
+      version: 1 as const,
+      occurredAt: at("2026-05-08T09:30:00Z"),
+      recordedAt: at("2026-05-08T09:30:00Z"),
+      type: "AppointmentLapsed" as const,
+      lapsedBy: "system" as const,
+      appointmentAt: at("2026-05-08T09:00:00Z"),
     }
+    const snap = replay([a.event, lapsedEv])
+    const t = snap.tickets.get(a.ticket.id) as Record<string, unknown> | undefined
+    expect(t?.state).toBe("Cancelled")
+    expect(t?.reason).toBe("appointment_lapsed")
+    expect("calledAt" in (t ?? {})).toBe(false)
+    expect("calledBy" in (t ?? {})).toBe(false)
   })
 })
 

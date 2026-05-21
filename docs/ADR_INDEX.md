@@ -60,7 +60,7 @@ back.
 | [0060](./adr/0060-comment-bans-lint-gate.md)        | comment-bans lint gate                                       | accepted |
 | [0061](./adr/0061-do-hibernating-websocket.md)      | DO Hibernating WebSocket projection feed                     | accepted |
 | [0062](./adr/0062-lane-partitioning.md)             | Lane partitioning in the queue domain                        | accepted |
-| [0063](./adr/0063-serving-state.md)                 | Serving state — split Called → Serving → Served              | accepted |
+| [0063](./adr/0063-serving-state.md)                 | Serving state — split Called → Serving → Served              | superseded by 0071 |
 | [0064](./adr/0064-customer-recovery-url.md)         | Customer recovery URL (canonical / cache / share-safe)       | superseded by 0069 |
 | [0065](./adr/0065-operator-grade-queue-actions.md)  | Operator-grade queue actions (CallSpecific / CallBatch / Reorder) | accepted |
 | [0066](./adr/0066-slot-value-object-and-appointment-encoding.md) | Slot value object + appointmentAt encoding | accepted |
@@ -68,6 +68,11 @@ back.
 | [0068](./adr/0068-unified-issue-flow-and-door-qr.md) | Unified `/issue` flow + door-QR walk-in entry               | accepted |
 | [0069](./adr/0069-handle-as-active-primary-and-local-cache.md) | Handle as active-set primary key + localStorage cache | accepted |
 | [0070](./adr/0070-reservation-reschedule.md)        | Reservation reschedule — atomic appointmentAt swap            | accepted |
+| [0071](./adr/0071-supersede-serving-state.md)       | Supersede `Serving` — fold the at-the-counter window into Called + Overdue | accepted |
+| [0072](./adr/0072-overdue-state-and-nudge-loop.md)  | `Overdue` state + bounded nudge loop                          | accepted |
+| [0073](./adr/0073-web-push-channel.md)              | Web Push (VAPID) as the Overdue-nudge transport               | accepted |
+| [0074](./adr/0074-push-subscription-anonymity.md)   | Push subscription anonymity contract                          | accepted |
+| [0075](./adr/0075-appointment-lapse-auto-cancel.md) | Appointment-lapse auto-cancel                                 | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).

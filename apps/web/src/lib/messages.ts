@@ -44,7 +44,7 @@ export const errorMessage = (tag: string): string => {
 
 export type EmptyContext =
   | "calling"
-  | "serving"
+  | "overdue"
   | "waiting"
   | "terminal"
   | "byHandle404"
@@ -54,8 +54,8 @@ export const emptyState = (ctx: EmptyContext): string => {
   switch (ctx) {
     case "calling":
       return m.empty_calling()
-    case "serving":
-      return m.empty_serving()
+    case "overdue":
+      return m.empty_overdue()
     case "waiting":
       return m.empty_waiting()
     case "terminal":

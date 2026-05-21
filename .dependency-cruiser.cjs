@@ -74,8 +74,11 @@ module.exports = {
           "|^apps/web/src/routes/.*\\.svelte$" +
           "|^apps/web/src/(app\\.d\\.ts|app\\.html|app\\.css|hooks\\.server\\.ts)$" +
           // Imported by .svelte files which dep-cruiser does not parse.
-          "|^apps/web/src/lib/(graphql/endpoint|graphql/client|graphql/queries|i18n|kana|qr|ticketCache)\\.ts$" +
-          "|^apps/web/src/lib/components/.*\\.svelte$)",
+          "|^apps/web/src/lib/(graphql/endpoint|graphql/client|graphql/queries|i18n|kana|qr|ticketCache|vapidPublicKey)\\.ts$" +
+          "|^apps/web/src/lib/components/.*\\.svelte$" +
+          // SvelteKit serves `static/` as opaque assets; sw.js is the
+          // Service Worker the /ticket page registers at runtime.
+          "|^apps/web/static/.*\\.js$)",
       },
       to: {},
     },

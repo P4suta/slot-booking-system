@@ -4,7 +4,7 @@ import type { BusinessTimeZone } from "../value-objects/BusinessTimeZone.js"
 import { type CustomerHandle, equalsCustomerHandle } from "../value-objects/CustomerHandle.js"
 import { type Lane, PREFERRED_LANE_CHAIN } from "./Lane.js"
 import { intervalOf, type Slot } from "./Slot.js"
-import type { Called, Serving, Ticket, Waiting } from "./Ticket.js"
+import type { Called, Cancelled, NoShow, Overdue, Served, Ticket, Waiting } from "./Ticket.js"
 import type { TicketEvent } from "./TicketEvent.js"
 
 /**
@@ -122,13 +122,60 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
       return { tickets }
     }
     case "ServingStarted": {
+      // ADR-0071 / ADR-0072: `Serving` is removed. Historical
+      // `ServingStarted` events stay in the union (event-log totality)
+      // and are folded as a no-op — the ticket stays in `Called` and
+      // the subsequent `Served` / `NoShowed` / `Cancelled` event drives
+      // the terminal transition.
+      return snap
+    }
+    case "MovedToOverdue": {
       const prior = tickets.get(event.ticketId)
       if (prior?.state !== "Called") return snap
-      const next: Serving = {
+      const next: Overdue = {
         ...prior,
-        state: "Serving",
-        servingStartedAt: event.occurredAt,
-        servingStartedBy: event.servingStartedBy,
+        state: "Overdue",
+        overdueAt: event.occurredAt,
+        lastNudgedAt: null,
+        nudgeCount: 0,
+      }
+      tickets.set(event.ticketId, next)
+      return { tickets }
+    }
+    case "Nudged": {
+      const prior = tickets.get(event.ticketId)
+      if (prior?.state !== "Overdue") return snap
+      const next: Overdue = {
+        ...prior,
+        lastNudgedAt: event.occurredAt,
+        nudgeCount: event.nudgeCount,
+      }
+      tickets.set(event.ticketId, next)
+      return { tickets }
+    }
+    case "AppointmentLapsed": {
+      const prior = tickets.get(event.ticketId)
+      if (prior?.state !== "Waiting") return snap
+      // Drop Waiting-only audit fields are absent (checkedInAt is common, preserved).
+      // The resulting `Cancelled` must not carry calledAt/calledBy — a lapsed
+      // reservation never reached `Called`. Explicit reconstruction mirrors
+      // `transitions.ts#applyCancel` (uses `common(t)`) so the runtime shape
+      // matches the Schema-defined variant exactly.
+      const next: Cancelled = {
+        id: prior.id,
+        seq: prior.seq,
+        lane: prior.lane,
+        displaySeq: prior.displaySeq,
+        nameKana: prior.nameKana,
+        phoneLast4: prior.phoneLast4,
+        freeText: prior.freeText,
+        issuedAt: prior.issuedAt,
+        appointmentAt: prior.appointmentAt,
+        checkedInAt: prior.checkedInAt,
+        state: "Cancelled",
+        cancelledAt: event.occurredAt,
+        cancelledBy: event.lapsedBy,
+        reason: "appointment_lapsed",
       }
       tickets.set(event.ticketId, next)
       return { tickets }
@@ -136,32 +183,51 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     case "Served": {
       const prior = tickets.get(event.ticketId)
       if (prior === undefined) return snap
-      if (prior.state !== "Called" && prior.state !== "Serving") return snap
-      const next: Ticket =
-        prior.state === "Serving"
-          ? {
-              ...prior,
-              state: "Served",
-              servingStartedAt: prior.servingStartedAt,
-              servingStartedBy: prior.servingStartedBy,
-              servedAt: event.occurredAt,
-              servedBy: event.servedBy,
-            }
-          : {
-              ...prior,
-              state: "Served",
-              servedAt: event.occurredAt,
-              servedBy: event.servedBy,
-            }
+      if (prior.state !== "Called" && prior.state !== "Overdue") return snap
+      // Explicit reconstruction — a spread of `prior` would carry the
+      // Overdue-only `overdueAt`/`lastNudgedAt`/`nudgeCount` into the
+      // resulting `Served` runtime object even though `ServedSchema`
+      // doesn't declare them, breaking the discriminated-union invariant
+      // and polluting projection-table side columns via
+      // `DurableObjectTicketRepositoryLive#ticketColumns`.
+      const next: Served = {
+        id: prior.id,
+        seq: prior.seq,
+        lane: prior.lane,
+        displaySeq: prior.displaySeq,
+        nameKana: prior.nameKana,
+        phoneLast4: prior.phoneLast4,
+        freeText: prior.freeText,
+        issuedAt: prior.issuedAt,
+        appointmentAt: prior.appointmentAt,
+        checkedInAt: prior.checkedInAt,
+        state: "Served",
+        calledAt: prior.calledAt,
+        calledBy: prior.calledBy,
+        servedAt: event.occurredAt,
+        servedBy: event.servedBy,
+      }
       tickets.set(event.ticketId, next)
       return { tickets }
     }
     case "NoShowed": {
       const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Called") return snap
-      const next: Ticket = {
-        ...prior,
+      if (prior === undefined) return snap
+      if (prior.state !== "Called" && prior.state !== "Overdue") return snap
+      const next: NoShow = {
+        id: prior.id,
+        seq: prior.seq,
+        lane: prior.lane,
+        displaySeq: prior.displaySeq,
+        nameKana: prior.nameKana,
+        phoneLast4: prior.phoneLast4,
+        freeText: prior.freeText,
+        issuedAt: prior.issuedAt,
+        appointmentAt: prior.appointmentAt,
+        checkedInAt: prior.checkedInAt,
         state: "NoShow",
+        calledAt: prior.calledAt,
+        calledBy: prior.calledBy,
         markedAt: event.occurredAt,
         markedBy: event.markedBy,
       }
@@ -170,9 +236,27 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "Cancelled": {
       const prior = tickets.get(event.ticketId)
-      if (prior === undefined || prior.state === "Cancelled") return snap
-      const next: Ticket = {
-        ...prior,
+      if (prior === undefined) return snap
+      if (prior.state !== "Waiting" && prior.state !== "Called" && prior.state !== "Overdue") {
+        return snap
+      }
+      // CancelledSchema does NOT declare calledAt/calledBy — `applyCancel`
+      // (transitions.ts) intentionally drops them via `common(t)`. The
+      // projection must match: a customer or staff cancel from `Called`
+      // or `Overdue` produces a clean `Cancelled` shape; the audit trail
+      // for the original `Called` event is preserved in `ticket_events`,
+      // not on the aggregate.
+      const next: Cancelled = {
+        id: prior.id,
+        seq: prior.seq,
+        lane: prior.lane,
+        displaySeq: prior.displaySeq,
+        nameKana: prior.nameKana,
+        phoneLast4: prior.phoneLast4,
+        freeText: prior.freeText,
+        issuedAt: prior.issuedAt,
+        appointmentAt: prior.appointmentAt,
+        checkedInAt: prior.checkedInAt,
         state: "Cancelled",
         cancelledAt: event.occurredAt,
         cancelledBy: event.cancelledBy,
@@ -183,12 +267,13 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "Recalled": {
       const prior = tickets.get(event.ticketId)
-      if (prior?.state !== "Called") return snap
-      // Drop the Called-only fields by reconstructing the common
-      // shape verbatim — keeping `seq + displaySeq + lane` is the
-      // point (the ticket returns to the head of its lane), but
-      // `calledAt` / `calledBy` must NOT leak into the Waiting
-      // variant.
+      if (prior === undefined) return snap
+      if (prior.state !== "Called" && prior.state !== "Overdue") return snap
+      // Drop the Called/Overdue-only fields by reconstructing the
+      // common shape verbatim — keeping `seq + displaySeq + lane` is
+      // the point (the ticket returns to the head of its lane), but
+      // `calledAt` / `calledBy` / any Overdue counters must NOT leak
+      // into the Waiting variant.
       const next: Ticket = {
         id: prior.id,
         seq: prior.seq,
@@ -225,7 +310,7 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     case "Rescheduled": {
       const prior = tickets.get(event.ticketId)
       if (prior === undefined) return snap
-      if (prior.state !== "Waiting" && prior.state !== "Called" && prior.state !== "Serving") {
+      if (prior.state !== "Waiting" && prior.state !== "Called" && prior.state !== "Overdue") {
         return snap
       }
       // Lane invariant: only reservation tickets carry an
@@ -235,6 +320,15 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
       const next: Ticket = { ...prior, appointmentAt: event.toAppointmentAt }
       tickets.set(event.ticketId, next)
       return { tickets }
+    }
+    default: {
+      // Exhaustiveness pin: when a new `TicketEvent` variant joins the
+      // union the projection MUST add a case arm before the type checker
+      // accepts this assignment. Without this, a Schema-side addition
+      // would silently no-op in the fold (and silently corrupt replay).
+      const _exhaustive: never = event
+      void _exhaustive
+      return snap
     }
   }
 }
@@ -261,7 +355,7 @@ export const applyMany = (snap: QueueSnapshot, events: readonly TicketEvent[]): 
 
 const isWaiting = (t: Ticket): t is Waiting => t.state === "Waiting"
 const isCalled = (t: Ticket): t is Called => t.state === "Called"
-const isServing = (t: Ticket): t is Serving => t.state === "Serving"
+const isOverdue = (t: Ticket): t is Overdue => t.state === "Overdue"
 
 /**
  * Lane-filter predicate. `filter === undefined` matches every
@@ -389,7 +483,7 @@ export const nextCallable = (
 /**
  * ADR-0066 — slot capacity bookkeeping.
  *
- * Counts the Waiting / Called / Serving tickets whose
+ * Counts the Waiting / Called / Overdue tickets whose
  * `appointmentAt` equals the slot's `startAt` (the canonical
  * bucket boundary in the business time zone). Used by the
  * IssueTicket usecase as the capacity guard before applying the
@@ -454,20 +548,20 @@ export const head = (snap: QueueSnapshot, lane?: Lane): Waiting | null => {
 }
 
 /**
- * The lowest-`displaySeq` Called or Serving ticket — the ticket the
- * customer-facing page treats as "currently being called" (Serving
+ * The lowest-`displaySeq` Called or Overdue ticket — the ticket the
+ * customer-facing page treats as "currently being called" (Overdue
  * is indistinguishable from Called from the customer's perspective
- * per ADR-0063). Returns `null` when no ticket is in Called or
- * Serving.
+ * per ADR-0072). Returns `null` when no ticket is in Called or
+ * Overdue.
  *
- * If multiple tickets are simultaneously Called/Serving (a bug in
+ * If multiple tickets are simultaneously Called/Overdue (a bug in
  * single-writer mode but theoretically possible in the projection),
  * the lowest-`displaySeq` one is returned.
  */
-export const currentlyServing = (snap: QueueSnapshot): Called | Serving | null => {
-  let best: Called | Serving | null = null
+export const currentlyServing = (snap: QueueSnapshot): Called | Overdue | null => {
+  let best: Called | Overdue | null = null
   for (const t of snap.tickets.values()) {
-    if (!isCalled(t) && !isServing(t)) continue
+    if (!isCalled(t) && !isOverdue(t)) continue
     if (best === null || t.displaySeq < best.displaySeq) best = t
   }
   return best
@@ -490,12 +584,13 @@ export const callingTickets = (snap: QueueSnapshot, lane?: Lane): readonly Calle
 
 /**
  * All tickets in the given lane (or every lane when omitted) that
- * are currently Serving, sorted by `displaySeq`.
+ * are currently Overdue, sorted by `displaySeq`. Replaces the
+ * ADR-0063 `servingTickets()` helper (ADR-0071 removes `Serving`).
  */
-export const servingTickets = (snap: QueueSnapshot, lane?: Lane): readonly Serving[] => {
-  const out: Serving[] = []
+export const overdueTickets = (snap: QueueSnapshot, lane?: Lane): readonly Overdue[] => {
+  const out: Overdue[] = []
   for (const t of snap.tickets.values()) {
-    if (!isServing(t)) continue
+    if (!isOverdue(t)) continue
     if (!matchesLane(t.lane, lane)) continue
     out.push(t)
   }
@@ -601,7 +696,7 @@ export const nextDisplaySeqInLane = (snap: QueueSnapshot, lane: Lane): number =>
  * released and may be re-used by a fresh issue.
  */
 export const isActiveForHandle = (t: Ticket): boolean =>
-  t.state === "Waiting" || t.state === "Called" || t.state === "Serving"
+  t.state === "Waiting" || t.state === "Called" || t.state === "Overdue"
 
 /**
  * `(nameKana, phoneLast4)` is enforced as the **active-set primary key**

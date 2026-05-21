@@ -1,17 +1,19 @@
 import { Temporal } from "@js-temporal/polyfill"
 import { Schema } from "effect"
 import { describe, expect, it } from "vitest"
-import type { Called, Serving, Waiting } from "../../../src/domain/queue/Ticket.js"
+import type { Called, Overdue, Waiting } from "../../../src/domain/queue/Ticket.js"
 import {
   applyCall,
   applyCancel,
   applyCheckIn,
   applyIssue,
+  applyLapseAppointment,
   applyMarkNoShow,
   applyMarkServed,
+  applyMoveToOverdue,
+  applyNudge,
   applyRecall,
   applyReorder,
-  applyStartServing,
   guardActive,
   invalidTransition,
 } from "../../../src/domain/queue/transitions.js"
@@ -123,7 +125,7 @@ describe("applyCall", () => {
   })
 })
 
-describe("applyMarkServed / applyMarkNoShow / applyCancel / applyStartServing", () => {
+describe("applyMarkServed / applyMarkNoShow / applyCancel / applyMoveToOverdue / applyNudge", () => {
   const called = (): Called => {
     const { ticket } = applyCall(issued(), {
       at: at("2026-05-08T09:05:00Z"),
@@ -132,27 +134,56 @@ describe("applyMarkServed / applyMarkNoShow / applyCancel / applyStartServing", 
     return ticket as Called
   }
 
-  it("applyStartServing transitions Called → Serving", () => {
-    const { ticket, event } = applyStartServing(
+  const overdueFrom = (c: Called): Overdue => {
+    const { ticket } = applyMoveToOverdue(c, at("2026-05-08T09:07:00Z"), newTicketEventId())
+    return ticket as Overdue
+  }
+
+  it("applyMoveToOverdue transitions Called → Overdue (system actor)", () => {
+    const { ticket, event } = applyMoveToOverdue(
       called(),
       at("2026-05-08T09:07:00Z"),
       newTicketEventId(),
     )
-    expect(ticket.state).toBe("Serving")
-    expect(event.type).toBe("ServingStarted")
-    if (ticket.state === "Serving") {
-      expect(ticket.servingStartedBy).toBe("staff")
+    expect(ticket.state).toBe("Overdue")
+    expect(event.type).toBe("MovedToOverdue")
+    if (ticket.state === "Overdue") {
+      expect(ticket.nudgeCount).toBe(0)
+      expect(ticket.lastNudgedAt).toBeNull()
+      expect(ticket.overdueAt.toString()).toBe(at("2026-05-08T09:07:00Z").toString())
+    }
+    if (event.type === "MovedToOverdue") {
+      expect(event.overdueBy).toBe("system")
     }
   })
 
-  it("applyStartServing accepts an explicit servingStartedBy actor", () => {
-    const { ticket } = applyStartServing(
-      called(),
-      at("2026-05-08T09:07:00Z"),
+  it("applyNudge increments nudgeCount and stamps lastNudgedAt", () => {
+    const o1 = overdueFrom(called())
+    const { ticket: o2, event } = applyNudge(
+      o1,
+      at("2026-05-08T09:08:30Z"),
       newTicketEventId(),
-      "system",
+      "ws",
     )
-    if (ticket.state === "Serving") expect(ticket.servingStartedBy).toBe("system")
+    expect(o2.state).toBe("Overdue")
+    expect(event.type).toBe("Nudged")
+    if (o2.state === "Overdue") {
+      expect(o2.nudgeCount).toBe(1)
+      expect(o2.lastNudgedAt?.toString()).toBe(at("2026-05-08T09:08:30Z").toString())
+    }
+    if (event.type === "Nudged") {
+      expect(event.nudgeCount).toBe(1)
+      expect(event.channel).toBe("ws")
+    }
+  })
+
+  it("applyNudge is monotonic — three nudges land at count 3", () => {
+    let o: Overdue = overdueFrom(called())
+    for (let i = 0; i < 3; i += 1) {
+      const r = applyNudge(o, at("2026-05-08T09:08:00Z"), newTicketEventId(), "ws")
+      o = r.ticket as Overdue
+    }
+    expect(o.nudgeCount).toBe(3)
   })
 
   it("applyMarkServed transitions Called → Served", () => {
@@ -160,19 +191,16 @@ describe("applyMarkServed / applyMarkNoShow / applyCancel / applyStartServing", 
     expect(ticket.state).toBe("Served")
   })
 
-  it("applyMarkServed transitions Serving → Served and carries the serving audit fields", () => {
-    const c = called()
-    const { ticket: serving } = applyStartServing(c, at("2026-05-08T09:07:00Z"), newTicketEventId())
+  it("applyMarkServed transitions Overdue → Served (late-arrival recovery)", () => {
     const { ticket: served } = applyMarkServed(
-      serving as Serving,
+      overdueFrom(called()),
       at("2026-05-08T09:10:00Z"),
       newTicketEventId(),
     )
     expect(served.state).toBe("Served")
-    if (served.state === "Served") {
-      expect(served.servingStartedAt).toBeDefined()
-      expect(served.servingStartedBy).toBe("staff")
-    }
+    // Overdue has no servingStartedAt audit pair — the post-0071 Served
+    // shape carries calledAt+servedAt only.
+    expect("servingStartedAt" in served).toBe(false)
   })
 
   it("applyMarkServed honours an explicit servedBy", () => {
@@ -195,6 +223,16 @@ describe("applyMarkServed / applyMarkNoShow / applyCancel / applyStartServing", 
     )
     expect(ticket.state).toBe("NoShow")
     if (ticket.state === "NoShow") expect(ticket.markedBy).toBe("system")
+  })
+
+  it("applyMarkNoShow transitions Overdue → NoShow (alarm terminal step)", () => {
+    const { ticket } = applyMarkNoShow(
+      overdueFrom(called()),
+      at("2026-05-08T09:15:00Z"),
+      newTicketEventId(),
+      "system",
+    )
+    expect(ticket.state).toBe("NoShow")
   })
 
   it("applyMarkNoShow defaults markedBy to staff", () => {
@@ -226,6 +264,49 @@ describe("applyMarkServed / applyMarkNoShow / applyCancel / applyStartServing", 
     if (event.type === "Cancelled") {
       expect(event.cancelledBy).toBe("staff")
       expect(event.reason).toBe("shop closing")
+    }
+  })
+
+  it("applyCancel from Overdue carries through to Cancelled", () => {
+    const { ticket } = applyCancel(
+      overdueFrom(called()),
+      at("2026-05-08T09:12:00Z"),
+      newTicketEventId(),
+      "customer",
+      "running late",
+    )
+    expect(ticket.state).toBe("Cancelled")
+  })
+})
+
+describe("applyLapseAppointment (ADR-0075)", () => {
+  it("transitions Waiting (reservation) → Cancelled with appointment_lapsed", () => {
+    const reservationKana = Schema.decodeUnknownSync(NameKanaSchema)("ヨヤク タロウ")
+    const reservation = applyIssue({
+      id: newTicketId(),
+      seq: 2,
+      lane: "reservation",
+      displaySeq: 1,
+      nameKana: reservationKana,
+      phoneLast4: phone,
+      freeText: null,
+      appointmentAt: at("2026-05-08T10:00:00Z"),
+      at: at("2026-05-08T09:00:00Z"),
+      eventId: newTicketEventId(),
+    }).ticket as Waiting
+    const { ticket, event } = applyLapseAppointment(
+      reservation,
+      at("2026-05-08T10:11:00Z"),
+      newTicketEventId(),
+    )
+    expect(ticket.state).toBe("Cancelled")
+    if (ticket.state === "Cancelled") {
+      expect(ticket.reason).toBe("appointment_lapsed")
+      expect(ticket.cancelledBy).toBe("system")
+    }
+    expect(event.type).toBe("AppointmentLapsed")
+    if (event.type === "AppointmentLapsed") {
+      expect(event.lapsedBy).toBe("system")
     }
   })
 })
@@ -272,13 +353,17 @@ describe("guardActive", () => {
     expect(guardActive(c)).toBeNull()
   })
 
-  it("returns null for Serving (active per ADR-0063)", () => {
+  it("returns null for Overdue (active per ADR-0072)", () => {
     const c = applyCall(issued(), {
       at: at("2026-05-08T09:05:00Z"),
       eventId: newTicketEventId(),
     }).ticket as Called
-    const { ticket: serving } = applyStartServing(c, at("2026-05-08T09:07:00Z"), newTicketEventId())
-    expect(guardActive(serving)).toBeNull()
+    const { ticket: overdue } = applyMoveToOverdue(
+      c,
+      at("2026-05-08T09:07:00Z"),
+      newTicketEventId(),
+    )
+    expect(guardActive(overdue)).toBeNull()
   })
 })
 
@@ -317,6 +402,31 @@ describe("applyRecall", () => {
     if (e1.type === "Recalled") expect(e1.recalledBy).toBe("staff")
     const { event: e2 } = applyRecall(c, at("2026-05-08T09:06:00Z"), newTicketEventId(), "system")
     if (e2.type === "Recalled") expect(e2.recalledBy).toBe("system")
+  })
+
+  // T5 regression lock — Recall from Overdue (after MoveToOverdue +
+  // some nudges) must drop the Overdue-only fields (`overdueAt`,
+  // `lastNudgedAt`, `nudgeCount`). The Waiting variant has no such
+  // fields, so a future refactor that accidentally retains them
+  // would change the structural type and surface in the projection
+  // (and break event-log replay totality).
+  it("Recall from Overdue drops the Overdue counter fields", () => {
+    const c = called()
+    const { ticket: o1 } = applyMoveToOverdue(c, at("2026-05-08T09:07:00Z"), newTicketEventId())
+    const { ticket: o2 } = applyNudge(
+      o1 as Overdue,
+      at("2026-05-08T09:08:30Z"),
+      newTicketEventId(),
+      "ws",
+    )
+    expect((o2 as Overdue).nudgeCount).toBe(1)
+    const { ticket: w } = applyRecall(o2 as Overdue, at("2026-05-08T09:10:00Z"), newTicketEventId())
+    expect(w.state).toBe("Waiting")
+    expect("overdueAt" in w).toBe(false)
+    expect("lastNudgedAt" in w).toBe(false)
+    expect("nudgeCount" in w).toBe(false)
+    expect("calledAt" in w).toBe(false)
+    expect("calledBy" in w).toBe(false)
   })
 })
 
@@ -397,11 +507,16 @@ describe("invalidTransition", () => {
     expect(err.command).toBe("Recall")
   })
 
-  it("accepts the new ADR-0065 command names", () => {
+  it("accepts the ADR-0065 command names", () => {
     expect(invalidTransition("Served", "CallSpecific").command).toBe("CallSpecific")
     expect(invalidTransition("Cancelled", "CallBatch").command).toBe("CallBatch")
-    expect(invalidTransition("Waiting", "StartServing").command).toBe("StartServing")
     expect(invalidTransition("Called", "Reorder").command).toBe("Reorder")
+  })
+
+  it("accepts the ADR-0072 / ADR-0075 command names", () => {
+    expect(invalidTransition("Waiting", "MoveToOverdue").command).toBe("MoveToOverdue")
+    expect(invalidTransition("Called", "Nudge").command).toBe("Nudge")
+    expect(invalidTransition("Called", "LapseAppointment").command).toBe("LapseAppointment")
   })
 
   it("accepts CheckIn as a command name (ADR-0068)", () => {

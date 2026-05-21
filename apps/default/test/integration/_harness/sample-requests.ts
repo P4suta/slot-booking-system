@@ -106,12 +106,6 @@ export const callBatch = (ticketIds: readonly string[], staffHeaders: Record<str
     body: JSON.stringify({ ticketIds }),
   })
 
-export const startServing = (ticketId: string, staffHeaders: Record<string, string>) =>
-  buildRequest(`/api/v1/tickets/${ticketId}/start-serving`, {
-    method: "POST",
-    headers: staffHeaders,
-  })
-
 export const reorder = (
   body: { ticketId: string; afterTicketId: string | null },
   staffHeaders: Record<string, string>,

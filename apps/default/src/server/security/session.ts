@@ -16,6 +16,14 @@ import { timingSafeEqual } from "./timingSafeEqual.js"
  */
 
 const COOKIE_NAME = "__Host-staff_session"
+// RFC 6265bis §4.1.3 (`__Host-` prefix) MANDATES `Path=/` and
+// forbids the `Domain` attribute. Narrowing the cookie to e.g.
+// `/api/v1/queue` would cause the user-agent to silently drop
+// the Set-Cookie; the `__Host-` invariants ARE the security here.
+// (Any privilege-escalation worry from non-staff endpoints reading
+// the cookie is mitigated by `requireStaff()` running on every
+// staff route — the cookie merely identifies the caller as a
+// possible staff member; capability is still verified per request.)
 const COOKIE_PATH = "/"
 
 export type SessionPayload = {

@@ -130,10 +130,16 @@ describe("queue lifecycle state-machine invariants (property)", () => {
         // observing it on the final snapshot is necessary but not
         // sufficient — together with invariants 1 and 2 we cover the
         // queue-shape contract.
+        //
+        // ADR-0071: `Serving` is removed from the union. `Overdue` is
+        // unreachable through this test's user-driven command set
+        // (`MoveToOverdue` is system-fired by the alarm sweep), but it
+        // is a legal state for any aggregate the test reads back, so it
+        // belongs in the valid-set check.
         const states = final.map((t) => t.state)
         expect(
           states.every((s) =>
-            ["Waiting", "Called", "Serving", "Served", "NoShow", "Cancelled"].includes(s),
+            ["Waiting", "Called", "Overdue", "Served", "NoShow", "Cancelled"].includes(s),
           ),
         ).toBe(true)
       }),

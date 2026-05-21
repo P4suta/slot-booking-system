@@ -15,10 +15,11 @@ import { loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * MarkServed — `Called | Serving → Served` (ADR-0063 broadens the
- * source). Staff-only command; the GraphQL resolver upstream already
- * enforces the `operate_queue` scope, so the use case body trusts
- * the caller and focuses on the state machine.
+ * MarkServed — `Called | Overdue → Served` (ADR-0071/0072 swap the
+ * source-state set: Serving is gone, Overdue is the late-arrival
+ * recovery path). Staff-only command; the GraphQL resolver upstream
+ * already enforces the `operate_queue` scope, so the use case body
+ * trusts the caller and focuses on the state machine.
  */
 export const MarkServed = (
   ticketId: TicketId,
@@ -31,7 +32,7 @@ export const MarkServed = (
     const loaded = yield* loadOrTicketNotFound(ticketId)
     const terminal = guardActive(loaded.state)
     if (terminal !== null) return yield* Effect.fail(terminal)
-    if (loaded.state.state !== "Called" && loaded.state.state !== "Serving") {
+    if (loaded.state.state !== "Called" && loaded.state.state !== "Overdue") {
       return yield* Effect.fail(invalidTransition(loaded.state.state, "MarkServed"))
     }
     const source = loaded.state

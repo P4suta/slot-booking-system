@@ -1,5 +1,6 @@
 export * from "./aggregateSnapshots.js"
 export * from "./auditLog.js"
 export * from "./outbox.js"
+export * from "./pushSubscriptions.js"
 export * from "./ticketEvents.js"
 export * from "./tickets.js"

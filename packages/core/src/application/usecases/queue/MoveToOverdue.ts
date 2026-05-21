@@ -1,8 +1,8 @@
 import { Effect } from "effect"
 import type { ConcurrencyError, DomainError, StorageError } from "../../../domain/errors/Errors.js"
-import type { Actor, Ticket } from "../../../domain/queue/Ticket.js"
+import type { Ticket } from "../../../domain/queue/Ticket.js"
 import {
-  applyStartServing,
+  applyMoveToOverdue,
   guardActive,
   invalidTransition,
 } from "../../../domain/queue/transitions.js"
@@ -15,14 +15,18 @@ import { loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * StartServing — `Called → Serving` (ADR-0063). Once the operator
- * fires this, the NoShow alarm sweep no longer applies to the
- * ticket; the ticket lives in `Serving` until `MarkServed` (or, in
- * unusual cases, `Cancel`).
+ * MoveToOverdue — `Called → Overdue` (ADR-0072). System-only command
+ * dispatched by the QueueShop alarm sweep when
+ * `now - calledAt > OVERDUE_AFTER_CALLED_SECONDS`. The transition gates
+ * the bounded nudge loop; only after `MAX_NUDGES` nudges does the
+ * terminal `Overdue → NoShow` fire.
+ *
+ * The actor is hard-coded to `"system"` — staff have no path to fire
+ * this manually; if they want to escalate they use MarkNoShow or
+ * Cancel directly from Called.
  */
-export const StartServing = (
+export const MoveToOverdue = (
   ticketId: TicketId,
-  actor: Actor = "staff",
 ): Effect.Effect<
   Ticket,
   DomainError | ConcurrencyError | StorageError,
@@ -33,12 +37,16 @@ export const StartServing = (
     const terminal = guardActive(loaded.state)
     if (terminal !== null) return yield* Effect.fail(terminal)
     if (loaded.state.state !== "Called") {
-      return yield* Effect.fail(invalidTransition(loaded.state.state, "StartServing"))
+      return yield* Effect.fail(invalidTransition(loaded.state.state, "MoveToOverdue"))
     }
     const called = loaded.state
     return yield* applyAndPersist({
       loaded,
-      apply: (at, eventId) => applyStartServing(called, at, eventId, actor),
-      log: { tag: "StartServing", code: "I_USECASE_START_SERVING", data: { ticketId } },
+      apply: (at, eventId) => applyMoveToOverdue(called, at, eventId, "system"),
+      log: {
+        tag: "MoveToOverdue",
+        code: "I_USECASE_MOVE_TO_OVERDUE",
+        data: { ticketId },
+      },
     })
   })

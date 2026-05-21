@@ -15,18 +15,21 @@ export type Ticket = {
   readonly seq: number
   readonly lane: Lane
   readonly displaySeq: number
-  readonly state: "Waiting" | "Called" | "Serving" | "Served" | "NoShow" | "Cancelled"
+  readonly state: "Waiting" | "Called" | "Overdue" | "Served" | "NoShow" | "Cancelled"
   readonly nameKana: string | null
   readonly phoneLast4: string | null
   readonly freeText: string | null
   readonly issuedAt: string
   readonly calledAt?: string
-  readonly servingStartedAt?: string
+  readonly overdueAt?: string
+  readonly lastNudgedAt?: string | null
+  readonly nudgeCount?: number
   readonly servedAt?: string
   readonly cancelledAt?: string
   readonly markedAt?: string
   readonly appointmentAt: string | null
   readonly checkedInAt: string | null
+  readonly reason?: string
 }
 
 export type SlotEntry = {
@@ -46,6 +49,16 @@ export type ProjectionEntry = {
   readonly appointmentAt: string | null
 }
 
+/**
+ * Overdue projection entry — same as {@link ProjectionEntry} plus
+ * `nudgeCount` so the customer-side de-dup keys `(calledAt,
+ * nudgeCount)` can detect each successive `Nudged` event without
+ * polling. ADR-0072.
+ */
+type OverdueProjectionEntry = ProjectionEntry & {
+  readonly nudgeCount: number
+}
+
 export type LaneCounts = {
   readonly walkIn: number
   readonly priority: number
@@ -53,36 +66,36 @@ export type LaneCounts = {
 }
 
 /**
- * v3 anonymous shop projection (ADR-0062 / ADR-0063 / ADR-0065 /
- * ADR-0066 / ADR-0067). Lane-aware preview with `appointmentAt`,
- * `calling[]` + `serving[]` arrays, and `laneCounts`. The
- * `nextReservationDeadline` mirrors the EDF scheduling target used
- * by the staff Kanban so the client can render the next-due slot
- * chip without consulting `waitingPreview` directly.
+ * v4 anonymous shop projection (ADR-0062 / ADR-0065 / ADR-0066 /
+ * ADR-0067 / ADR-0071 / ADR-0072). `Serving` is gone; `Overdue`
+ * joins `Called` as the post-call states. The `overdue[]` array
+ * carries `nudgeCount` per ticket so the customer-side dedup key
+ * `(calledAt, nudgeCount)` (per ADR-0072) detects each successive
+ * `Nudged` event without polling.
  */
 export type ShopState = {
-  readonly v: 3
+  readonly v: 4
   readonly waitingCount: number
   readonly laneCounts: LaneCounts
   readonly calling: readonly ProjectionEntry[]
-  readonly serving: readonly ProjectionEntry[]
+  readonly overdue: readonly OverdueProjectionEntry[]
   readonly waitingPreview: readonly ProjectionEntry[]
   readonly nextReservationDeadline: string | null
 }
 
 /**
  * Staff-only shape: PII (nameKana / phoneLast4 / freeText) のせ。
- * calling / serving / waitingPreview のすべてが full Ticket row を
+ * calling / overdue / waitingPreview のすべてが full Ticket row を
  * carry。 `terminal` は ADR-0069 §Stage 11 で追加された直近 8 件の
  * Served / Cancelled / NoShow ticket スライス (履歴列の source)。
  * `x-staff-token` 付き GET /api/v1/queue で返る。
  */
 export type StaffShopState = {
-  readonly v: 3
+  readonly v: 4
   readonly waitingCount: number
   readonly laneCounts: LaneCounts
   readonly calling: readonly Ticket[]
-  readonly serving: readonly Ticket[]
+  readonly overdue: readonly Ticket[]
   readonly waitingPreview: readonly Ticket[]
   readonly terminal: readonly Ticket[]
   readonly nextReservationDeadline: string | null
@@ -391,15 +404,6 @@ export const callBatch = async (
     body: JSON.stringify({ ticketIds }),
   })
 
-export const startServing = async (
-  token: string,
-  ticketId: string,
-): Promise<ApiResult<{ ticket: Ticket }>> =>
-  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/start-serving`, {
-    method: "POST",
-    headers: staffHeaders(token),
-  })
-
 export const reorder = async (
   token: string,
   body: { ticketId: string; afterTicketId: string | null },
@@ -454,3 +458,48 @@ export const staffCancel = async (
     headers: staffHeaders(token),
     body: JSON.stringify({ reason }),
   })
+
+/**
+ * Register a Web Push subscription for the customer's active ticket
+ * (ADR-0073). Customer-authenticated: handle `(nameKana, phoneLast4)`
+ * is verified server-side against the ticket's stored handle
+ * (cancel-pattern parity). The browser-side PushManager produces an
+ * opaque endpoint URL + `(p256dh, auth)` ECDH material; the back-end
+ * stores the row, gates the endpoint origin to the known push
+ * services, and reaps it on terminal transition (ADR-0074).
+ */
+export const registerPushSubscription = async (
+  ticketId: string,
+  body: {
+    nameKana: string
+    phoneLast4: string
+    endpoint: string
+    p256dh: string
+    auth: string
+  },
+): Promise<ApiResult<{ readonly ok: true }>> =>
+  fetchJson(`${baseUrl()}/api/v1/tickets/${ticketId}/push-subscription`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
+/**
+ * Unregister a previously-registered Web Push subscription. Customer-
+ * authenticated via query string (DELETE bodies are non-portable).
+ */
+export const unregisterPushSubscription = async (
+  ticketId: string,
+  handle: { nameKana: string; phoneLast4: string },
+  endpoint: string,
+): Promise<ApiResult<{ readonly ok: true }>> => {
+  const params = new URLSearchParams({
+    nameKana: handle.nameKana,
+    phoneLast4: handle.phoneLast4,
+    endpoint,
+  })
+  return fetchJson(
+    `${baseUrl()}/api/v1/tickets/${ticketId}/push-subscription?${params.toString()}`,
+    { method: "DELETE" },
+  )
+}

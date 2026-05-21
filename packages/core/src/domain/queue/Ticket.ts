@@ -77,29 +77,32 @@ export const CalledSchema = Schema.Struct({
 export type Called = Schema.Schema.Type<typeof CalledSchema>
 
 /**
- * `Serving` sits between `Called` and `Served` (ADR-0063). The
- * NoShow alarm sweeps `Called` only — once a ticket reaches
- * `Serving`, the customer is at the counter and the alarm no
- * longer applies. From the customer's perspective Serving is
- * indistinguishable from Called ("you have been called").
+ * `Overdue` sits between `Called` and `NoShow` (ADR-0072). The
+ * NoShow alarm no longer fires `Called → NoShow` directly; instead
+ * `Called → Overdue` happens automatically on a timer, then a
+ * bounded nudge loop (`nudgeCount < MAX_NUDGES`) asks the customer
+ * to respond before the terminal `Overdue → NoShow` transition.
+ *
+ * From the customer's perspective Overdue is indistinguishable from
+ * Called ("you have been called"); the audit-side distinction is
+ * what allows nudge events to be emitted.
  */
-export const ServingSchema = Schema.Struct({
+export const OverdueSchema = Schema.Struct({
   ...CommonFields,
-  state: Schema.Literal("Serving"),
+  state: Schema.Literal("Overdue"),
   calledAt: InstantSchema,
   calledBy: ActorSchema,
-  servingStartedAt: InstantSchema,
-  servingStartedBy: ActorSchema,
+  overdueAt: InstantSchema,
+  lastNudgedAt: Schema.NullOr(InstantSchema),
+  nudgeCount: Schema.Number,
 })
-export type Serving = Schema.Schema.Type<typeof ServingSchema>
+export type Overdue = Schema.Schema.Type<typeof OverdueSchema>
 
 export const ServedSchema = Schema.Struct({
   ...CommonFields,
   state: Schema.Literal("Served"),
   calledAt: InstantSchema,
   calledBy: ActorSchema,
-  servingStartedAt: Schema.optional(InstantSchema),
-  servingStartedBy: Schema.optional(ActorSchema),
   servedAt: InstantSchema,
   servedBy: ActorSchema,
 })
@@ -131,7 +134,7 @@ export type Cancelled = Schema.Schema.Type<typeof CancelledSchema>
 export const TicketSchema = Schema.Union([
   WaitingSchema,
   CalledSchema,
-  ServingSchema,
+  OverdueSchema,
   ServedSchema,
   NoShowSchema,
   CancelledSchema,

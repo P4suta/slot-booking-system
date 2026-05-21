@@ -1,8 +1,9 @@
 # ADR-0063: Serving intermediate state + NoShow alarm cutoff
 
-- Status: Accepted
+- Status: superseded by [ADR-0071](./0071-supersede-serving-state.md) — `Serving` is removed; `Called` transitions directly to `Served` or, on timer, to `Overdue` (ADR-0072).
 - Date: 2026-05-09
 - Refines: ADR-0050 (queue pivot), ADR-0052 (type-state Ticket), ADR-0059 (event-log SoT)
+- Superseded-By: ADR-0071 (2026-05-21)
 
 ## Decision
 

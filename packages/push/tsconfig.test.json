@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "rootDir": ".",
+    "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo.test",
+    "types": ["vitest/globals"]
+  },
+  "include": ["test/**/*", "vitest.config.ts"],
+  "exclude": ["dist", "node_modules", "coverage"],
+  "references": [{ "path": "./tsconfig.src.json" }]
+}

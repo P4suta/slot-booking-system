@@ -57,9 +57,13 @@ export const CallNext = (
       lane !== undefined ? head({ tickets }, lane) : nextCallable({ tickets }, now, grace)
     if (next === null) return yield* Effect.fail(new QueueEmptyError({}))
     // `repo.load(next.id)` defensively maps a missing aggregate / a
-    // non-Waiting load result to QueueEmpty. Both arms cover a race
-    // window only the multi-writer DO can hit (head() saw the row,
-    // load() did not / saw it after a transition).
+    // non-Waiting load result to QueueEmpty. The single-writer DO
+    // (ADR-0053) serialises every save, so within one CallNext
+    // execution the head() projection and load() result cannot
+    // disagree about a row's state. The guard exists for non-DO
+    // adapters (InMemoryEventSourcedRepositoryLive used by tests
+    // and any future multi-writer backend) and as a totality
+    // contract — `applyAndPersist` requires a Waiting source.
     const loaded = yield* repo
       .load(next.id)
       .pipe(

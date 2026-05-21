@@ -16,24 +16,26 @@ import type {
   Called,
   Cancelled,
   NoShow,
+  Overdue,
   Served,
-  Serving,
   Ticket,
   TicketCommon,
   TicketState,
   Waiting,
 } from "./Ticket.js"
 import type {
+  AppointmentLapsedEvent,
   CalledEvent,
   CancelledEvent,
   CheckedInEvent,
   IssuedEvent,
+  MovedToOverdueEvent,
   NoShowedEvent,
+  NudgedEvent,
   RecalledEvent,
   ReorderedEvent,
   RescheduledEvent,
   ServedEvent,
-  ServingStartedEvent,
   TicketEvent,
 } from "./TicketEvent.js"
 
@@ -47,7 +49,7 @@ import type {
  * The right-side helpers (`applyIssue`, `applyCall`, …) return
  * this directly rather than `Result.Result<ApplyResult, DomainError>`:
  * the source-state argument is type-narrowed at the boundary
- * (`applyMarkServed(t: Called | Serving, …)`), so a failure path has
+ * (`applyMarkServed(t: Called | Overdue, …)`), so a failure path has
  * no inputs that could trigger it. The use cases are responsible for
  * the pre-condition check (`guardActive` + state-equality), and the
  * helpers commit to a total transformation once those have passed.
@@ -158,41 +160,77 @@ export const applyCall = (t: Waiting, args: CallArgs): ApplyResult => {
 }
 
 /* -------------------------------------------------------------------------- */
-/* StartServing — Called → Serving (ADR-0063). The customer reached the       */
-/* counter; NoShow alarm no longer applies.                                   */
+/* MoveToOverdue — Called → Overdue (ADR-0072). System-fired by the alarm     */
+/* sweep when `now - calledAt > OVERDUE_AFTER_CALLED_SECONDS`. The transition */
+/* gates the bounded nudge loop; only after `MAX_NUDGES` nudges does the      */
+/* terminal `Overdue → NoShow` fire.                                          */
 /* -------------------------------------------------------------------------- */
 
-export const applyStartServing = (
+export const applyMoveToOverdue = (
   t: Called,
   at: Temporal.Instant,
   eventId: TicketEventId,
-  servingStartedBy: Actor = "staff",
+  overdueBy: Actor = "system",
 ): ApplyResult => {
-  const ticket: Serving = {
+  const ticket: Overdue = {
     ...common(t),
-    state: "Serving",
+    state: "Overdue",
     calledAt: t.calledAt,
     calledBy: t.calledBy,
-    servingStartedAt: at,
-    servingStartedBy,
+    overdueAt: at,
+    lastNudgedAt: null,
+    nudgeCount: 0,
   }
-  const event: ServingStartedEvent = {
+  const event: MovedToOverdueEvent = {
     ...baseEvent(eventId, t.id, at),
-    type: "ServingStarted",
-    servingStartedBy,
+    type: "MovedToOverdue",
+    overdueBy,
   }
   return { ticket, event }
 }
 
 /* -------------------------------------------------------------------------- */
-/* MarkServed — Called | Serving → Served (ADR-0063 broadens the source).     */
-/* When the source is Serving the served ticket carries the                   */
-/* `servingStartedAt + servingStartedBy` audit fields; from Called those      */
-/* fields are absent.                                                         */
+/* Nudge — Overdue → Overdue (ADR-0072). One nudge fire of the customer-side  */
+/* "are you coming?" loop. `nudgeCount` increments; `lastNudgedAt` is set.    */
+/* The transport (`channel`) is recorded for audit — `"ws"` for the          */
+/* WebSocket fallback, `"push"` for Web Push (ADR-0073).                      */
+/* -------------------------------------------------------------------------- */
+
+export const applyNudge = (
+  t: Overdue,
+  at: Temporal.Instant,
+  eventId: TicketEventId,
+  channel: "ws" | "push",
+  nudgedBy: Actor = "system",
+): ApplyResult => {
+  const nextCount = t.nudgeCount + 1
+  const ticket: Overdue = {
+    ...common(t),
+    state: "Overdue",
+    calledAt: t.calledAt,
+    calledBy: t.calledBy,
+    overdueAt: t.overdueAt,
+    lastNudgedAt: at,
+    nudgeCount: nextCount,
+  }
+  const event: NudgedEvent = {
+    ...baseEvent(eventId, t.id, at),
+    type: "Nudged",
+    nudgedBy,
+    nudgeCount: nextCount,
+    channel,
+  }
+  return { ticket, event }
+}
+
+/* -------------------------------------------------------------------------- */
+/* MarkServed — Called | Overdue → Served (ADR-0071 swaps Serving for         */
+/* Overdue). A customer who arrives late and is finally served from Overdue   */
+/* is recovered through this transition.                                      */
 /* -------------------------------------------------------------------------- */
 
 export const applyMarkServed = (
-  t: Called | Serving,
+  t: Called | Overdue,
   at: Temporal.Instant,
   eventId: TicketEventId,
   servedBy: Actor = "staff",
@@ -202,12 +240,6 @@ export const applyMarkServed = (
     state: "Served",
     calledAt: t.calledAt,
     calledBy: t.calledBy,
-    ...(t.state === "Serving"
-      ? {
-          servingStartedAt: t.servingStartedAt,
-          servingStartedBy: t.servingStartedBy,
-        }
-      : {}),
     servedAt: at,
     servedBy,
   }
@@ -220,12 +252,13 @@ export const applyMarkServed = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* MarkNoShow — Called → NoShow only (ADR-0063 narrows the source). Once a    */
-/* ticket is being served, the alarm-driven NoShow sweep no longer applies.   */
+/* MarkNoShow — Called | Overdue → NoShow (ADR-0071/0072). The alarm sweep    */
+/* fires this from `Overdue` after `MAX_NUDGES` nudges; staff can fire it     */
+/* manually from either source state.                                         */
 /* -------------------------------------------------------------------------- */
 
 export const applyMarkNoShow = (
-  t: Called,
+  t: Called | Overdue,
   at: Temporal.Instant,
   eventId: TicketEventId,
   markedBy: Actor = "staff",
@@ -247,19 +280,18 @@ export const applyMarkNoShow = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* Recall — Called → Waiting. Staff-issued reversal of an accidental          */
-/* Call: the customer never actually arrived at the counter, so we drop       */
-/* the Called-only fields (`calledAt`, `calledBy`) and restore the original   */
-/* Waiting shape. The `seq` and `displaySeq` are preserved on purpose — the   */
-/* ticket was at the head of its lane when it was called, and the lattice's   */
-/* lowest-displaySeq invariant guarantees it will be the head again unless    */
-/* someone has meanwhile reordered it. Audit-wise the call still happened —   */
-/* the `Recalled` event sits in the log alongside the `Called` event it       */
-/* withdraws.                                                                  */
+/* Recall — Called | Overdue → Waiting. Staff-issued reversal of an           */
+/* accidental Call (or of an over-eager nudge loop): the customer never       */
+/* actually arrived at the counter, so we drop the Called-only fields         */
+/* (`calledAt`, `calledBy`, and any Overdue counters) and restore the         */
+/* original Waiting shape. `seq` and `displaySeq` are preserved on purpose —  */
+/* the ticket returns to the head of its lane unless someone has meanwhile   */
+/* reordered it. Audit-wise the call still happened — the `Recalled` event   */
+/* sits in the log alongside the `Called` event it withdraws.                */
 /* -------------------------------------------------------------------------- */
 
 export const applyRecall = (
-  t: Called,
+  t: Called | Overdue,
   at: Temporal.Instant,
   eventId: TicketEventId,
   recalledBy: Actor = "staff",
@@ -277,16 +309,16 @@ export const applyRecall = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* Cancel — Waiting | Called | Serving → Cancelled. Both customer-issued      */
-/* (self-service) and staff-issued cancellations land here; the actor records */
-/* who. Serving is included so a mistaken `StartServing` (= staff misclick)   */
-/* is recoverable from the customer's keyboard too; the Cancelled event's     */
-/* `reason` carries the operational context. ADR-0063 keeps Serving as the    */
-/* "in-progress" state — but in-progress ≠ uncancellable.                     */
+/* Cancel — Waiting | Called | Overdue → Cancelled (ADR-0071). Both           */
+/* customer-issued (self-service) and staff-issued cancellations land here;   */
+/* the actor records who. Overdue is included so a customer who has stopped   */
+/* responding to nudges can still cancel from the same /ticket button, and    */
+/* staff can invalidate the ticket when they learn out-of-band that the       */
+/* customer isn't coming.                                                     */
 /* -------------------------------------------------------------------------- */
 
 export const applyCancel = (
-  t: Waiting | Called | Serving,
+  t: Waiting | Called | Overdue,
   at: Temporal.Instant,
   eventId: TicketEventId,
   cancelledBy: Actor,
@@ -304,6 +336,40 @@ export const applyCancel = (
     type: "Cancelled",
     cancelledBy,
     reason,
+  }
+  return { ticket, event }
+}
+
+/* -------------------------------------------------------------------------- */
+/* LapseAppointment — Waiting → Cancelled (ADR-0075). System-fired by the     */
+/* alarm sweep when a reservation-lane Waiting ticket's `appointmentAt +      */
+/* grace < now`. The resulting Cancelled carries the typed event for audit    */
+/* (`AppointmentLapsedEvent`) plus `reason: "appointment_lapsed"` so a        */
+/* projection consumer reading the snapshot still sees a clean Cancelled.     */
+/* The lane / appointmentAt pre-condition is enforced by the use case; the    */
+/* transition trusts the caller.                                              */
+/* -------------------------------------------------------------------------- */
+
+export const applyLapseAppointment = (
+  t: Waiting,
+  at: Temporal.Instant,
+  eventId: TicketEventId,
+): ApplyResult => {
+  /* v8 ignore next */
+  if (t.appointmentAt === null) throw new Error("applyLapseAppointment: appointmentAt is null")
+  const lapsedBy: Actor = "system"
+  const ticket: Cancelled = {
+    ...common(t),
+    state: "Cancelled",
+    cancelledAt: at,
+    cancelledBy: lapsedBy,
+    reason: "appointment_lapsed",
+  }
+  const event: AppointmentLapsedEvent = {
+    ...baseEvent(eventId, t.id, at),
+    type: "AppointmentLapsed",
+    lapsedBy,
+    appointmentAt: t.appointmentAt,
   }
   return { ticket, event }
 }
@@ -369,7 +435,7 @@ export const applyCheckIn = (
 /* -------------------------------------------------------------------------- */
 
 export const applyReschedule = (
-  t: Waiting | Called | Serving,
+  t: Waiting | Called | Overdue,
   newAppointmentAt: Temporal.Instant,
   at: Temporal.Instant,
   eventId: TicketEventId,
@@ -383,7 +449,7 @@ export const applyReschedule = (
   if (t.appointmentAt === null) throw new Error("applyReschedule: appointmentAt is null")
   const fromAppointmentAt = t.appointmentAt
   // Preserve `state` exactly — Waiting stays Waiting, Called stays
-  // Called, Serving stays Serving. Only `appointmentAt` mutates.
+  // Called, Overdue stays Overdue. Only `appointmentAt` mutates.
   // The spread preserves the discriminant tag; the result type is
   // the same variant as `t`.
   const ticket: Ticket = { ...t, appointmentAt: newAppointmentAt }
@@ -408,7 +474,9 @@ export type TicketCommand =
   | "CallNext"
   | "CallSpecific"
   | "CallBatch"
-  | "StartServing"
+  | "MoveToOverdue"
+  | "Nudge"
+  | "LapseAppointment"
   | "MarkServed"
   | "MarkNoShow"
   | "Cancel"
@@ -427,7 +495,7 @@ const terminalError = (state: TicketState): DomainError | null => {
  * Guard the state machine against a command issued against a terminal
  * ticket. Returns the matching `Already*Error` when the state has no
  * outgoing transition; returns `null` when the ticket is still active
- * (Waiting / Called / Serving).
+ * (Waiting / Called / Overdue).
  */
 export const guardActive = (t: Ticket): DomainError | null => terminalError(t.state)
 

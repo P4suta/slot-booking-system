@@ -28,7 +28,7 @@
   const refresh = (data: ShopState) => {
     waitingCount = data.waitingCount
     laneCounts = data.laneCounts
-    calling = data.calling.length + data.serving.length
+    calling = data.calling.length + data.overdue.length
   }
 
   onMount(async () => {
