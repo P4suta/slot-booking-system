@@ -24,6 +24,7 @@
   ],
   "dependencies": {
     "@booking/core": "workspace:*",
+    "@booking/push": "workspace:*",
     "@microlabs/otel-cf-workers": "latest",
     "@opentelemetry/api": "latest",
     "drizzle-orm": "rc",

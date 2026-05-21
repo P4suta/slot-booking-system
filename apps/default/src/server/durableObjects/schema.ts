@@ -1,5 +1,6 @@
 import { aggregateSnapshots } from "../schema/aggregateSnapshots.js"
 import { outbox, outboxDead } from "../schema/outbox.js"
+import { pushSubscriptions } from "../schema/pushSubscriptions.js"
 import { ticketEvents } from "../schema/ticketEvents.js"
 import { tickets } from "../schema/tickets.js"
 import { tablesToDDL } from "./ddl.js"
@@ -31,6 +32,7 @@ const DURABLE_OBJECT_DDL = tablesToDDL([
   outbox,
   outboxDead,
   aggregateSnapshots,
+  pushSubscriptions,
 ])
 
 type ColumnAddition = {
@@ -44,6 +46,13 @@ const IDEMPOTENT_COLUMN_ADDITIONS: readonly ColumnAddition[] = [
   { table: "tickets", column: "appointment_at", type: "TEXT" },
   // ADR-0068: customer-side arrival audit instant.
   { table: "tickets", column: "checked_in_at", type: "TEXT" },
+  // ADR-0072: Overdue state projection columns. `lane` is added
+  // alongside because the appointment-lapse sweep (ADR-0075) needs to
+  // filter Waiting-reservation rows in SQL.
+  { table: "tickets", column: "lane", type: "TEXT" },
+  { table: "tickets", column: "overdue_at", type: "TEXT" },
+  { table: "tickets", column: "last_nudged_at", type: "TEXT" },
+  { table: "tickets", column: "nudge_count", type: "INTEGER DEFAULT 0" },
 ] as const
 
 const ensureColumn = (sql: SqlStorage, addition: ColumnAddition): void => {
@@ -60,4 +69,11 @@ export const ensureDurableObjectSchema = (sql: SqlStorage): void => {
   for (const addition of IDEMPOTENT_COLUMN_ADDITIONS) {
     ensureColumn(sql, addition)
   }
+  // ADR-0072 / ADR-0075: the new `lane` projection column is added
+  // empty by `ensureColumn`. Existing rows have the canonical lane
+  // inside their JSON `payload`; backfill it so the alarm sweep's
+  // `WHERE lane = 'reservation'` predicate matches pre-migration
+  // reservation tickets too. Idempotent: rows where lane is already
+  // set are untouched.
+  sql.exec("UPDATE tickets SET lane = json_extract(payload, '$.lane') WHERE lane IS NULL")
 }

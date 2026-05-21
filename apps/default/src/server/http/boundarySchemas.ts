@@ -136,6 +136,43 @@ export const StaffCancelBodySchema = Schema.Struct({
   reason: ReasonSchema,
 })
 
+/** Endpoint URL upper bound; real push services emit < 256 bytes,
+ *  so 2048 is comfortably defensive without locking out future hosts. */
+const PushEndpointSchema = Schema.String.check(Schema.isMaxLength(2048))
+
+/**
+ * `POST /api/v1/tickets/:id/push-subscription` body (ADR-0073 / ADR-0074).
+ * Carries the browser's PushSubscription shape (endpoint + ECDH keys)
+ * plus the customer handle. The handle is required so the DO can
+ * verify that the caller is the actual ticket holder (cancel-pattern
+ * parity); without it, anyone with a leaked `ticketId` could register
+ * a subscription on behalf of someone else.
+ *
+ * `endpoint` is validated separately at the route boundary against
+ * the known push-service origins.
+ */
+export const PushSubscriptionBodySchema = Schema.Struct({
+  nameKana: NameKanaSchema,
+  phoneLast4: PhoneLast4Schema,
+  endpoint: PushEndpointSchema,
+  p256dh: Schema.String,
+  auth: Schema.String,
+})
+
+/**
+ * `DELETE /api/v1/tickets/:id/push-subscription` query — the
+ * customer-side unsubscribe button passes `?endpoint=...&nameKana=...&
+ * phoneLast4=...` so the row deletion targets the correct device row
+ * (a single ticket may have rows from multiple devices). DELETE bodies
+ * are not portable across user-agents per HTTP convention, so handle
+ * verification travels in the query string instead.
+ */
+export const PushSubscriptionDeleteQuerySchema = Schema.Struct({
+  nameKana: NameKanaSchema,
+  phoneLast4: PhoneLast4Schema,
+  endpoint: PushEndpointSchema,
+})
+
 /**
  * `GET /api/v1/slots?from=YYYY-MM-DD&to=YYYY-MM-DD&granularity=30`
  * (ADR-0066 / ADR-0068). Returns `[ { slot, capacity, taken,

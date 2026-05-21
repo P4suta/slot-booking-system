@@ -1,0 +1,29 @@
+{
+  "name": "@booking/push",
+  "version": "0.0.0",
+  "description": "WebCrypto-based Web Push (VAPID + RFC 8291 aes128gcm) for Cloudflare Workers.",
+  "license": "(Apache-2.0 OR MIT)",
+  "type": "module",
+  "private": true,
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "effect": "beta"
+  },
+  "devDependencies": {
+    "vitest": "latest"
+  }
+}

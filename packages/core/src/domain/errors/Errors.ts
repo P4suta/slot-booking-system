@@ -242,7 +242,7 @@ export class LaneMismatchError extends Schema.TaggedErrorClass<LaneMismatchError
 
 /**
  * A booking attempt landed on a slot whose capacity is already
- * fully consumed by Waiting / Called / Serving tickets. ADR-0066
+ * fully consumed by Waiting / Called / Overdue tickets. ADR-0066
  * makes the slot capacity guard a single-writer DO check, so the
  * error covers the genuine race between concurrent issuers (the
  * second arrival wins the round-trip but loses the bucket).

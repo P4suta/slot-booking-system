@@ -89,6 +89,15 @@ export const constantTimeStringEqual = (a: string, b: string): boolean => {
   for (let i = 0; i < a.length; i += 1) {
     diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
   }
+  // Known limitation per ADR-0058: the final `diff === 0` is a
+  // single conditional jump and the XOR fold may be vectorised by
+  // a sufficiently aggressive JIT. The threat model (an HTTP-level
+  // attacker probing /api/v1/tickets/me under RL_VERIFY 30/min/IP)
+  // makes this leakage gap unexploitable in practice. A WebCrypto
+  // HMAC-based alternative would close the gap but at the cost of
+  // an async API surface that does not match the synchronous
+  // domain layer this helper lives in. Re-evaluate if RL_VERIFY
+  // budget changes or the threat model widens.
   return diff === 0
 }
 

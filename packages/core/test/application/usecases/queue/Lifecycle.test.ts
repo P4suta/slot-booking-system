@@ -9,12 +9,14 @@ import {
   CancelTicket,
   CheckIn,
   IssueTicket,
+  LapseAppointment,
   MarkNoShow,
   MarkServed,
+  MoveToOverdue,
+  Nudge,
   Recall,
   Reorder,
   RescheduleTicket,
-  StartServing,
 } from "../../../../src/application/usecases/queue/index.js"
 import { AggregateNotFoundError } from "../../../../src/domain/errors/Errors.js"
 import { applyIssue } from "../../../../src/domain/queue/transitions.js"
@@ -308,7 +310,7 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
-  it("ADR-0069: CancelTicket from Serving recovers a misclick (staff path)", async () =>
+  it("ADR-0072: CancelTicket from Overdue recovers stale nudge state (staff path)", async () =>
     runScenario(
       Effect.gen(function* () {
         const t1 = yield* IssueTicket({
@@ -316,23 +318,23 @@ describe("queue lifecycle round-trip", () => {
           freeText: null,
         })
         yield* CallNext()
-        const serving = yield* StartServing(t1.id)
-        expect(serving.state).toBe("Serving")
-        const cancelled = yield* CancelTicket(t1.id, "staff", "misclick-recovery")
+        const overdue = yield* MoveToOverdue(t1.id)
+        expect(overdue.state).toBe("Overdue")
+        const cancelled = yield* CancelTicket(t1.id, "staff", "no-show-confirmed")
         expect(cancelled.state).toBe("Cancelled")
         if (cancelled.state === "Cancelled") {
-          expect(cancelled.reason).toBe("misclick-recovery")
+          expect(cancelled.reason).toBe("no-show-confirmed")
         }
       }),
     ))
 
-  it("ADR-0069: customer CancelTicket from Serving with handle succeeds", async () =>
+  it("ADR-0072: customer CancelTicket from Overdue with handle succeeds", async () =>
     runScenario(
       Effect.gen(function* () {
         const h = handle("ヤマダ タロウ", "1234")
         const t1 = yield* IssueTicket({ handle: h, freeText: null })
         yield* CallNext()
-        yield* StartServing(t1.id)
+        yield* MoveToOverdue(t1.id)
         const cancelled = yield* CancelTicket(t1.id, "customer", "abort", h)
         expect(cancelled.state).toBe("Cancelled")
       }),
@@ -419,7 +421,7 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
-  it("StartServing transitions Called → Serving (ADR-0063)", async () =>
+  it("MoveToOverdue transitions Called → Overdue (ADR-0072)", async () =>
     runScenario(
       Effect.gen(function* () {
         const t1 = yield* IssueTicket({
@@ -427,46 +429,50 @@ describe("queue lifecycle round-trip", () => {
           freeText: null,
         })
         yield* CallNext()
-        const serving = yield* StartServing(t1.id)
-        expect(serving.state).toBe("Serving")
+        const overdue = yield* MoveToOverdue(t1.id)
+        expect(overdue.state).toBe("Overdue")
+        if (overdue.state === "Overdue") {
+          expect(overdue.nudgeCount).toBe(0)
+          expect(overdue.lastNudgedAt).toBeNull()
+        }
       }),
     ))
 
-  it("StartServing on a Waiting ticket yields InvalidStateTransition", async () =>
+  it("MoveToOverdue on a Waiting ticket yields InvalidStateTransition", async () =>
     runScenario(
       Effect.gen(function* () {
         const t1 = yield* IssueTicket({
           handle: handle("ヤマダ タロウ", "1234"),
           freeText: null,
         })
-        const r = yield* eitherEffect(StartServing(t1.id))
+        const r = yield* eitherEffect(MoveToOverdue(t1.id))
         expect(r.ok).toBe(false)
         if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("InvalidStateTransition")
       }),
     ))
 
-  it("StartServing on a Cancelled ticket yields AlreadyCancelled", async () =>
+  it("MoveToOverdue on a Cancelled ticket yields AlreadyCancelled", async () =>
     runScenario(
       Effect.gen(function* () {
         const h = handle("ヤマダ タロウ", "1234")
         const t1 = yield* IssueTicket({ handle: h, freeText: null })
         yield* CancelTicket(t1.id, "customer", "x", h)
-        const r = yield* eitherEffect(StartServing(t1.id))
+        const r = yield* eitherEffect(MoveToOverdue(t1.id))
         expect(r.ok).toBe(false)
         if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
       }),
     ))
 
-  it("StartServing on a non-existent ticket yields TicketNotFound", async () =>
+  it("MoveToOverdue on a non-existent ticket yields TicketNotFound", async () =>
     runScenario(
       Effect.gen(function* () {
-        const r = yield* eitherEffect(StartServing("tkt_00000000000000000000000000" as never))
+        const r = yield* eitherEffect(MoveToOverdue("tkt_00000000000000000000000000" as never))
         expect(r.ok).toBe(false)
         if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
       }),
     ))
 
-  it("MarkServed accepts a Serving ticket as source (ADR-0063 broadens)", async () =>
+  it("Nudge from Overdue increments nudgeCount", async () =>
     runScenario(
       Effect.gen(function* () {
         const t1 = yield* IssueTicket({
@@ -474,9 +480,161 @@ describe("queue lifecycle round-trip", () => {
           freeText: null,
         })
         yield* CallNext()
-        yield* StartServing(t1.id)
+        yield* MoveToOverdue(t1.id)
+        const nudged = yield* Nudge(t1.id, "ws")
+        expect(nudged.state).toBe("Overdue")
+        if (nudged.state === "Overdue") expect(nudged.nudgeCount).toBe(1)
+      }),
+    ))
+
+  it("Nudge on a non-Overdue ticket yields InvalidStateTransition", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* CallNext()
+        const r = yield* eitherEffect(Nudge(t1.id, "ws"))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("InvalidStateTransition")
+      }),
+    ))
+
+  it("Nudge on a Cancelled ticket yields AlreadyCancelled (terminal guard)", async () =>
+    // Coverage pin for the `guardActive` terminal short-circuit in Nudge.ts:
+    // a late alarm-fired Nudge against a customer-cancelled ticket must
+    // surface AlreadyCancelled rather than InvalidStateTransition.
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null })
+        yield* CancelTicket(t1.id, "customer", "changed plans", h)
+        const r = yield* eitherEffect(Nudge(t1.id, "ws"))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
+      }),
+    ))
+
+  it("MarkServed accepts an Overdue ticket as source (late-arrival recovery)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* CallNext()
+        yield* MoveToOverdue(t1.id)
         const served = yield* MarkServed(t1.id)
         expect(served.state).toBe("Served")
+      }),
+    ))
+
+  it("MarkServed from Overdue drops overdueAt / lastNudgedAt / nudgeCount (no phantom fields)", async () =>
+    // Regression pin for ADR-0071 projection type leak: after Nudge runs
+    // (so the source ticket has lastNudgedAt + non-zero nudgeCount) the
+    // resulting Served ticket MUST NOT carry Overdue-only fields.
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* CallNext()
+        yield* MoveToOverdue(t1.id)
+        yield* Nudge(t1.id, "ws")
+        const served = (yield* MarkServed(t1.id)) as Record<string, unknown>
+        expect(served.state).toBe("Served")
+        expect("overdueAt" in served).toBe(false)
+        expect("lastNudgedAt" in served).toBe(false)
+        expect("nudgeCount" in served).toBe(false)
+      }),
+    ))
+
+  it("MarkNoShow accepts an Overdue ticket as source (system-fired alarm terminal)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        yield* CallNext()
+        yield* MoveToOverdue(t1.id)
+        const noShow = yield* MarkNoShow(t1.id, "system")
+        expect(noShow.state).toBe("NoShow")
+      }),
+    ))
+
+  it("LapseAppointment cancels a Waiting reservation past appointmentAt (ADR-0075)", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヨヤク タロウ", "5678")
+        const t1 = yield* IssueTicket({
+          handle: h,
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: Temporal.Instant.from("2020-01-01T00:00:00Z"),
+        })
+        const lapsed = yield* LapseAppointment(t1.id)
+        expect(lapsed.state).toBe("Cancelled")
+        if (lapsed.state === "Cancelled") {
+          expect(lapsed.reason).toBe("appointment_lapsed")
+        }
+      }),
+    ))
+
+  it("LapseAppointment on a walk-in ticket yields LaneMismatch", async () =>
+    runScenario(
+      Effect.gen(function* () {
+        const t1 = yield* IssueTicket({
+          handle: handle("ヤマダ タロウ", "1234"),
+          freeText: null,
+        })
+        const r = yield* eitherEffect(LapseAppointment(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("LaneMismatch")
+      }),
+    ))
+
+  it("LapseAppointment on a Called reservation yields InvalidStateTransition", async () =>
+    // Coverage pin for the non-Waiting branch in LapseAppointment.ts:
+    // once a reservation has been picked up by CallNext it must not be
+    // auto-cancelled by the appointment-lapse alarm; the use case fails
+    // with InvalidStateTransition rather than walking past the guard.
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヨヤク タロウ", "5678")
+        const t1 = yield* IssueTicket({
+          handle: h,
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: Temporal.Instant.from("2020-01-01T00:00:00Z"),
+        })
+        yield* CallNext()
+        const r = yield* eitherEffect(LapseAppointment(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("InvalidStateTransition")
+      }),
+    ))
+
+  it("LapseAppointment on a Cancelled reservation yields AlreadyCancelled (terminal guard)", async () =>
+    // Coverage pin for the `guardActive` terminal short-circuit in
+    // LapseAppointment.ts: a customer-cancelled reservation that the
+    // alarm still picks up must surface AlreadyCancelled rather than
+    // attempting a transition on a terminal aggregate.
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヨヤク タロウ", "5678")
+        const t1 = yield* IssueTicket({
+          handle: h,
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: Temporal.Instant.from("2020-01-01T00:00:00Z"),
+        })
+        yield* CancelTicket(t1.id, "customer", "changed plans", h)
+        const r = yield* eitherEffect(LapseAppointment(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
       }),
     ))
 
@@ -1090,7 +1248,7 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
-  it("RescheduleTicket via staff path succeeds from Serving", async () =>
+  it("RescheduleTicket via staff path succeeds from Overdue (ADR-0072)", async () =>
     runScenario(
       Effect.gen(function* () {
         const tz = Schema.decodeUnknownSync(BusinessTimeZoneSchema)("Asia/Tokyo")
@@ -1103,7 +1261,7 @@ describe("queue lifecycle round-trip", () => {
           appointmentAt: apptA,
         })
         yield* CallNext()
-        yield* StartServing(t1.id)
+        yield* MoveToOverdue(t1.id)
         const t2 = yield* RescheduleTicket({
           ticketId: t1.id,
           newAppointmentAt: apptB,
@@ -1113,7 +1271,7 @@ describe("queue lifecycle round-trip", () => {
           actor: "staff",
         })
         expect(t2.id).toBe(t1.id)
-        expect(t2.state).toBe("Serving")
+        expect(t2.state).toBe("Overdue")
       }),
     ))
 

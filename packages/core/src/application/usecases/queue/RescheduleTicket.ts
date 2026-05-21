@@ -45,7 +45,7 @@ export type RescheduleTicketInput = {
  *
  *   - the ticket exists (TicketNotFound otherwise)
  *   - the ticket is in the **active set** `{Waiting, Called,
- *     Serving}` (terminal → AlreadyCancelled / etc. via guardActive)
+ *     Overdue}` (terminal → AlreadyCancelled / etc. via guardActive)
  *   - the ticket is in the **reservation** lane (LaneMismatch
  *     otherwise; walk-in / priority tickets carry `appointmentAt
  *     === null` by lane invariant)
@@ -141,7 +141,7 @@ export const RescheduleTicket = (
       )
     }
     // After the terminal-state and lane guards above, TypeScript has
-    // narrowed `t` to `Waiting | Called | Serving` — exactly what
+    // narrowed `t` to `Waiting | Called | Overdue` — exactly what
     // `applyReschedule` accepts.
     const reschedulable = t
     return yield* applyAndPersist({

@@ -23,6 +23,8 @@ import {
   dispatchDecodeFailure,
   IssueTicketBodySchema,
   MyTicketQuerySchema,
+  PushSubscriptionBodySchema,
+  PushSubscriptionDeleteQuerySchema,
   ReorderBodySchema,
   RescheduleBodySchema,
   SlotsQuerySchema,
@@ -46,24 +48,52 @@ import type { Env } from "./types.js"
  * dispatches, the envelope helpers project errors to status codes.
  *
  * Endpoints (all `/api/v1` prefixed):
- *   POST  /tickets                       issue (body lane? — ADR-0062)
- *   GET   /tickets/me                    customer self-fetch
- *   POST  /tickets/:id/cancel            cancel (customer with handle, or staff)
- *   POST  /tickets/:id/served            staff: mark served (Called | Serving)
- *   POST  /tickets/:id/no-show           staff: mark no-show (Called only)
- *   POST  /tickets/:id/recall            staff: recall (Called -> Waiting)
- *   POST  /tickets/:id/start-serving     staff: Called -> Serving (ADR-0063)
- *   GET   /queue                         shop state v2 (calling[]/serving[],
- *                                        PII for staff, anon otherwise)
- *   POST  /queue/call-next               staff: call next (body lane?)
- *   POST  /queue/call-specific           staff: call a specific Waiting (ADR-0065)
- *   POST  /queue/call-batch               staff: atomic batch call (ADR-0065)
- *   POST  /queue/reorder                 staff: reorder within lane (ADR-0065)
- *   GET   /queue/feed                    DO Hibernating WebSocket projection feed (v2)
+ *   POST  /tickets                                issue (body lane? — ADR-0062)
+ *   GET   /tickets/me                             customer self-fetch
+ *   GET   /tickets/by-handle                      customer recovery (ADR-0069)
+ *   POST  /tickets/:id/cancel                     cancel (customer with handle, or staff)
+ *   POST  /tickets/:id/check-in                   customer arrival audit (ADR-0068)
+ *   POST  /tickets/:id/reschedule                 atomic appointmentAt swap (ADR-0070)
+ *   POST  /tickets/:id/served                     staff: mark served (Called | Overdue — ADR-0071)
+ *   POST  /tickets/:id/no-show                    staff: mark no-show (Called | Overdue — ADR-0072)
+ *   POST  /tickets/:id/recall                     staff: recall (Called | Overdue -> Waiting)
+ *   POST  /tickets/:id/push-subscription          customer registers Web Push subscription (ADR-0073)
+ *   DELETE /tickets/:id/push-subscription         customer unsubscribe (ADR-0074)
+ *   GET   /queue                                  shop projection v4 (calling[] / overdue[] — ADR-0071/0072)
+ *   POST  /queue/call-next                        staff: call next (body lane?)
+ *   POST  /queue/call-specific                    staff: call a specific Waiting (ADR-0065)
+ *   POST  /queue/call-batch                       staff: atomic batch call (ADR-0065)
+ *   POST  /queue/reorder                          staff: reorder within lane (ADR-0065)
+ *   GET   /queue/feed                             DO Hibernating WebSocket projection feed (ADR-0061)
  */
 
 const stub = (env: Env): DurableObjectStub<QueueShop> =>
   env.QUEUE_SHOP.get(env.QUEUE_SHOP.idFromName("shop"))
+
+/**
+ * ADR-0073 / ADR-0074 — gate `POST .../push-subscription` to the
+ * three real push-service origins so a stray identifier cannot be
+ * smuggled into the subscription table. The list is the union of
+ * what FCM (Chrome / Edge / Brave), Mozilla Push, and Apple Web
+ * Push expose. New origins join only via this allowlist + an ADR
+ * note.
+ */
+const ALLOWED_PUSH_ENDPOINT_HOSTS: ReadonlySet<string> = new Set([
+  "fcm.googleapis.com",
+  "updates.push.services.mozilla.com",
+  "web.push.apple.com",
+])
+
+const isAllowedPushEndpoint = (endpoint: string): boolean => {
+  let url: URL
+  try {
+    url = new URL(endpoint)
+  } catch {
+    return false
+  }
+  if (url.protocol !== "https:") return false
+  return ALLOWED_PUSH_ENDPOINT_HOSTS.has(url.host)
+}
 
 const dispatchEnvelope = (result: QueueResult, status = 200): Response => {
   if (result.ok) {
@@ -383,7 +413,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       (t) =>
         t.lane === "reservation" &&
         t.appointmentAt !== null &&
-        (t.state === "Waiting" || t.state === "Called" || t.state === "Serving"),
+        (t.state === "Waiting" || t.state === "Called" || t.state === "Overdue"),
     )
     const reservationStartMs = reservations.map((t) =>
       t.appointmentAt !== null ? Date.parse(t.appointmentAt) : Number.NaN,
@@ -479,9 +509,9 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     )
   })
 
-  // GET /api/v1/queue — shop projection v3 (ADR-0062 / 0063 /
-  // 0065 / 0066 / 0067). Anonymous payload exposes lane /
-  // displaySeq / appointmentAt + calling[] + serving[] arrays;
+  // GET /api/v1/queue — shop projection v4 (ADR-0062 / 0065 /
+  // 0066 / 0067 / 0071 / 0072). Anonymous payload exposes lane /
+  // displaySeq / appointmentAt + calling[] + overdue[] arrays;
   // staff payload carries the full ticket rows (PII inclusive).
   // `nextReservationDeadline` mirrors the WS broadcast field so
   // initial-load and live-update paths converge on the same shape.
@@ -493,8 +523,8 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     const calling = tickets
       .filter((t) => t.state === "Called")
       .sort((a, b) => a.displaySeq - b.displaySeq)
-    const serving = tickets
-      .filter((t) => t.state === "Serving")
+    const overdue = tickets
+      .filter((t) => t.state === "Overdue")
       .sort((a, b) => a.displaySeq - b.displaySeq)
     // ADR-0069 §Stage 11 — staff 履歴 column needs the recent terminal
     // tickets so an operator can see what just finished. `seq` is
@@ -531,7 +561,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       return new Response(
         JSON.stringify({
           ok: true,
-          v: 3,
+          v: 4,
           waitingCount: waiting.length,
           laneCounts: {
             walkIn: laneCount("walkIn"),
@@ -539,7 +569,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
             reservation: laneCount("reservation"),
           },
           calling,
-          serving,
+          overdue,
           waitingPreview: waiting.slice(0, 20),
           terminal: terminalRecent,
           nextReservationDeadline,
@@ -550,7 +580,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     return new Response(
       JSON.stringify({
         ok: true,
-        v: 3,
+        v: 4,
         waitingCount: waiting.length,
         laneCounts: {
           walkIn: laneCount("walkIn"),
@@ -558,7 +588,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
           reservation: laneCount("reservation"),
         },
         calling: calling.map(project),
-        serving: serving.map(project),
+        overdue: overdue.map(project),
         waitingPreview: waiting.slice(0, 10).map(project),
         nextReservationDeadline,
       }),
@@ -673,21 +703,6 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     )
   })
 
-  // POST /api/v1/tickets/:id/start-serving — staff (ADR-0063).
-  app.post("/api/v1/tickets/:id/start-serving", rateLimitMiddleware("RL_OPERATE"), async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const idR = decodeTicketIdParam(c.req.param("id"))
-    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({
-        type: "StartServing",
-        ticketId: idR.success,
-        actor: "staff",
-      }),
-    )
-  })
-
   // POST /api/v1/tickets/:id/served — staff
   app.post("/api/v1/tickets/:id/served", async (c) => {
     const guard = await requireStaff(c)
@@ -728,6 +743,88 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       }),
     )
   })
+
+  // POST /api/v1/tickets/:id/push-subscription — customer registers
+  // a Web Push subscription for the ticket. Customer-authenticated:
+  // body carries `(nameKana, phoneLast4)` which the DO compares
+  // constant-time against the ticket's stored handle (cancel-pattern
+  // parity, ADR-0058 / ADR-0074). The endpoint origin is validated
+  // against the known push-service hosts (ADR-0073) so a stray
+  // identifier cannot be smuggled into the row store.
+  app.post("/api/v1/tickets/:id/push-subscription", rateLimitMiddleware("RL_VERIFY"), async (c) => {
+    const idR = decodeTicketIdParam(c.req.param("id"))
+    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+    const parsed = await parseJsonBody(c)
+    if (!parsed.ok) {
+      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
+    }
+    const decoded = Schema.decodeUnknownResult(PushSubscriptionBodySchema)(parsed.raw)
+    if (Result.isFailure(decoded)) {
+      const fail = dispatchDecodeFailure(decoded.failure)
+      return failResponse(fail.status, fail.tag, fail.code)
+    }
+    if (!isAllowedPushEndpoint(decoded.success.endpoint)) {
+      return failResponse(422, "InvalidPushEndpoint", "E_VAL_PUSH_ENDPOINT")
+    }
+    const r = await stub(c.env).registerPushSubscription(
+      idR.success,
+      { nameKana: decoded.success.nameKana, phoneLast4: decoded.success.phoneLast4 },
+      {
+        endpoint: decoded.success.endpoint,
+        p256dh: decoded.success.p256dh,
+        auth: decoded.success.auth,
+      },
+    )
+    if (!r.ok) {
+      const status = r.reason === "TicketNotFound" ? 404 : r.reason === "PhoneMismatch" ? 403 : 409
+      const code =
+        r.reason === "PhoneMismatch" ? "E_DOM_PHONE_MISMATCH" : `E_${r.reason.toUpperCase()}`
+      return failResponse(status, r.reason, code)
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 201,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    })
+  })
+
+  // DELETE /api/v1/tickets/:id/push-subscription?nameKana=…&phoneLast4=…&endpoint=… —
+  // customer-initiated unsubscribe. Customer-authenticated via query
+  // string (DELETE body is non-portable). Idempotent; missing row →
+  // 200 OK.
+  app.delete(
+    "/api/v1/tickets/:id/push-subscription",
+    rateLimitMiddleware("RL_VERIFY"),
+    async (c) => {
+      const idR = decodeTicketIdParam(c.req.param("id"))
+      if (Result.isFailure(idR))
+        return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
+      const params = new URL(c.req.url).searchParams
+      const decoded = Schema.decodeUnknownResult(PushSubscriptionDeleteQuerySchema)({
+        nameKana: params.get("nameKana") ?? "",
+        phoneLast4: params.get("phoneLast4") ?? "",
+        endpoint: params.get("endpoint") ?? "",
+      })
+      if (Result.isFailure(decoded)) {
+        const fail = dispatchDecodeFailure(decoded.failure)
+        return failResponse(fail.status, fail.tag, fail.code)
+      }
+      const r = await stub(c.env).unregisterPushSubscription(
+        idR.success,
+        { nameKana: decoded.success.nameKana, phoneLast4: decoded.success.phoneLast4 },
+        decoded.success.endpoint,
+      )
+      if (!r.ok) {
+        const status = r.reason === "PhoneMismatch" ? 403 : 409
+        const code =
+          r.reason === "PhoneMismatch" ? "E_DOM_PHONE_MISMATCH" : `E_${r.reason.toUpperCase()}`
+        return failResponse(status, r.reason, code)
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      })
+    },
+  )
 
   // GET /api/v1/openapi.json — OpenAPI 3.1 document
   app.get("/api/v1/openapi.json", (_c) => {

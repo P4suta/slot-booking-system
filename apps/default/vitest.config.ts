@@ -1,5 +1,12 @@
+import { fileURLToPath, URL as NodeURL } from "node:url"
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers"
 import { defineConfig } from "vitest/config"
+
+// `@booking/push` is workspace-linked; its `exports.main` points at
+// the unbuilt `dist/index.js`. Aliasing the package name to its
+// `src/index.ts` keeps the vitest pipeline running without a
+// pre-test `pnpm -F @booking/push build` step.
+const PUSH_SRC = fileURLToPath(new NodeURL("../../packages/push/src/index.ts", import.meta.url))
 
 /**
  * Vitest is split into two projects so the pure-Node tests (worker
@@ -18,6 +25,11 @@ import { defineConfig } from "vitest/config"
  *     limit).
  */
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@booking/push": PUSH_SRC,
+    },
+  },
   test: {
     // See `packages/core/vitest.config.ts` for the rationale —
     // `streamReporter` emits CASE_START events for the wrapper's

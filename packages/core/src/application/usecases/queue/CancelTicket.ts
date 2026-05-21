@@ -12,12 +12,13 @@ import { authenticateCustomer, loadOrTicketNotFound } from "../_authenticate.js"
 import { applyAndPersist } from "../_withUseCaseEnv.js"
 
 /**
- * CancelTicket — Waiting | Called | Serving → Cancelled. Both
- * customer (with handle) and staff (no handle, capability already
- * verified upstream) call into this use case; the actor field
- * records who. Serving is allowed so a mistaken `StartServing`
- * (= staff misclick) and a customer-initiated mid-service abort
- * both have a path; the `reason` captures the operational context.
+ * CancelTicket — `Waiting | Called | Overdue → Cancelled` (ADR-0071
+ * swaps Serving for Overdue). Both customer (with handle) and staff
+ * (no handle, capability already verified upstream) call into this
+ * use case; the actor field records who. Overdue is allowed so a
+ * customer who has stopped responding to nudges can still self-cancel,
+ * and staff can invalidate a ticket when they learn out-of-band
+ * that the customer is not coming.
  *
  * Customer path performs handle verification through
  * `authenticateCustomer`; staff path skips it and just loads.
@@ -45,16 +46,16 @@ export const CancelTicket = (
     if (terminal !== null) return yield* Effect.fail(terminal)
     // `guardActive` short-circuits on the three terminal states
     // (Cancelled / Served / NoShow); the three remaining variants
-    // (Waiting, Called, Serving) are all accepted by `applyCancel`
-    // after ADR-0069's misclick-recovery extension. TypeScript can't
-    // narrow the union from the runtime `guardActive` check alone,
-    // so a defensive state-tag re-check feeds the narrowing required
-    // by `applyCancel`'s `Waiting | Called | Serving` input.
+    // (Waiting, Called, Overdue) are all accepted by `applyCancel`.
+    // TypeScript can't narrow the union from the runtime
+    // `guardActive` check alone, so a defensive state-tag re-check
+    // feeds the narrowing required by `applyCancel`'s `Waiting |
+    // Called | Overdue` input.
     /* v8 ignore next 7 */
     if (
       loaded.state.state !== "Waiting" &&
       loaded.state.state !== "Called" &&
-      loaded.state.state !== "Serving"
+      loaded.state.state !== "Overdue"
     ) {
       return yield* Effect.fail(invalidTransition(loaded.state.state, "Cancel"))
     }

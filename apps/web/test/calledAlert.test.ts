@@ -141,7 +141,9 @@ describe("ADR-0069 Stage 7 — called alert", () => {
     expect(vibrate.calls[0]).toEqual([300, 120, 300])
     expect(notif.ctor).toBe(1)
     const w = window as unknown as { localStorage: Storage }
-    expect(w.localStorage.getItem("queue.lastNotifiedCalledAt")).toBe("2026-05-11T10:00:00.000Z")
+    // ADR-0072: dedup key is `${calledAt}#${nudgeCount}` so each Nudged
+    // event can fire once. A bare Called event implies nudgeCount=0.
+    expect(w.localStorage.getItem("queue.lastNotifiedCalledAt")).toBe("2026-05-11T10:00:00.000Z#0")
   })
 
   it("no-op on the same calledAt — survives tab reload while still Called", () => {
@@ -183,13 +185,14 @@ describe("ADR-0069 Stage 7 — called alert", () => {
     expect(notif.ctor).toBe(2)
   })
 
-  it("no-op when state is not Called", () => {
+  it("no-op when state is not Called or Overdue", () => {
     const audio = stubAudio()
     const vibrate = stubVibrate()
     const notif = stubNotification("granted")
     maybeTriggerCalledAlert({ state: "Waiting", calledAt: null, displaySeq: 42 })
+    // ADR-0071 removed `Serving`; surfaces here as just "any other state".
     maybeTriggerCalledAlert({
-      state: "Serving",
+      state: "Cancelled",
       calledAt: "2026-05-11T10:00:00.000Z",
       displaySeq: 42,
     })
@@ -201,6 +204,65 @@ describe("ADR-0069 Stage 7 — called alert", () => {
     expect(audio.plays).toBe(0)
     expect(vibrate.calls).toHaveLength(0)
     expect(notif.ctor).toBe(0)
+  })
+
+  it("fires on Overdue with nudgeCount=1, re-fires for each subsequent nudgeCount (ADR-0072)", () => {
+    // De-dup key is `(calledAt, nudgeCount)`. The Called→Overdue
+    // promotion preserves `calledAt` and resets `nudgeCount` to 0,
+    // so the first nudge (count=1) is the first new alert event;
+    // subsequent nudges (2, 3) must each re-fire exactly once.
+    const audio = stubAudio()
+    const vibrate = stubVibrate()
+    const notif = stubNotification("granted")
+    const baseCalledAt = "2026-05-11T10:00:00.000Z"
+    // Called→Overdue with nudgeCount=0 carries the same calledAt as the
+    // original Called event — must NOT re-fire (would be a double-chime
+    // for the same audio event from the customer's perspective).
+    maybeTriggerCalledAlert({ state: "Called", calledAt: baseCalledAt, displaySeq: 42 })
+    expect(notif.ctor).toBe(1)
+    maybeTriggerCalledAlert({
+      state: "Overdue",
+      calledAt: baseCalledAt,
+      nudgeCount: 0,
+      displaySeq: 42,
+    })
+    expect(notif.ctor).toBe(1)
+    // First nudge fires.
+    maybeTriggerCalledAlert({
+      state: "Overdue",
+      calledAt: baseCalledAt,
+      nudgeCount: 1,
+      displaySeq: 42,
+    })
+    expect(notif.ctor).toBe(2)
+    // Idempotent — same nudgeCount observed twice (WS replay / refresh).
+    maybeTriggerCalledAlert({
+      state: "Overdue",
+      calledAt: baseCalledAt,
+      nudgeCount: 1,
+      displaySeq: 42,
+    })
+    expect(notif.ctor).toBe(2)
+    // Second nudge fires.
+    maybeTriggerCalledAlert({
+      state: "Overdue",
+      calledAt: baseCalledAt,
+      nudgeCount: 2,
+      displaySeq: 42,
+    })
+    expect(notif.ctor).toBe(3)
+    // Third nudge fires.
+    maybeTriggerCalledAlert({
+      state: "Overdue",
+      calledAt: baseCalledAt,
+      nudgeCount: 3,
+      displaySeq: 42,
+    })
+    expect(notif.ctor).toBe(4)
+    expect(audio.plays).toBe(2 * 4) // 2-tone chime × 4 fires (initial Called + 3 nudges)
+    expect(vibrate.calls).toHaveLength(4)
+    const w = window as unknown as { localStorage: Storage }
+    expect(w.localStorage.getItem("queue.lastNotifiedCalledAt")).toBe(`${baseCalledAt}#3`)
   })
 
   it("no notification call when permission is not granted", () => {

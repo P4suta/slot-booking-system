@@ -34,20 +34,25 @@ ON CONFLICT(ticket_id) DO UPDATE SET
   created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
 
 const TICKET_INSERT_SQL = `INSERT INTO tickets (
-  id, seq, state, name_kana, phone_last4, free_text, issued_at,
+  id, seq, state, lane, name_kana, phone_last4, free_text, issued_at,
   called_at, served_at, cancelled_at, marked_at,
   appointment_at, checked_in_at,
+  overdue_at, last_nudged_at, nudge_count,
   reason, cancelled_by, called_by, served_by, marked_by,
   payload, revision
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   state = excluded.state,
+  lane = excluded.lane,
   called_at = excluded.called_at,
   served_at = excluded.served_at,
   cancelled_at = excluded.cancelled_at,
   marked_at = excluded.marked_at,
   appointment_at = excluded.appointment_at,
   checked_in_at = excluded.checked_in_at,
+  overdue_at = excluded.overdue_at,
+  last_nudged_at = excluded.last_nudged_at,
+  nudge_count = excluded.nudge_count,
   reason = excluded.reason,
   cancelled_by = excluded.cancelled_by,
   called_by = excluded.called_by,
@@ -65,6 +70,7 @@ const ticketColumns = (
   next.id,
   next.seq,
   next.state,
+  next.lane,
   next.nameKana,
   next.phoneLast4,
   next.freeText,
@@ -75,6 +81,9 @@ const ticketColumns = (
   "markedAt" in next ? String(next.markedAt) : null,
   next.appointmentAt !== null ? String(next.appointmentAt) : null,
   next.checkedInAt !== null ? String(next.checkedInAt) : null,
+  next.state === "Overdue" ? String(next.overdueAt) : null,
+  next.state === "Overdue" && next.lastNudgedAt !== null ? String(next.lastNudgedAt) : null,
+  next.state === "Overdue" ? next.nudgeCount : 0,
   "reason" in next ? next.reason : null,
   "cancelledBy" in next ? next.cancelledBy : null,
   "calledBy" in next ? next.calledBy : null,
@@ -347,7 +356,7 @@ export const DurableObjectTicketRepositoryLive = (sql: SqlStorage) =>
           // the active set holds no ticket with the supplied handle.
           const rows = sql
             .exec(
-              "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','Serving') LIMIT 1",
+              "SELECT payload FROM tickets WHERE name_kana = ? AND phone_last4 = ? AND state IN ('Waiting','Called','Overdue') LIMIT 1",
               handle.nameKana,
               handle.phoneLast4,
             )

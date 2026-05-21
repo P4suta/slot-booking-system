@@ -16,6 +16,11 @@ import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqli
  * the same-named Ticket common fields. The lane×appointment index
  * supports the EDF-aware projection (`firstLaneWithCallable`) when
  * the read side outgrows the in-memory snapshot scan.
+ *
+ * ADR-0071 / ADR-0072: `Serving` is removed in favour of `Overdue`;
+ * the `overdue_at` / `last_nudged_at` / `nudge_count` columns mirror
+ * the Overdue variant so the alarm sweep can predicate on them
+ * without JSON-decoding the payload on every tick.
  */
 export const tickets = sqliteTable(
   "tickets",
@@ -23,6 +28,7 @@ export const tickets = sqliteTable(
     id: text("id").primaryKey().notNull(),
     seq: integer("seq").notNull(),
     state: text("state").notNull(),
+    lane: text("lane"),
     nameKana: text("name_kana"),
     phoneLast4: text("phone_last4"),
     freeText: text("free_text"),
@@ -33,6 +39,9 @@ export const tickets = sqliteTable(
     markedAt: text("marked_at"),
     appointmentAt: text("appointment_at"),
     checkedInAt: text("checked_in_at"),
+    overdueAt: text("overdue_at"),
+    lastNudgedAt: text("last_nudged_at"),
+    nudgeCount: integer("nudge_count").default(0),
     reason: text("reason"),
     cancelledBy: text("cancelled_by"),
     calledBy: text("called_by"),
@@ -56,6 +65,6 @@ export const tickets = sqliteTable(
     // bypasses the use case.
     uniqueIndex("uq_tickets_handle_active")
       .on(t.nameKana, t.phoneLast4)
-      .where(sql`state IN ('Waiting', 'Called', 'Serving')`),
+      .where(sql`state IN ('Waiting', 'Called', 'Overdue')`),
   ],
 )

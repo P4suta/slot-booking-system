@@ -63,7 +63,7 @@ type ProjectionEntry = {
 
 type Projection = {
   readonly ok: boolean
-  readonly v: 3
+  readonly v: 4
   readonly waitingCount: number
   readonly laneCounts: {
     readonly walkIn: number
@@ -71,7 +71,7 @@ type Projection = {
     readonly reservation: number
   }
   readonly calling: readonly ProjectionEntry[]
-  readonly serving: readonly ProjectionEntry[]
+  readonly overdue: readonly (ProjectionEntry & { readonly nudgeCount: number })[]
   readonly waitingPreview: readonly ProjectionEntry[]
 }
 
@@ -114,7 +114,7 @@ describe("HTTP queue flow (property, integration)", () => {
             case "recall": {
               const projRes = await worker().fetch(req.queueProjection())
               const proj = await parseJson<Projection>(projRes)
-              const target = proj.calling[0] ?? proj.serving[0]
+              const target = proj.calling[0] ?? proj.overdue[0]
               if (target === undefined) break
               const id = target.id
               if (cmd.kind === "markServed") {
@@ -138,7 +138,7 @@ describe("HTTP queue flow (property, integration)", () => {
         const final = await parseJson<Projection>(finalRes)
 
         expect(final.ok).toBe(true)
-        expect(final.v).toBe(3)
+        expect(final.v).toBe(4)
         expect(typeof final.waitingCount).toBe("number")
         expect(final.waitingCount).toBeGreaterThanOrEqual(0)
         // Total tickets in the system can never exceed what was

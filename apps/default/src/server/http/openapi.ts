@@ -45,19 +45,21 @@ const TICKET_SCHEMA = {
     displaySeq: { type: "integer", minimum: 1 },
     state: {
       type: "string",
-      enum: ["Waiting", "Called", "Serving", "Served", "NoShow", "Cancelled"],
+      enum: ["Waiting", "Called", "Overdue", "Served", "NoShow", "Cancelled"],
     },
     nameKana: { type: "string" },
     phoneLast4: { type: "string", pattern: "^[0-9]{4}$" },
     freeText: { type: ["string", "null"] },
     issuedAt: { type: "string", format: "date-time" },
     calledAt: { type: "string", format: "date-time" },
-    servingStartedAt: { type: "string", format: "date-time" },
     servedAt: { type: "string", format: "date-time" },
     cancelledAt: { type: "string", format: "date-time" },
     markedAt: { type: "string", format: "date-time" },
     appointmentAt: { type: ["string", "null"], format: "date-time" },
     checkedInAt: { type: ["string", "null"], format: "date-time" },
+    overdueAt: { type: "string", format: "date-time" },
+    lastNudgedAt: { type: ["string", "null"], format: "date-time" },
+    nudgeCount: { type: "integer", minimum: 0 },
   },
   additionalProperties: true,
 } as const
@@ -258,6 +260,92 @@ export const openApiDocument = {
         },
       },
     },
+    "/tickets/{id}/push-subscription": {
+      post: {
+        tags: ["customer"],
+        summary: "Register a Web Push subscription for the ticket",
+        description:
+          "ADR-0073 / ADR-0074. The customer registers a browser-side " +
+          "PushSubscription so the alarm sweep can deliver Overdue nudges " +
+          "to a closed tab. Customer-authenticated via `(nameKana, " +
+          "phoneLast4)` (cancel-pattern parity). The endpoint host is " +
+          "gated to the known push services (FCM / Mozilla / Apple).",
+        parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["nameKana", "phoneLast4", "endpoint", "p256dh", "auth"],
+                properties: {
+                  nameKana: { type: "string" },
+                  phoneLast4: { type: "string" },
+                  endpoint: { type: "string", maxLength: 2048 },
+                  p256dh: { type: "string" },
+                  auth: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Subscription registered",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["ok"],
+                  properties: { ok: { const: true } },
+                },
+              },
+            },
+          },
+          "403": ERROR_RESPONSE,
+          "404": ERROR_RESPONSE,
+          "409": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+        },
+      },
+      delete: {
+        tags: ["customer"],
+        summary: "Unregister a Web Push subscription",
+        description:
+          "ADR-0073 / ADR-0074. Customer-initiated unsubscribe (e.g. on " +
+          "permission revoke or device cleanup). Idempotent; missing row " +
+          "still returns 200. Authenticated via query string (DELETE " +
+          "bodies are non-portable across user-agents).",
+        parameters: [
+          { in: "path", name: "id", required: true, schema: { type: "string" } },
+          { in: "query", name: "nameKana", required: true, schema: { type: "string" } },
+          { in: "query", name: "phoneLast4", required: true, schema: { type: "string" } },
+          {
+            in: "query",
+            name: "endpoint",
+            required: true,
+            schema: { type: "string", maxLength: 2048 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Subscription unregistered (idempotent)",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["ok"],
+                  properties: { ok: { const: true } },
+                },
+              },
+            },
+          },
+          "403": ERROR_RESPONSE,
+          "404": ERROR_RESPONSE,
+          "422": ERROR_RESPONSE,
+        },
+      },
+    },
     "/tickets/{id}/reschedule": {
       post: {
         tags: ["customer", "staff"],
@@ -310,7 +398,7 @@ export const openApiDocument = {
     "/tickets/{id}/served": {
       post: {
         tags: ["staff"],
-        summary: "Staff: mark Called → Served",
+        summary: "Staff: mark Called or Overdue → Served",
         parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
         responses: {
           "200": TICKET_ENVELOPE,
@@ -324,7 +412,7 @@ export const openApiDocument = {
     "/tickets/{id}/no-show": {
       post: {
         tags: ["staff"],
-        summary: "Staff: mark Called → NoShow",
+        summary: "Staff: mark Called or Overdue → NoShow",
         parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
         responses: {
           "200": TICKET_ENVELOPE,
@@ -338,7 +426,7 @@ export const openApiDocument = {
     "/tickets/{id}/recall": {
       post: {
         tags: ["staff"],
-        summary: "Staff: recall (Called → Waiting, original seq preserved)",
+        summary: "Staff: recall (Called or Overdue → Waiting, original seq preserved)",
         parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
         responses: {
           "200": TICKET_ENVELOPE,
@@ -364,7 +452,8 @@ export const openApiDocument = {
                   properties: {
                     ok: { const: true },
                     waitingCount: { type: "integer", minimum: 0 },
-                    serving: { oneOf: [{ type: "null" }, TICKET_SCHEMA] },
+                    calling: { type: "array", items: TICKET_SCHEMA },
+                    overdue: { type: "array", items: TICKET_SCHEMA },
                     waitingPreview: { type: "array", items: TICKET_SCHEMA },
                   },
                 },
@@ -393,9 +482,9 @@ export const openApiDocument = {
         summary: "DO Hibernating WebSocket projection feed — server-push on every dispatch.",
         description:
           "Upgrade with `Connection: Upgrade` + `Upgrade: websocket`. " +
-          "The DO emits the anonymous projection (waitingCount, serving, " +
-          "waitingPreview) on every successful queue mutation. The current " +
-          "snapshot is sent immediately on connect.",
+          "The DO emits the anonymous projection (waitingCount, calling, " +
+          "overdue, waitingPreview) on every successful queue mutation. The " +
+          "current snapshot is sent immediately on connect.",
         responses: {
           "101": {
             description: "Switching Protocols (WebSocket established)",

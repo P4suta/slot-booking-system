@@ -72,7 +72,7 @@ describe("messages.ts — paraglide-backed copy lookup", () => {
   describe("emptyState", () => {
     const contexts: readonly EmptyContext[] = [
       "calling",
-      "serving",
+      "overdue",
       "waiting",
       "terminal",
       "byHandle404",

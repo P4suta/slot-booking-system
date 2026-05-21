@@ -1,18 +1,18 @@
 /**
- * Customer-side "called" alert (Stage 7 of the slot-booking sprint).
+ * Customer-side "called" / Overdue-nudge alert (ADR-0072).
  * Fires three foreground signals — chime, vibrate, browser
  * notification — the moment the WS-driven `/ticket` refresh observes
- * the customer's ticket transitioning into `Called`.
+ * the customer's ticket transitioning into `Called` *or* receiving a
+ * fresh `Nudged` event in `Overdue`.
  *
- * Background push (Service Worker + Web Push + VAPID) is deliberately
- * out of scope; that work joins the next sprint's PWA package.
+ * Background push (Service Worker + Web Push + VAPID) is the
+ * companion transport (ADR-0073) and lands separately.
  *
- * Replay protection: each `Called` event carries a fresh `calledAt`
- * Instant. The helper writes the last-notified `calledAt` into
- * `localStorage.queue.lastNotifiedCalledAt` so a tab reload while
- * the ticket is still in `Called` does not re-fire (the customer
- * already heard / saw the call). A staff `Recall → re-Call` cycle
- * mints a new `calledAt`, so the second call does fire.
+ * Replay protection: the dedup key is `(calledAt, nudgeCount)`. Each
+ * `Called` event carries a fresh `calledAt` and an implicit
+ * `nudgeCount = 0`; each `Nudged` event increments `nudgeCount`.
+ * A staff `Recall → re-Call` cycle mints a new `calledAt`, so the
+ * second call also fires.
  */
 
 const STORAGE_KEY = "queue.lastNotifiedCalledAt"
@@ -98,12 +98,15 @@ const vibratePattern = (): void => {
   navigator.vibrate([300, 120, 300])
 }
 
-const showNotification = (displaySeq: number): void => {
+const showNotification = (displaySeq: number, kind: "called" | "overdue"): void => {
   const N = notificationOnWindow()
   if (N === null) return
   if (N.permission !== "granted") return
-  const title = "呼ばれました"
-  const body = `${String(displaySeq)} 番の方、 受付までお越しください`
+  const title = kind === "called" ? "呼ばれました" : "応答をお願いします"
+  const body =
+    kind === "called"
+      ? `${String(displaySeq)} 番の方、 受付までお越しください`
+      : `${String(displaySeq)} 番の方、 ご応答をお願いします`
   try {
     const n = new N(title, {
       body,
@@ -145,23 +148,29 @@ export const clearAlertMemory = (): void => {
 }
 
 /**
- * Trigger the alert *iff* this is a fresh Called event (= the
- * `calledAt` instant differs from the last-notified one). No-op
- * when state is not Called, when calledAt is unchanged, or when
- * SSR.
+ * Trigger the alert *iff* this is a fresh `(calledAt, nudgeCount)`
+ * tuple. No-op when state is not Called/Overdue, when calledAt is
+ * unchanged AND nudgeCount is unchanged, or when SSR.
  */
 export const maybeTriggerCalledAlert = (input: {
   readonly state: string
   readonly calledAt: string | null | undefined
+  readonly nudgeCount?: number
   readonly displaySeq: number
 }): void => {
-  if (input.state !== "Called") return
+  if (input.state !== "Called" && input.state !== "Overdue") return
   const calledAt = input.calledAt
   if (calledAt === null || calledAt === undefined) return
+  const nudgeCount = input.nudgeCount ?? 0
+  // Dedup key joins both axes (ADR-0072). A Called→Overdue transition
+  // with nudgeCount=0 carries the same calledAt as the original Called
+  // event, so we do not fire twice on the auto-promotion; only the
+  // subsequent Nudged events (which set nudgeCount=1, 2, 3) re-fire.
+  const key = `${calledAt}#${String(nudgeCount)}`
   const last = readLastNotifiedAt()
-  if (last === calledAt) return
-  writeLastNotifiedAt(calledAt)
+  if (last === key) return
+  writeLastNotifiedAt(key)
   playChime()
   vibratePattern()
-  showNotification(input.displaySeq)
+  showNotification(input.displaySeq, input.state === "Called" ? "called" : "overdue")
 }

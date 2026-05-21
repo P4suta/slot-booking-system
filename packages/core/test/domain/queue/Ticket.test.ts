@@ -40,14 +40,15 @@ describe("TicketSchema discrimination", () => {
       },
     ],
     [
-      "Serving",
+      "Overdue",
       {
         ...baseFields,
-        state: "Serving",
+        state: "Overdue",
         calledAt: "2026-05-08T09:05:00Z",
         calledBy: "staff",
-        servingStartedAt: "2026-05-08T09:07:00Z",
-        servingStartedBy: "staff",
+        overdueAt: "2026-05-08T09:07:00Z",
+        lastNudgedAt: null,
+        nudgeCount: 0,
       },
     ],
     [
@@ -108,7 +109,7 @@ describe("TicketSchema discrimination", () => {
 })
 
 describe("TERMINAL_TICKET_STATES / isTerminal", () => {
-  it("lists Served / NoShow / Cancelled (Serving stays active)", () => {
+  it("lists Served / NoShow / Cancelled (Overdue stays active per ADR-0072)", () => {
     expect(TERMINAL_TICKET_STATES).toEqual(["Served", "NoShow", "Cancelled"])
   })
 
@@ -150,7 +151,7 @@ describe("TERMINAL_TICKET_STATES / isTerminal", () => {
     ).toBe(true)
   })
 
-  it("isTerminal returns false for Waiting / Called / Serving (all active)", () => {
+  it("isTerminal returns false for Waiting / Called / Overdue (all active)", () => {
     expect(isTerminal(decodeOrThrow({ ...baseFields, state: "Waiting" }))).toBe(false)
     expect(
       isTerminal(
@@ -166,11 +167,12 @@ describe("TERMINAL_TICKET_STATES / isTerminal", () => {
       isTerminal(
         decodeOrThrow({
           ...baseFields,
-          state: "Serving",
+          state: "Overdue",
           calledAt: "2026-05-08T09:00:00Z",
           calledBy: "staff",
-          servingStartedAt: "2026-05-08T09:01:00Z",
-          servingStartedBy: "staff",
+          overdueAt: "2026-05-08T09:01:00Z",
+          lastNudgedAt: null,
+          nudgeCount: 0,
         }),
       ),
     ).toBe(false)
