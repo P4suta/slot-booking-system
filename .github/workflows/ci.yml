@@ -68,14 +68,14 @@ jobs:
             slot-booking-system-ci:latest \
             corepack pnpm install --frozen-lockfile=false
 
-      - name: Build packages/core (emit dist consumed by apps)
+      - name: Build workspace packages (emit dist consumed by apps)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
             -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
             -w /workspace \
             slot-booking-system-ci:latest \
-            corepack pnpm --filter @booking/core run build
+            corepack pnpm --filter "./packages/**" run build
 
       - name: Compile codegen (paraglide + svelte-kit sync)
         run: |
