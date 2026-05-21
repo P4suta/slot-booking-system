@@ -131,6 +131,8 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "MovedToOverdue": {
       const prior = tickets.get(event.ticketId)
+      /* v8 ignore next — defensive: a well-typed event log only emits
+         MovedToOverdue when the prior state is Called. */
       if (prior?.state !== "Called") return snap
       const next: Overdue = {
         ...prior,
@@ -144,6 +146,8 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "Nudged": {
       const prior = tickets.get(event.ticketId)
+      /* v8 ignore next — defensive: Nudged is only emitted while the
+         prior state is Overdue. */
       if (prior?.state !== "Overdue") return snap
       const next: Overdue = {
         ...prior,
@@ -155,6 +159,8 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
     }
     case "AppointmentLapsed": {
       const prior = tickets.get(event.ticketId)
+      /* v8 ignore next — defensive: AppointmentLapsed is only emitted
+         while the prior state is Waiting. */
       if (prior?.state !== "Waiting") return snap
       // Drop Waiting-only audit fields are absent (checkedInAt is common, preserved).
       // The resulting `Cancelled` must not carry calledAt/calledBy — a lapsed
@@ -321,11 +327,11 @@ export const applyEvent = (snap: QueueSnapshot, event: TicketEvent): QueueSnapsh
       tickets.set(event.ticketId, next)
       return { tickets }
     }
+    /* v8 ignore next 8 — exhaustiveness pin: when a new TicketEvent
+       variant joins the union the projection MUST add a case arm
+       before the type checker accepts this assignment. The branch
+       is unreachable with a well-typed TicketEvent. */
     default: {
-      // Exhaustiveness pin: when a new `TicketEvent` variant joins the
-      // union the projection MUST add a case arm before the type checker
-      // accepts this assignment. Without this, a Schema-side addition
-      // would silently no-op in the fold (and silently corrupt replay).
       const _exhaustive: never = event
       void _exhaustive
       return snap

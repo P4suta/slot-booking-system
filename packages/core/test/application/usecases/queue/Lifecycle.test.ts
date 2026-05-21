@@ -501,6 +501,21 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
+  it("Nudge on a Cancelled ticket yields AlreadyCancelled (terminal guard)", async () =>
+    // Coverage pin for the `guardActive` terminal short-circuit in Nudge.ts:
+    // a late alarm-fired Nudge against a customer-cancelled ticket must
+    // surface AlreadyCancelled rather than InvalidStateTransition.
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヤマダ タロウ", "1234")
+        const t1 = yield* IssueTicket({ handle: h, freeText: null })
+        yield* CancelTicket(t1.id, h, "customer")
+        const r = yield* eitherEffect(Nudge(t1.id, "ws"))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
+      }),
+    ))
+
   it("MarkServed accepts an Overdue ticket as source (late-arrival recovery)", async () =>
     runScenario(
       Effect.gen(function* () {
@@ -578,6 +593,48 @@ describe("queue lifecycle round-trip", () => {
         const r = yield* eitherEffect(LapseAppointment(t1.id))
         expect(r.ok).toBe(false)
         if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("LaneMismatch")
+      }),
+    ))
+
+  it("LapseAppointment on a Called reservation yields InvalidStateTransition", async () =>
+    // Coverage pin for the non-Waiting branch in LapseAppointment.ts:
+    // once a reservation has been picked up by CallNext it must not be
+    // auto-cancelled by the appointment-lapse alarm; the use case fails
+    // with InvalidStateTransition rather than walking past the guard.
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヨヤク タロウ", "5678")
+        const t1 = yield* IssueTicket({
+          handle: h,
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: Temporal.Instant.from("2020-01-01T00:00:00Z"),
+        })
+        yield* CallNext()
+        const r = yield* eitherEffect(LapseAppointment(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("InvalidStateTransition")
+      }),
+    ))
+
+  it("LapseAppointment on a Cancelled reservation yields AlreadyCancelled (terminal guard)", async () =>
+    // Coverage pin for the `guardActive` terminal short-circuit in
+    // LapseAppointment.ts: a customer-cancelled reservation that the
+    // alarm still picks up must surface AlreadyCancelled rather than
+    // attempting a transition on a terminal aggregate.
+    runScenario(
+      Effect.gen(function* () {
+        const h = handle("ヨヤク タロウ", "5678")
+        const t1 = yield* IssueTicket({
+          handle: h,
+          freeText: null,
+          lane: "reservation",
+          appointmentAt: Temporal.Instant.from("2020-01-01T00:00:00Z"),
+        })
+        yield* CancelTicket(t1.id, h, "customer")
+        const r = yield* eitherEffect(LapseAppointment(t1.id))
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
       }),
     ))
 
