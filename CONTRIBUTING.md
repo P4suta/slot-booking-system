@@ -25,8 +25,8 @@ Two invariants gate every commit:
    Enforced by `dependency-cruiser`.
 2. **Schema is the source of truth** (ADR-0036) — every wire shape
    is decoded through `Effect.Schema` at the boundary; the queue's
-   REST + SSE / WebSocket surface emits its OpenAPI 3.1 spec from
-   the same Schema declarations the use cases consume.
+   REST + WebSocket surface emits its OpenAPI 3.1 spec from the
+   same Schema declarations the use cases consume.
 
 PII discipline (ADR-0009) and the absence of industry-specific
 vocabulary in the queue core remain project rules; they are
@@ -114,8 +114,7 @@ EOF
 | If you want to … | Run |
 |---|---|
 | Bring up the dev stack | `just dev-up` |
-| Smoke the queue flow end-to-end | `just smoke-queue` (lands with the queue-pivot follow-up plan) |
-| Trigger the cron handler | `just trigger-scheduled` |
+| Smoke the queue flow end-to-end | `just smoke` (aggregate: `smoke-queue` + `smoke-queue-ws` + `smoke-reservation`) |
 | Verify the pre-push pipeline | `just check` |
 | Regenerate the error-tag doc | `just gen-error-docs` |
 | Tail structured logs with jq | `just log-tail` |

@@ -40,25 +40,25 @@ just dev-up
 After `just dev-up`:
 
 - `http://localhost:8787/api/v1/queue` — the public projection feed
-- `http://localhost:8787/api/v1/queue/events` — SSE projection stream
-- `http://localhost:16686` — Jaeger UI (search for
-  `usecase.IssueTicket` after a queue mutation)
+- `ws://localhost:8787/api/v1/queue/feed` — DO Hibernating
+  WebSocket projection stream (ADR-0061)
+- `http://localhost:16686` — Jaeger UI (search for the worker
+  root span; application-layer `usecase.*` spans land
+  incrementally — see `docs/observability.md`)
 - `http://localhost:5173` — SvelteKit frontend (`apps/web`), if you
   also ran `just dev-web` (separate terminal)
 
 Drive an end-to-end queue flow from the host:
 
 ```sh
-# Issue → CallNext → MarkServed curl chain:
+# Issue → CallNext → MarkServed REST chain:
 just smoke-queue
-```
-
-Then poke at the cron-driven side:
-
-```sh
-just trigger-scheduled
-# Produces a `usecase.PurgeStalePii` span with
-# usecase.invocation.kind="scheduled".
+# WebSocket projection feed (Open → REST Issue → broadcast):
+just smoke-queue-ws
+# Reservation flow (walk-in → list slots → reserve → check-in):
+just smoke-reservation
+# All three in sequence:
+just smoke
 ```
 
 Tail structured logs through `jq` for trace correlation:

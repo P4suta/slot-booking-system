@@ -10,8 +10,8 @@ Day-one notes for anyone (including future-you) joining the
     Domain entities are `Ticket` / `TicketEvent` / `QueueShop`; the
     customer takes a number, the staff calls the next in line.
   - `apps/default` — a generic, deployable demo (the queue runs on a
-    single Cloudflare DurableObject, the SSE feed updates the
-    public landing page).
+    single Cloudflare DurableObject, a WebSocket feed updates the
+    public landing page in real time — ADR-0061).
 - A downstream deployment (e.g. a future bikeshop / clinic / shop
   application) is a separate codebase that depends on `@booking/core`
   and replaces `apps/default`'s placeholder UI copy with the
@@ -105,25 +105,34 @@ The defence layers stack:
 
 - `just check` is green from a clean clone.
 - `packages/core` ships pure-domain queue code with high branch
-  coverage; the six use cases (`IssueTicket`, `CallNext`,
-  `MarkServed`, `MarkNoShow`, `Recall`, `CancelTicket`) are
-  exercised by unit + property tests.
+  coverage; the 14 use cases (`IssueTicket`, `CheckIn`,
+  `RescheduleTicket`, `CallNext`, `CallSpecific`, `CallBatch`,
+  `Recall`, `Reorder`, `MarkServed`, `MarkNoShow`, `CancelTicket`,
+  `MoveToOverdue`, `Nudge`, `LapseAppointment`) are exercised by
+  unit + property tests. The last three are system-fired by the
+  DO alarm sweep (ADR-0072 / ADR-0075).
 - The `QueueShop` DurableObject (single instance,
   `idFromName("shop")`) serialises every state transition through
   `dispatch`. Its local SQLite holds the canonical event log
   (`ticket_events`), aggregate snapshots (every K=200 events),
-  the read-side projection (`tickets`), and the outbox queue.
-- The Hono router at `/api/v1/*` exposes the customer + staff REST
-  surface (issue / cancel / call-next / served / no-show / recall /
-  shop / events SSE feed). The error envelope is an exhaustive
-  `Match.tagged` over `DomainError._tag`.
+  the read-side projection (`tickets`), the outbox queue, and the
+  ticket-scoped Web Push subscription table (`push_subscriptions`,
+  ADR-0073 / ADR-0074).
+- The Hono router at `/api/v1/*` exposes the customer + staff
+  surface (issue / recover-by-handle / cancel / reschedule /
+  check-in / push-subscription / call-next / call-specific /
+  call-batch / recall / reorder / served / no-show / staff login).
+  Live projection updates push over a DO Hibernating WebSocket at
+  `/api/v1/queue/feed` (ADR-0061). The error envelope is an
+  exhaustive `Match.tagged` over `DomainError._tag`.
 - Cloudflare Workers `scheduled` cron at `0 4 * * *` runs the daily
   PII purge over the D1 mirror (`name_kana`, `phone_last4`,
   `free_text` NULLed on terminal tickets > 2 years old).
 - The SvelteKit frontend in `apps/web` reflects the queue state
-  through the SSE feed for the public landing page and a
-  staff-token-gated dashboard for the operator.
+  through the WebSocket feed for the public landing page and a
+  staff-token-gated dashboard for the operator. Background
+  notifications use Web Push (VAPID / aes128gcm) via the new
+  `@booking/push` workspace package.
 
-The next architectural increments (DO Hibernating WebSocket push,
-HS256 JWT staff auth, Cloudflare rate-limit binding, OpenAPI 3.1
-emission) are tracked through ADR drafts in `docs/adr/`.
+The architectural shape lands incrementally; ongoing ADR drafts
+in `docs/adr/` capture follow-up decisions.

@@ -37,29 +37,39 @@ OpenTelemetry trace tree. Every domain failure carries the same
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-A request's life on the trace tree:
+A request's life on the trace tree (current state):
 
 ```text
 worker root span                                  (instrument, W3C inbound)
 └── http.<METHOD> /api/v1/<path>                  (Hono — http.* attributes)
-    └── messaging.cloudflare.do.dispatch          (DO RPC client — messaging.*)
-        └── usecase.<Verb>                        (use case — usecase.invocation.*)
-            ├── repo.save / repo.issue            (event log + projection write)
-            └── audit_write                       (D1 audit insert — db.*)
+    └── (application-layer spans — see "Status" below)
 ```
 
-## OpenTelemetry semconv attribute table
+The worker root span comes from `@microlabs/otel-cf-workers`
+`instrument(...)` (auto). The `http.<METHOD> /api/v1/<path>` span
+is produced by the Hono OTel integration. Below that, application-
+layer spans (`usecase.<Verb>`, `repo.save`, `audit_write`) are
+**staged**: the `withSpan` helper in
+`packages/core/src/application/runtime/Telemetry.ts` is exported,
+and ADR-0038 documents the target attribute table reproduced below,
+but adoption across the use-case stack lands incrementally.
 
-| Span | semconv namespace | Key attributes |
-|---|---|---|
-| `http.<METHOD> /api/v1/<path>` | OTel HTTP server | `http.request.method`, `http.route`, `http.response.status_code` |
-| `messaging.cloudflare.do.dispatch` | OTel Messaging | `messaging.system="cloudflare.do"`, `messaging.operation.type="send"`, `messaging.destination.name="QueueShop:<shopId>"` |
-| `usecase.<Verb>` | application semconv | `usecase.invocation.kind` ∈ `{"http","scheduled"}`, plus `usecase.input.*` (PII-free domain identifiers only — `ticket.id`, `seq`, `actor`) |
-| `repo.save` / `repo.issue` | OTel DB 1.27 | `db.system.name="cloudflare-do-sqlite"`, `db.operation.name="INSERT"`, `db.collection.name` ∈ `{"ticket_events","aggregate_snapshots","tickets","outbox"}` |
-| `audit_write` | OTel DB 1.27 | `db.system.name="d1"`, `db.collection.name="audit_log"`, `db.query.text=<template>` |
-| any span carrying a domain error | OTel error semconv | `error.type=<Tag>`, `error.code=<E_…>`, `error.severity` |
+## OpenTelemetry semconv attribute table (ADR-0038 target)
 
-ADR-0038 is the formal write-up.
+The table reflects the design target. Cells marked **target** are
+not yet emitted by source — they pin the shape new code MUST hit
+when `withSpan` adoption reaches that layer.
+
+| Span | semconv namespace | Key attributes | Status |
+|---|---|---|---|
+| `http.<METHOD> /api/v1/<path>` | OTel HTTP server | `http.request.method`, `http.route`, `http.response.status_code` | current |
+| `usecase.<Verb>` | application semconv | `usecase.invocation.kind` ∈ `{"http","scheduled"}`, plus `usecase.input.*` (PII-free domain identifiers only — `ticket.id`, `seq`, `actor`) | target |
+| `repo.save` / `repo.issue` | OTel DB 1.27 | `db.system.name="cloudflare-do-sqlite"`, `db.operation.name="INSERT"`, `db.collection.name` ∈ `{"ticket_events","aggregate_snapshots","tickets","outbox"}` | target |
+| `audit_write` | OTel DB 1.27 | `db.system.name="d1"`, `db.collection.name="audit_log"`, `db.query.text=<template>` | target |
+| any span carrying a domain error | OTel error semconv | `error.type=<Tag>`, `error.code=<E_…>`, `error.severity` | target |
+
+ADR-0038 is the formal write-up; treat this table as the contract
+new instrumentation MUST satisfy.
 
 ## RuntimeMode dispatch (ADR-0042)
 
@@ -91,13 +101,9 @@ just log-tail | jq 'select(.traceId == "01H...XYZ")'
 # Smoke a queue flow end-to-end:
 just smoke-queue
 # The IssueTicket → CallNext → MarkServed sequence produces a
-# http.POST → messaging.cloudflare.do.dispatch → usecase.* →
-# repo.save four-layer span tree visible in Jaeger.
-
-# Trigger the PII-purge cron (single shot):
-just trigger-scheduled
-# Produces a usecase.PurgeStalePii span with
-# usecase.invocation.kind="scheduled".
+# http.POST root span in Jaeger. Application-layer spans (usecase
+# / repo / audit) land as `withSpan` adoption rolls out — see the
+# attribute table above for the target shape.
 ```
 
 ## Cross-correlation (audit log ↔ trace ↔ user-facing error)

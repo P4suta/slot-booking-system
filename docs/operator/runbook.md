@@ -68,24 +68,34 @@ moves to `outbox_dead`.
 3. Trigger an immediate alarm: `wrangler do execute QUEUE_SHOP --id
    shop --method alarm` (or wait the next tick).
 
-### NoShow auto-mark not firing
+### Overdue / NoShow auto-advance not firing
 
-**Symptom**: tickets stay in `Called` past `NO_SHOW_TIMEOUT_SECONDS`
-instead of advancing to `NoShow`.
+**Symptom**: tickets stay in `Called` past
+`OVERDUE_AFTER_CALLED_SECONDS` (default 60) instead of advancing
+to `Overdue`, or `Overdue` tickets never reach `NoShow` after
+`MAX_NUDGES` (default 3) × `NUDGE_INTERVAL_SECONDS` (default 30)
+have elapsed.
 
-**Likely cause**: alarm scheduling tries to pick the minimum of
-(earliest no-show timeout, earliest outbox retry, +60 s); a bug in
-the `reduce` could elide the timeout. Check the alarm-set telemetry
-log line.
+**Likely cause**: the DO `alarm()` runs a four-tick sweep
+(Tick 1 `Called → Overdue`, Tick 2 `Nudge`, Tick 3 `Overdue →
+NoShow`, Tick 4 reservation lapse — ADR-0072 / ADR-0075).
+Strict-inequality cutoffs separate Tick 2 from Tick 3 within a
+single alarm fire, so a re-arm bug or wall-clock skew can leave
+tickets stuck. Check the alarm-set telemetry log line for the
+next-alarm-at value.
 
 **Diagnose**:
 
 1. Log the next-alarm-at value on every alarm tick.
-2. Manually invoke `alarm()` via
+2. Compare `tickets.last_nudged_at` and `tickets.nudge_count`
+   against the env-configured thresholds.
+3. Manually invoke `alarm()` via
    `wrangler do execute QUEUE_SHOP --id shop --method alarm`.
 
 **Fix**: usually a code issue in `QueueShop.alarm()` — fall through
-to the test suite (`packages/core/test/property/`) to reproduce.
+to `apps/default/test/integration/durableObjects/alarmSweep.integration.test.ts`
+to reproduce, and the property tests under
+`packages/core/test/property/` to cover the transition shape.
 
 ### PII purge job over-aggressive
 
@@ -146,10 +156,9 @@ re-emit it at the next K-event boundary. The event log is canonical.
 1. Pull the response `traceId` (decorated by `WorkersLoggerLive`).
 2. Filter Workers Logs by that id: `wrangler tail | grep <traceId>`.
 3. Pivot to D1: `SELECT * FROM audit_log WHERE trace_id = '<traceId>'`.
-4. Inspect the DO's storage:
-   `wrangler do execute QUEUE_SHOP --id shop --method <inspect>`
-   (the inspect surface lands with the future Miniflare integration
-   suite).
+4. Inspect the DO's storage via the Miniflare integration harness
+   (`apps/default/test/integration/_harness/queueShopHarness.ts`'s
+   `inShopDo` helper exposes the SQLite handle for ad-hoc reads).
 
 ## Where to look for what
 
