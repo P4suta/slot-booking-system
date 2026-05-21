@@ -38,6 +38,11 @@ import {
 import type { PushSubscription, SendPushResult } from "@booking/push"
 import { sendPush } from "@booking/push"
 import { Cause, Effect, Layer, Schema } from "effect"
+import {
+  type EncodedTicket as CodecEncodedTicket,
+  decodeTicketRowPayload,
+  decodeTicketRowToEncoded,
+} from "../adapters/codec/ticketRowCodec.js"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { ensureDurableObjectSchema } from "./schema.js"
@@ -131,9 +136,10 @@ export type QueueAction =
  * `structuredClone`, which rejects `Temporal.Instant` values (no
  * default cloner). We re-encode the ticket via `Schema.encode` so the
  * wire shape is JSON-safe; consumers re-decode if they need typed
- * Temporal access.
+ * Temporal access. The shape contract is owned by the codec module
+ * (re-exported here so existing callers do not have to import twice).
  */
-export type EncodedTicket = (typeof TicketSchema)["Encoded"]
+export type EncodedTicket = CodecEncodedTicket
 
 /**
  * Result envelope. Single-ticket actions return `ticket`; CallBatch
@@ -404,7 +410,7 @@ export class QueueShop extends DurableObject<Env> {
    */
   listTickets(): Promise<readonly EncodedTicket[]> {
     const rows = this.sql.exec("SELECT payload FROM tickets ORDER BY seq ASC").toArray()
-    return Promise.resolve(rows.map((r) => JSON.parse(r.payload as string) as EncodedTicket))
+    return Promise.resolve(rows.map((r) => decodeTicketRowToEncoded(r.payload)))
   }
 
   /**
@@ -412,7 +418,7 @@ export class QueueShop extends DurableObject<Env> {
    * so the customer self-fetch path is O(log N) on the SQLite
    * `id`-keyed btree rather than O(N) JSON-decode of every ticket
    * in the table. The encoding shape matches `listTickets`'s element
-   * type — same `JSON.parse(payload)` so the wire is JSON-safe under
+   * type — same codec round-trip so the wire is JSON-safe under
    * structuredClone.
    *
    * Returns `null` for an unknown id; the router maps that to the
@@ -422,7 +428,7 @@ export class QueueShop extends DurableObject<Env> {
     const rows = this.sql.exec("SELECT payload FROM tickets WHERE id = ? LIMIT 1", id).toArray()
     const r = rows[0]
     if (r === undefined) return Promise.resolve(null)
-    return Promise.resolve(JSON.parse(r.payload as string) as EncodedTicket)
+    return Promise.resolve(decodeTicketRowToEncoded(r.payload))
   }
 
   /**
@@ -552,7 +558,7 @@ export class QueueShop extends DurableObject<Env> {
       .toArray()
     const r = rows[0]
     if (r === undefined) return Promise.resolve(null)
-    return Promise.resolve(JSON.parse(r.payload as string) as EncodedTicket)
+    return Promise.resolve(decodeTicketRowToEncoded(r.payload))
   }
 
   /**
@@ -684,7 +690,7 @@ export class QueueShop extends DurableObject<Env> {
     const rows = this.sql.exec("SELECT payload FROM tickets WHERE state = 'Waiting'").toArray()
     const m = new Map<TicketId, Ticket>()
     for (const r of rows) {
-      const decoded = Schema.decodeUnknownSync(TicketSchema)(JSON.parse(r.payload as string))
+      const decoded = decodeTicketRowPayload(r.payload)
       m.set(decoded.id, decoded)
     }
     return m
@@ -815,12 +821,13 @@ export class QueueShop extends DurableObject<Env> {
       // by one. ADR-0074 specifies the push payload's `kind` per the
       // **post-increment** count, so we precompute `nextNudgeCount`
       // here and hand it through to `fanOutPush`.
-      const parsed = JSON.parse(row.payload as string) as {
-        readonly displaySeq?: number
-        readonly nudgeCount?: number
-      }
-      const displaySeq = parsed.displaySeq ?? 0
-      const nextNudgeCount = (parsed.nudgeCount ?? 0) + 1
+      const parsed = decodeTicketRowToEncoded(row.payload)
+      const displaySeq = parsed.displaySeq
+      // The SQL predicate above filters `state = 'Overdue'`, so the
+      // discriminated-union narrowing below is exhaustive at runtime;
+      // the explicit check is what teaches the TS narrower.
+      const priorNudgeCount = parsed.state === "Overdue" ? parsed.nudgeCount : 0
+      const nextNudgeCount = priorNudgeCount + 1
       const subs = this.listPushSubscriptions(ticketId)
       // Fan out push FIRST so the event channel reflects actual
       // delivery. `subs.length === 0` short-circuits to the
