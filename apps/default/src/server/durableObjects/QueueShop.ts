@@ -57,7 +57,7 @@ type Env = {
   VAPID_PUBLIC_KEY?: string
   /** ADR-0073: raw P-256 scalar (URL-safe base64). Worker secret. */
   VAPID_PRIVATE_KEY?: string
-  /** ADR-0073: RFC 8292 subject URI (`mailto:` or `https:`). */
+  /** ADR-0073: RFC 8292 subject URI (mailto / https scheme). */
   VAPID_SUBJECT?: string
 }
 

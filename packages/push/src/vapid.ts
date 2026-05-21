@@ -11,9 +11,9 @@ import { base64UrlToBytes, bytesToBase64Url, stringToBytes } from "./base64url.j
  *   - `audience`: the origin of the push subscription endpoint
  *     (e.g. `https://fcm.googleapis.com`). NOT the full endpoint
  *     URL — only the `scheme://host` part.
- *   - `subject`: contact URI per RFC 8292 §2.1 (`mailto:` or
- *     `https://`). Push services use this if they need to reach
- *     the operator about delivery issues.
+ *   - `subject`: contact URI per RFC 8292 §2.1 (mailto / https
+ *     scheme). Push services use this if they need to reach the
+ *     operator about delivery issues.
  *   - `privateKeyBase64Url`: 32-byte raw P-256 scalar, URL-safe
  *     base64 (no padding).
  *   - `expirySeconds`: clamp to ≤ 24 h per RFC 8292 §2 (Push

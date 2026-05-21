@@ -34,7 +34,7 @@ describe("sendPush", () => {
       payload: new TextEncoder().encode("hi"),
       vapidPublicKeyBase64Url: vapid.publicKeyBase64Url,
       vapidPrivateKeyBase64Url: vapid.privateKeyBase64Url,
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       fetchImpl,
     })
     expect(result).toEqual({ kind: "delivered", status: 201 })
@@ -56,7 +56,7 @@ describe("sendPush", () => {
       payload: new TextEncoder().encode("hi"),
       vapidPublicKeyBase64Url: vapid.publicKeyBase64Url,
       vapidPrivateKeyBase64Url: vapid.privateKeyBase64Url,
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       fetchImpl,
     })
     expect(result).toEqual({ kind: "subscriptionGone", status: 410 })
@@ -71,7 +71,7 @@ describe("sendPush", () => {
       payload: new TextEncoder().encode("hi"),
       vapidPublicKeyBase64Url: vapid.publicKeyBase64Url,
       vapidPrivateKeyBase64Url: vapid.privateKeyBase64Url,
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       fetchImpl,
     })
     expect(result.kind).toBe("subscriptionGone")
@@ -87,7 +87,7 @@ describe("sendPush", () => {
       payload: new TextEncoder().encode("hi"),
       vapidPublicKeyBase64Url: vapid.publicKeyBase64Url,
       vapidPrivateKeyBase64Url: vapid.privateKeyBase64Url,
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       fetchImpl,
     })
     expect(result.kind).toBe("rejected")
@@ -106,7 +106,7 @@ describe("sendPush", () => {
       payload: new TextEncoder().encode("hi"),
       vapidPublicKeyBase64Url: vapid.publicKeyBase64Url,
       vapidPrivateKeyBase64Url: vapid.privateKeyBase64Url,
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       fetchImpl,
     })
     expect(result.kind).toBe("transportError")

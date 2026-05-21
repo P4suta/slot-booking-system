@@ -7,7 +7,7 @@ describe("signVapidJwt", () => {
     const { publicKeyBase64Url, privateKeyBase64Url } = await generateVapidKeyPair()
     const jwt = await signVapidJwt({
       audience: "https://fcm.googleapis.com",
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       privateKeyBase64Url,
       publicKeyBase64Url,
       expirySeconds: 60,
@@ -34,7 +34,7 @@ describe("signVapidJwt", () => {
     }
     expect(payload.aud).toBe("https://fcm.googleapis.com")
     expect(payload.exp).toBe(1_000_060)
-    expect(payload.sub).toBe("mailto:ops@example.com")
+    expect(payload.sub).toBe("https://example.com/push-contact")
 
     // Signature — verify with the matching public key. The public
     // key was returned by generateVapidKeyPair as the raw 65-byte
@@ -73,7 +73,7 @@ describe("signVapidJwt", () => {
     const b = await generateVapidKeyPair()
     const jwt = await signVapidJwt({
       audience: "https://fcm.googleapis.com",
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       privateKeyBase64Url: a.privateKeyBase64Url,
       publicKeyBase64Url: a.publicKeyBase64Url,
       nowSeconds: 1_000_000,
@@ -119,7 +119,7 @@ describe("signVapidJwt", () => {
     const nowSeconds = 1_700_000_000
     const jwt = await signVapidJwt({
       audience: "https://fcm.googleapis.com",
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       privateKeyBase64Url,
       publicKeyBase64Url,
       expirySeconds: 25 * 60 * 60, // 25h — over the spec cap
@@ -137,7 +137,7 @@ describe("signVapidJwt", () => {
     const nowSeconds = 1_700_000_000
     const jwt = await signVapidJwt({
       audience: "https://fcm.googleapis.com",
-      subject: "mailto:ops@example.com",
+      subject: "https://example.com/push-contact",
       privateKeyBase64Url,
       publicKeyBase64Url,
       expirySeconds: 30 * 60, // 30min
