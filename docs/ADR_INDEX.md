@@ -73,6 +73,8 @@ back.
 | [0073](./adr/0073-web-push-channel.md)              | Web Push (VAPID) as the Overdue-nudge transport               | accepted |
 | [0074](./adr/0074-push-subscription-anonymity.md)   | Push subscription anonymity contract                          | accepted |
 | [0075](./adr/0075-appointment-lapse-auto-cancel.md) | Appointment-lapse auto-cancel                                 | accepted |
+| [0076](./adr/0076-schema-driven-action-handler-table.md) | Schema-driven QueueAction handler table                   | accepted |
+| [0077](./adr/0077-push-subscription-port.md)        | Push subscription as a separate aggregate port                | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).

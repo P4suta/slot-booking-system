@@ -21,7 +21,6 @@ import {
   MarkNoShow,
   MarkServed,
   MoveToOverdue,
-  type NonEmptyReadonlyArray,
   Nudge,
   Recall,
   Reorder,
@@ -37,14 +36,20 @@ import {
 } from "@booking/core"
 import type { PushSubscription, SendPushResult } from "@booking/push"
 import { sendPush } from "@booking/push"
-import { Cause, Effect, Layer, Schema } from "effect"
+import { Cause, Effect, Layer, Match, pipe, Schema } from "effect"
 import {
   type EncodedTicket as CodecEncodedTicket,
   decodeTicketRowPayload,
   decodeTicketRowToEncoded,
 } from "../adapters/codec/ticketRowCodec.js"
+import {
+  DurableObjectPushSubscriptionRepositoryLive,
+  makePushSubscriptionStore,
+  type PushSubscriptionStore,
+} from "../adapters/DurableObjectPushSubscriptionRepositoryLive.js"
 import { DurableObjectTicketRepositoryLive } from "../adapters/DurableObjectTicketRepositoryLive.js"
 import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
+import type { QueueAction } from "./actions.js"
 import { ensureDurableObjectSchema } from "./schema.js"
 import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecycleLog.js"
 
@@ -75,61 +80,10 @@ type Env = {
   VAPID_SUBJECT?: string
 }
 
-/**
- * Action dispatched by the worker to the single QueueShop instance.
- * Discriminated union over the use cases; the DO routes each action
- * through the matching `application/usecases/queue/` entry point.
- *
- * Per ADR-0062 / ADR-0065 / ADR-0071 / ADR-0072 / ADR-0075 the operator-
- * grade and system-driven actions (CallSpecific / CallBatch / Reorder /
- * MoveToOverdue / Nudge / LapseAppointment) join the base five so each
- * intent has a named entry.
- */
-export type QueueAction =
-  | {
-      type: "IssueTicket"
-      handle: CustomerHandle
-      freeText: string | null
-      lane?: Lane
-      // ISO-8601 instant string. The DO RPC boundary serialises every
-      // arg through structuredClone, which rejects Temporal.Instant —
-      // the conversion to/from `Temporal.Instant` happens inside the
-      // dispatch closure so the wire stays JSON-safe.
-      appointmentAt?: string
-    }
-  | { type: "CallNext"; actor: "staff" | "system"; lane?: Lane }
-  | { type: "CallSpecific"; ticketId: TicketId; actor: "staff" | "system" }
-  | { type: "CallBatch"; ticketIds: NonEmptyReadonlyArray<TicketId>; actor: "staff" | "system" }
-  | { type: "MoveToOverdue"; ticketId: TicketId }
-  | { type: "Nudge"; ticketId: TicketId; channel: "ws" | "push" }
-  | { type: "LapseAppointment"; ticketId: TicketId }
-  | { type: "MarkServed"; ticketId: TicketId }
-  | { type: "MarkNoShow"; ticketId: TicketId; actor: "staff" | "system" }
-  | { type: "Recall"; ticketId: TicketId; actor: "staff" | "system" }
-  | {
-      type: "Reorder"
-      ticketId: TicketId
-      afterTicketId: TicketId | null
-      actor: "staff" | "system"
-    }
-  | {
-      type: "CancelTicket"
-      ticketId: TicketId
-      actor: "customer" | "staff"
-      reason: string
-      handle?: CustomerHandle
-    }
-  | { type: "CheckIn"; ticketId: TicketId }
-  | {
-      type: "RescheduleTicket"
-      ticketId: TicketId
-      newAppointmentAt: string
-      granularity: 15 | 30 | 60
-      tz: string
-      capacity: number
-      actor: "customer" | "staff"
-      handle?: CustomerHandle
-    }
+// QueueAction lives in `./actions.ts` so the router (apps/default/src/server/http/router.ts)
+// and this DO share a single source for the dispatch payload union.
+// Re-exported here for backward compatibility with downstream imports.
+export type { QueueAction }
 
 /**
  * The Worker boundary serialises every DO RPC return through
@@ -199,10 +153,12 @@ export const pushKindFor = (nextNudgeCount: number, maxNudges: number): string =
  */
 export class QueueShop extends DurableObject<Env> {
   private readonly sql: SqlStorage
+  private readonly pushStore: PushSubscriptionStore
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env)
     this.sql = state.storage.sql
+    this.pushStore = makePushSubscriptionStore(this.sql)
     void state.blockConcurrencyWhile(() => {
       ensureDurableObjectSchema(this.sql)
       return Promise.resolve()
@@ -211,7 +167,8 @@ export class QueueShop extends DurableObject<Env> {
 
   private layer() {
     const repo = DurableObjectTicketRepositoryLive(this.sql)
-    return Layer.mergeAll(SystemClockLive, UlidIdGeneratorLive, repo, WorkersLoggerLive)
+    const pushRepo = DurableObjectPushSubscriptionRepositoryLive(this.sql)
+    return Layer.mergeAll(SystemClockLive, UlidIdGeneratorLive, repo, pushRepo, WorkersLoggerLive)
   }
 
   async dispatch(action: QueueAction): Promise<QueueResult> {
@@ -219,7 +176,6 @@ export class QueueShop extends DurableObject<Env> {
     type DispatchOk = Ticket | readonly Ticket[] | undefined
     type DispatchErr = DomainError | ConcurrencyError | StorageError
     type DispatchDeps = Clock | IdGenerator | TicketRepository | Logger
-    let eff: Effect.Effect<DispatchOk, DispatchErr, DispatchDeps>
     // ADR-0069: detect idempotent merge for IssueTicket BEFORE the
     // use case runs. If the active set already holds a ticket with
     // this handle, IssueTicket short-circuits and returns that same
@@ -235,70 +191,52 @@ export class QueueShop extends DurableObject<Env> {
         .toArray()[0]
       issueExistedId = row?.id as string | undefined
     }
-    switch (action.type) {
-      case "IssueTicket": {
-        const appointmentAt =
-          action.appointmentAt !== undefined
-            ? Schema.decodeUnknownSync(InstantSchema)(action.appointmentAt)
-            : undefined
-        eff = IssueTicket({
-          handle: action.handle,
-          freeText: action.freeText as Ticket["freeText"],
-          ...(action.lane !== undefined ? { lane: action.lane } : {}),
-          ...(appointmentAt !== undefined ? { appointmentAt } : {}),
-        })
-        break
-      }
-      case "CallNext":
-        eff = CallNext(action.lane, action.actor)
-        break
-      case "CallSpecific":
-        eff = CallSpecific(action.ticketId, action.actor)
-        break
-      case "CallBatch":
-        eff = CallBatch(action.ticketIds, action.actor)
-        break
-      case "MoveToOverdue":
-        eff = MoveToOverdue(action.ticketId)
-        break
-      case "Nudge":
-        eff = Nudge(action.ticketId, action.channel)
-        break
-      case "LapseAppointment":
-        eff = LapseAppointment(action.ticketId)
-        break
-      case "MarkServed":
-        eff = MarkServed(action.ticketId)
-        break
-      case "MarkNoShow":
-        eff = MarkNoShow(action.ticketId, action.actor)
-        break
-      case "Recall":
-        eff = Recall(action.ticketId, action.actor)
-        break
-      case "Reorder":
-        eff = Reorder(action.ticketId, action.afterTicketId, action.actor)
-        break
-      case "CancelTicket":
-        eff = CancelTicket(action.ticketId, action.actor, action.reason, action.handle)
-        break
-      case "CheckIn":
-        eff = CheckIn(action.ticketId)
-        break
-      case "RescheduleTicket": {
-        const newAppointmentAt = Schema.decodeUnknownSync(InstantSchema)(action.newAppointmentAt)
-        eff = RescheduleTicket({
-          ticketId: action.ticketId,
-          newAppointmentAt,
-          granularity: action.granularity,
-          tz: action.tz as BusinessTimeZone,
-          capacity: action.capacity,
-          actor: action.actor,
-          ...(action.handle !== undefined ? { handle: action.handle } : {}),
-        })
-        break
-      }
-    }
+    // The handler table is `Match.discriminatorsExhaustive`-driven so
+    // adding a new `QueueAction` variant fails compilation here until
+    // the matching arm is registered. The Effect type widens to the
+    // shared `DispatchOk / DispatchErr / DispatchDeps` triple inside
+    // each arm; the matcher unifies them into the dispatch return.
+    const eff: Effect.Effect<DispatchOk, DispatchErr, DispatchDeps> = pipe(
+      Match.type<QueueAction>(),
+      Match.discriminatorsExhaustive("type")({
+        IssueTicket: (a) => {
+          const appointmentAt =
+            a.appointmentAt !== undefined
+              ? Schema.decodeUnknownSync(InstantSchema)(a.appointmentAt)
+              : undefined
+          return IssueTicket({
+            handle: a.handle,
+            freeText: a.freeText as Ticket["freeText"],
+            ...(a.lane !== undefined ? { lane: a.lane } : {}),
+            ...(appointmentAt !== undefined ? { appointmentAt } : {}),
+          })
+        },
+        CallNext: (a) => CallNext(a.lane, a.actor),
+        CallSpecific: (a) => CallSpecific(a.ticketId, a.actor),
+        CallBatch: (a) => CallBatch(a.ticketIds, a.actor),
+        MoveToOverdue: (a) => MoveToOverdue(a.ticketId),
+        Nudge: (a) => Nudge(a.ticketId, a.channel),
+        LapseAppointment: (a) => LapseAppointment(a.ticketId),
+        MarkServed: (a) => MarkServed(a.ticketId),
+        MarkNoShow: (a) => MarkNoShow(a.ticketId, a.actor),
+        Recall: (a) => Recall(a.ticketId, a.actor),
+        Reorder: (a) => Reorder(a.ticketId, a.afterTicketId, a.actor),
+        CancelTicket: (a) => CancelTicket(a.ticketId, a.actor, a.reason, a.handle),
+        CheckIn: (a) => CheckIn(a.ticketId),
+        RescheduleTicket: (a) => {
+          const newAppointmentAt = Schema.decodeUnknownSync(InstantSchema)(a.newAppointmentAt)
+          return RescheduleTicket({
+            ticketId: a.ticketId,
+            newAppointmentAt,
+            granularity: a.granularity,
+            tz: a.tz as BusinessTimeZone,
+            capacity: a.capacity,
+            actor: a.actor,
+            ...(a.handle !== undefined ? { handle: a.handle } : {}),
+          })
+        },
+      }),
+    )(action)
     const result: QueueResult = await Effect.runPromise(
       Effect.matchCauseEffect(eff, {
         onSuccess: (out: DispatchOk): Effect.Effect<QueueResult> => {
@@ -388,7 +326,7 @@ export class QueueShop extends DurableObject<Env> {
     if (ticket.state !== "Served" && ticket.state !== "NoShow" && ticket.state !== "Cancelled") {
       return
     }
-    this.sql.exec("DELETE FROM push_subscriptions WHERE ticket_id = ?", ticket.id)
+    this.pushStore.reapByTicket(ticket.id as TicketId)
   }
 
   /**
@@ -478,18 +416,11 @@ export class QueueShop extends DurableObject<Env> {
     ) {
       return Promise.resolve({ ok: false, reason: "PhoneMismatch" })
     }
-    this.sql.exec(
-      `INSERT INTO push_subscriptions (ticket_id, endpoint, p256dh, auth)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(ticket_id, endpoint) DO UPDATE SET
-         p256dh = excluded.p256dh,
-         auth   = excluded.auth,
-         created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-      ticketId,
-      subscription.endpoint,
-      subscription.p256dh,
-      subscription.auth,
-    )
+    this.pushStore.register(ticketId, {
+      endpoint: subscription.endpoint,
+      p256dh: subscription.p256dh,
+      auth: subscription.auth,
+    })
     return Promise.resolve({ ok: true })
   }
 
@@ -529,23 +460,12 @@ export class QueueShop extends DurableObject<Env> {
     ) {
       return Promise.resolve({ ok: false, reason: "PhoneMismatch" })
     }
-    this.sql.exec(
-      "DELETE FROM push_subscriptions WHERE ticket_id = ? AND endpoint = ?",
-      ticketId,
-      endpoint,
-    )
+    this.pushStore.unregister(ticketId, endpoint)
     return Promise.resolve({ ok: true })
   }
 
   private listPushSubscriptions(ticketId: TicketId): readonly PushSubscription[] {
-    const rows = this.sql
-      .exec("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE ticket_id = ?", ticketId)
-      .toArray()
-    return rows.map((r) => ({
-      endpoint: r.endpoint as string,
-      p256dh: r.p256dh as string,
-      auth: r.auth as string,
-    }))
+    return this.pushStore.list(ticketId)
   }
 
   getByHandle(handle: CustomerHandle): Promise<EncodedTicket | null> {
@@ -990,11 +910,7 @@ export class QueueShop extends DurableObject<Env> {
         continue
       }
       if (result.kind === "subscriptionGone") {
-        this.sql.exec(
-          "DELETE FROM push_subscriptions WHERE ticket_id = ? AND endpoint = ?",
-          ticketId,
-          s.endpoint,
-        )
+        this.pushStore.deleteByEndpoint(ticketId, s.endpoint)
       }
       if (result.kind === "delivered") delivered += 1
       console.warn(
