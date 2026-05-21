@@ -509,7 +509,7 @@ describe("queue lifecycle round-trip", () => {
       Effect.gen(function* () {
         const h = handle("ヤマダ タロウ", "1234")
         const t1 = yield* IssueTicket({ handle: h, freeText: null })
-        yield* CancelTicket(t1.id, h, "customer")
+        yield* CancelTicket(t1.id, "customer", "changed plans", h)
         const r = yield* eitherEffect(Nudge(t1.id, "ws"))
         expect(r.ok).toBe(false)
         if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
@@ -631,7 +631,7 @@ describe("queue lifecycle round-trip", () => {
           lane: "reservation",
           appointmentAt: Temporal.Instant.from("2020-01-01T00:00:00Z"),
         })
-        yield* CancelTicket(t1.id, h, "customer")
+        yield* CancelTicket(t1.id, "customer", "changed plans", h)
         const r = yield* eitherEffect(LapseAppointment(t1.id))
         expect(r.ok).toBe(false)
         if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
