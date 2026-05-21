@@ -224,9 +224,9 @@ export const applyNudge = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* MarkServed — Called | Overdue → Served (ADR-0071 swaps Serving for         */
-/* Overdue). A customer who arrives late and is finally served from Overdue   */
-/* is recovered through this transition.                                      */
+/* MarkServed — Called | Overdue → Served. Post-ADR-0071 (Serving removed)    */
+/* and ADR-0072 (Overdue introduced), so a customer who arrives late and is   */
+/* finally served from Overdue is recovered through this same transition.    */
 /* -------------------------------------------------------------------------- */
 
 export const applyMarkServed = (

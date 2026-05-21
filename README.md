@@ -39,9 +39,10 @@ unchanged.
 - **drizzle-orm 1.0-rc** — D1 + DurableObject SQLite schema, codecs
 - **Cloudflare Workers + Durable Objects + D1** — the deployment
 - **SvelteKit 2** + Cloudflare Pages — the customer + staff UI
-- **REST + SSE** for the queue surface; live projection push moves
-  to **DO Hibernating WebSocket** (ADR-0057, on the queue-pivot
-  follow-up plan)
+- **REST** for queue mutations (`POST /api/v1/...`); **DO
+  Hibernating WebSocket** at `GET /api/v1/queue/feed` pushes the
+  live projection (ADR-0061). Cloudflare's rate-limit binding
+  gates the mutation surface (ADR-0057)
 - **paraglide-js 2** — i18n with identifier-safe message keys
 
 ## Architecture overview
@@ -63,8 +64,15 @@ Functional Core / Imperative Shell (ADR-0018):
   projections are monoid homomorphisms over the event log
   (ADR-0050 / ADR-0052).
 - **application** (`packages/core/src/application/**`) — `Effect`
-  use cases (Issue / CallNext / Recall / MarkServed / MarkNoShow /
-  Cancel) and `Context.Service` ports (Clock / IdGenerator /
+  use cases grouped by lifecycle stage:
+  - issue / recovery: `IssueTicket`, `CheckIn`, `RescheduleTicket`
+  - call / reorder: `CallNext`, `CallSpecific`, `CallBatch`,
+    `Recall`, `Reorder`
+  - terminal: `MarkServed`, `MarkNoShow`, `CancelTicket`
+  - alarm-driven (system actor): `MoveToOverdue`, `Nudge`,
+    `LapseAppointment` (ADR-0072 / ADR-0075)
+
+  Plus `Context.Service` ports (Clock / IdGenerator /
   TicketRepository / Logger / AuditLogger / RuntimeMode /
   ErrorRedaction / LogSampler).
 - **infrastructure** (`packages/core/src/infrastructure/**`) —
@@ -72,15 +80,18 @@ Functional Core / Imperative Shell (ADR-0018):
   IdGenerator, in-memory event-sourced repo for tests).
   Cloudflare-bound adapters live under `apps/<name>/src/server/`.
 - **presentation** — two apps:
-  - `apps/default` (Cloudflare Worker) — REST + SSE surface
-    (`/api/v1/...`) + the `QueueShop` Durable Object actor. The
-    only place that calls `Effect.runPromise`. Wraps the worker
-    handler in `@microlabs/otel-cf-workers` `instrument(...)` so
-    every request is a W3C Trace-Context root span.
+  - `apps/default` (Cloudflare Worker) — REST `/api/v1/...`
+    surface + WebSocket `GET /api/v1/queue/feed` projection feed
+    + the `QueueShop` Durable Object actor. The only place that
+    calls `Effect.runPromise`. Wraps the worker handler in
+    `@microlabs/otel-cf-workers` `instrument(...)` so every
+    request is a W3C Trace-Context root span.
   - `apps/web` (Cloudflare Pages, SvelteKit 2) — customer +
-    staff routes (`/`, `/issue`, `/ticket`, `/staff`). Speaks
-    REST via a typed client (`apps/web/src/lib/api.ts`); SSE
-    keeps the live projection in sync.
+    staff routes (`/`, `/issue`, `/ticket`, `/staff`,
+    `/recover`). Speaks REST via a typed client
+    (`apps/web/src/lib/api.ts`); the same client opens the
+    WebSocket feed so the projection stays in sync without
+    polling.
 
 The pure-domain layer carries 300+ tests with C1-100 % branch
 coverage (vitest V8 + threshold), property-based fast-check tests
@@ -106,7 +117,7 @@ host needs only `just`, `lefthook`, `committed`, `typos`,
 | `just dev-default` | `wrangler dev` only (no observability stack) |
 | `just dev-web` | Vite for `apps/web` |
 | `just migrate-local` | Apply D1 migrations to the local fixture |
-| `just trigger-scheduled` | Fire the daily PII-purge handler against `wrangler dev` |
+| `just smoke` | End-to-end smoke against a running `wrangler dev` (queue + WS feed + reservation) |
 | `just gen-error-docs` | Regenerate `docs/error-codes.md` from `errorClassRegistry` |
 | `just bench` | Vitest bench baselines |
 | `just mutation` | Stryker mutation testing (heavy; on demand) |

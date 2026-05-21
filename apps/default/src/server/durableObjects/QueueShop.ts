@@ -43,21 +43,30 @@ import { WorkersLoggerLive } from "../adapters/WorkersLoggerLive.js"
 import { ensureDurableObjectSchema } from "./schema.js"
 import { logWsAccept, logWsBroadcast, logWsClose, logWsError } from "./wsLifecycleLog.js"
 
+/**
+ * `QueueShop` env shape. Three logical groups (see comments).
+ *
+ * - Alarm-sweep tunables (ADR-0072 Overdue / ADR-0075 lapse).
+ * - VAPID key material for Web Push delivery (ADR-0073).
+ * - D1 binding for the audit/outbox mirror.
+ */
 type Env = {
   DB: D1Database
-  /** ADR-0072: seconds in `Called` before auto-`MoveToOverdue`. */
+  // — alarm-sweep tunables (ADR-0072 / ADR-0075) —
+  /** Seconds in `Called` before auto-`MoveToOverdue`. */
   OVERDUE_AFTER_CALLED_SECONDS?: string
-  /** ADR-0072: minimum seconds between successive `Nudged` events. */
+  /** Minimum seconds between successive `Nudged` events. */
   NUDGE_INTERVAL_SECONDS?: string
-  /** ADR-0072: cap on `nudgeCount` before terminal `MarkNoShow(system)`. */
+  /** Cap on `nudgeCount` before terminal `MarkNoShow(system)`. */
   MAX_NUDGES?: string
-  /** ADR-0075: grace seconds past `appointmentAt` before LapseAppointment. */
+  /** Grace seconds past `appointmentAt` before LapseAppointment. */
   APPOINTMENT_GRACE_SECONDS?: string
-  /** ADR-0073: raw uncompressed P-256 public point (URL-safe base64). */
+  // — VAPID key material (ADR-0073) —
+  /** Raw uncompressed P-256 public point (URL-safe base64). */
   VAPID_PUBLIC_KEY?: string
-  /** ADR-0073: raw P-256 scalar (URL-safe base64). Worker secret. */
+  /** Raw P-256 scalar (URL-safe base64). Worker secret. */
   VAPID_PRIVATE_KEY?: string
-  /** ADR-0073: RFC 8292 subject URI (mailto / https scheme). */
+  /** RFC 8292 subject URI (mailto / https scheme). */
   VAPID_SUBJECT?: string
 }
 
