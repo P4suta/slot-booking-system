@@ -1,16 +1,23 @@
 /**
- * Hand-written OpenAPI 3.1 document for the queue REST surface.
- * The spec mirrors the Hono router endpoints + Effect-Schema
- * request bodies; future work derives this directly from the
- * Schema declarations (Union → `oneOf + discriminator`) so the
- * surface stays drift-free.
+ * OpenAPI 3.1 document for the queue REST surface.
  *
- * The document is deliberately compact — schemas live inline so a
- * consumer can `curl /api/v1/openapi.json | jq` and get the full
- * picture without fanout into `$ref` resolution. Adding a route
- * is a three-line change: register it on the Hono app, add the
- * path entry below, append the request body schema.
+ * Request-body and query schemas are derived from the
+ * `boundarySchemas.ts` declarations through
+ * `openapiRegistry.ts#bodySchemaFor` — adding a new wire shape
+ * is one entry in `boundaryRegistry` plus the path stanza here.
+ * The narrative pieces (paths, summaries, tag groupings, response
+ * envelopes, auth-side request bodies that have no Effect.Schema
+ * counterpart) remain hand-written. See ADR-0078 for the
+ * two-step migration that landed this layout.
+ *
+ * The shared `components.schemas` slot carries every `$defs`
+ * entry the derived schemas pull in (e.g. `Instant`), keyed under
+ * the sanitised OpenAPI component names produced by
+ * `JsonSchema.toMultiDocumentOpenApi3_1`.
  */
+import { bodySchemaFor, buildOpenApiBundle } from "./openapiRegistry.js"
+
+const openApiBundle = buildOpenApiBundle()
 const ERROR_RESPONSE = {
   description: "Domain or validation error",
   content: {
@@ -101,19 +108,7 @@ export const openApiDocument = {
         requestBody: {
           required: true,
           content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                required: ["nameKana", "phoneLast4", "freeText"],
-                properties: {
-                  nameKana: { type: "string" },
-                  phoneLast4: { type: "string", pattern: "^[0-9]{4}$" },
-                  freeText: { type: ["string", "null"] },
-                  lane: { type: "string", enum: ["walkIn", "priority", "reservation"] },
-                  appointmentAt: { type: "string", format: "date-time" },
-                },
-              },
-            },
+            "application/json": { schema: bodySchemaFor("IssueTicketBody") },
           },
         },
         responses: {
@@ -153,13 +148,12 @@ export const openApiDocument = {
         tags: ["customer"],
         summary: "Slot grid availability for the customer's booking picker (ADR-0066/0068)",
         parameters: [
-          { in: "query", name: "from", required: true, schema: { type: "string", format: "date" } },
-          { in: "query", name: "to", required: true, schema: { type: "string", format: "date" } },
+          // SlotsQuery: { from: Date, to: Date, granularity: 15|30|60 }
           {
             in: "query",
-            name: "granularity",
+            name: "query",
             required: true,
-            schema: { type: "integer", enum: [15, 30, 60] },
+            content: { "application/json": { schema: bodySchemaFor("SlotsQuery") } },
           },
         ],
         responses: {
@@ -208,8 +202,13 @@ export const openApiDocument = {
         tags: ["customer"],
         summary: "Customer recovery — look up the active ticket by handle (ADR-0069)",
         parameters: [
-          { in: "query", name: "nameKana", required: true, schema: { type: "string" } },
-          { in: "query", name: "phoneLast4", required: true, schema: { type: "string" } },
+          // ByHandleQuery: { nameKana, phoneLast4 }
+          {
+            in: "query",
+            name: "query",
+            required: true,
+            content: { "application/json": { schema: bodySchemaFor("ByHandleQuery") } },
+          },
         ],
         responses: {
           "200": TICKET_ENVELOPE,
@@ -229,24 +228,7 @@ export const openApiDocument = {
           content: {
             "application/json": {
               schema: {
-                oneOf: [
-                  {
-                    title: "CustomerCancel",
-                    type: "object",
-                    required: ["nameKana", "phoneLast4", "reason"],
-                    properties: {
-                      nameKana: { type: "string" },
-                      phoneLast4: { type: "string" },
-                      reason: { type: "string" },
-                    },
-                  },
-                  {
-                    title: "StaffCancel",
-                    type: "object",
-                    required: ["reason"],
-                    properties: { reason: { type: "string" } },
-                  },
-                ],
+                oneOf: [bodySchemaFor("CancelBody"), bodySchemaFor("StaffCancelBody")],
               },
             },
           },
@@ -274,19 +256,7 @@ export const openApiDocument = {
         requestBody: {
           required: true,
           content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                required: ["nameKana", "phoneLast4", "endpoint", "p256dh", "auth"],
-                properties: {
-                  nameKana: { type: "string" },
-                  phoneLast4: { type: "string" },
-                  endpoint: { type: "string", maxLength: 2048 },
-                  p256dh: { type: "string" },
-                  auth: { type: "string" },
-                },
-              },
-            },
+            "application/json": { schema: bodySchemaFor("PushSubscriptionBody") },
           },
         },
         responses: {
@@ -318,13 +288,14 @@ export const openApiDocument = {
           "bodies are non-portable across user-agents).",
         parameters: [
           { in: "path", name: "id", required: true, schema: { type: "string" } },
-          { in: "query", name: "nameKana", required: true, schema: { type: "string" } },
-          { in: "query", name: "phoneLast4", required: true, schema: { type: "string" } },
+          // PushSubscriptionDeleteQuery: { nameKana, phoneLast4, endpoint }
           {
             in: "query",
-            name: "endpoint",
+            name: "query",
             required: true,
-            schema: { type: "string", maxLength: 2048 },
+            content: {
+              "application/json": { schema: bodySchemaFor("PushSubscriptionDeleteQuery") },
+            },
           },
         ],
         responses: {
@@ -359,31 +330,11 @@ export const openApiDocument = {
         parameters: [{ in: "path", name: "id", required: true, schema: { type: "string" } }],
         requestBody: {
           required: true,
+          // RescheduleBody covers both customer (handle required) and
+          // staff (handle absent) paths via optional `nameKana` /
+          // `phoneLast4`. The router branches by handle presence.
           content: {
-            "application/json": {
-              schema: {
-                oneOf: [
-                  {
-                    title: "CustomerReschedule",
-                    type: "object",
-                    required: ["nameKana", "phoneLast4", "newAppointmentAt"],
-                    properties: {
-                      nameKana: { type: "string" },
-                      phoneLast4: { type: "string" },
-                      newAppointmentAt: { type: "string", format: "date-time" },
-                    },
-                  },
-                  {
-                    title: "StaffReschedule",
-                    type: "object",
-                    required: ["newAppointmentAt"],
-                    properties: {
-                      newAppointmentAt: { type: "string", format: "date-time" },
-                    },
-                  },
-                ],
-              },
-            },
+            "application/json": { schema: bodySchemaFor("RescheduleBody") },
           },
         },
         responses: {
@@ -553,5 +504,8 @@ export const openApiDocument = {
         },
       },
     },
+  },
+  components: {
+    schemas: openApiBundle.components,
   },
 } as const

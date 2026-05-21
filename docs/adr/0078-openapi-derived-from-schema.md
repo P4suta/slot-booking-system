@@ -27,14 +27,14 @@ hand-written shapes.
 
 ## Decision
 
-Stage the migration in two steps. **Step 1 (this ADR)** lands
-the foundation:
+The migration shipped in two steps.
+
+**Step 1 — foundation:**
 
 - `apps/default/src/server/http/openapiRegistry.ts` — single
   `boundaryRegistry` map from stable name (`IssueTicketBody`,
   `MyTicketQuery`, …) to the corresponding Effect.Schema. The
-  map is the single input every future derive consumer will
-  read from.
+  map is the single input every derive consumer reads from.
 - `deriveBoundaryJsonSchema(key)` — `Schema.toJsonSchemaDocument`
   invoked on a registry entry. The only call site for that
   function so future drift fixes have one place to touch.
@@ -42,18 +42,34 @@ the foundation:
   asserts every registry entry derives a valid `type: "object"`
   JSON Schema and that the entry count does not silently shrink.
 
-**Step 2 (follow-up)** replaces the hand-written request-body /
-query schemas inside `openapi.ts` with `deriveBoundaryJsonSchema(name)`
-calls, plus a golden snapshot test pinning the resulting
-`/api/v1/openapi.json` payload. The narrative content (paths,
-summaries, tag groupings, security requirements, response
-envelopes) stays hand-written because none of it has a
-Schema-level analogue.
+**Step 2 — `openapi.ts` rewritten to derive:**
 
-Step 1 is additive: the existing hand-written `openapi.ts`
-keeps serving traffic; the registry merely exists alongside.
-A future PR (or the same operator) can do step 2 with no
-breaking interim state.
+- `buildOpenApiBundle()` batches every registry entry through
+  `JsonSchema.toMultiDocumentOpenApi3_1`, which rewrites
+  `#/$defs/X` to `#/components/schemas/X` and returns the
+  per-entry OpenAPI 3.1 schemas + a shared `components` map.
+  Memoised at module load.
+- `bodySchemaFor(key)` returns the OpenAPI 3.1 schema for one
+  entry; used inline in `openapi.ts` everywhere a request body
+  or query schema needs declaring.
+- `openapi.ts` now imports `bodySchemaFor` and replaces every
+  inline request-body / query schema (IssueTicket, Cancel,
+  PushSubscription register / delete, Reschedule, Slots,
+  ByHandle) with the derived call. The shared `Instant`
+  definition lands in `components.schemas`.
+- `openapiSnapshot.integration.test.ts` pins three invariants:
+  every router path appears in the doc, the IssueTicket body
+  carries the Schema-derived `additionalProperties: false`
+  marker (so a regression to a hand-written body fails the
+  gate), and `components.schemas` holds the shared
+  `Instant` definition the derived schemas reference.
+
+The narrative content (paths, summaries, tag groupings,
+response envelopes, the `staff/login` body) remains hand-written
+because none of it has a Schema-level analogue — `TicketSchema`
+is a domain entity, not a wire boundary, so the encoded ticket
+response continues to live as the hand-written
+`TICKET_SCHEMA` constant.
 
 ## Consequences
 
@@ -100,5 +116,6 @@ breaking interim state.
 - `apps/default/src/server/http/openapiRegistry.ts`
 - `apps/default/src/server/http/openapi.ts`
 - `apps/default/test/server/http/openapiRegistry.test.ts`
+- `apps/default/test/integration/router/openapiSnapshot.integration.test.ts`
 - Effect 4 beta: `Schema.toJsonSchemaDocument`, `JsonSchema.toMultiDocumentOpenApi3_1`
 - ADR-0019 (Effect.Schema is the boundary-parsing standard)
