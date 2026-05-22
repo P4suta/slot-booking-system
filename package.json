@@ -27,21 +27,8 @@
     "dependency-cruiser": "latest",
     "eslint": "latest",
     "knip": "latest",
-    "tsx": "^4.21.0",
+    "tsx": "latest",
     "typescript": "latest",
     "typescript-eslint": "latest"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@biomejs/biome",
-      "esbuild",
-      "msgpackr-extract",
-      "protobufjs",
-      "sharp",
-      "workerd"
-    ],
-    "overrides": {
-      "cookie@<0.7.0": "^0.7.0"
-    }
   }
 }
