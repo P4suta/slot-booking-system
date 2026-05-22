@@ -70,11 +70,13 @@ the type-state cost.
 
 - `packages/core/src/domain/queue/TicketEvent.ts`:
   - New `AppointmentLapsedEventSchema`:
+
     ```ts
     type: "AppointmentLapsed",
     lapsedBy: Actor,            // always "system"
     appointmentAt: InstantSchema,  // the lapsed slot, for audit
     ```
+
   - Added to the top-level union and `ALL_TICKET_EVENT_TYPES`.
 
 ### Transitions

@@ -2,7 +2,7 @@ import type { Temporal } from "@js-temporal/polyfill"
 import { Effect } from "effect"
 import type { ConcurrencyError, StorageError } from "../../../domain/errors/Errors.js"
 import type { Lane } from "../../../domain/queue/Lane.js"
-import { nextDisplaySeqInLane, type QueueSnapshot } from "../../../domain/queue/projection.js"
+import { nextDisplaySeq, type QueueSnapshot } from "../../../domain/queue/projection.js"
 import type { Ticket } from "../../../domain/queue/Ticket.js"
 import { applyIssue } from "../../../domain/queue/transitions.js"
 import type { TicketId } from "../../../domain/types/EntityId.js"
@@ -69,7 +69,7 @@ export const IssueTicket = (
     const tickets = new Map<TicketId, Ticket>()
     for (const t of all) tickets.set(t.id, t)
     const snap: QueueSnapshot = { tickets }
-    const displaySeq = nextDisplaySeqInLane(snap, lane)
+    const displaySeq = nextDisplaySeq(snap)
     return yield* issueAndPersist({
       apply: (id, eventId, at, seq) =>
         applyIssue({

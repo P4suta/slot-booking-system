@@ -12,13 +12,15 @@ import { PhoneLast4Schema } from "../../src/domain/value-objects/PhoneLast4.js"
 import { numRuns } from "../_arb/numRuns.js"
 
 /**
- * `firstLaneWithCallable` (ADR-0067) is the EDF-augmented chain
- * selector. The four properties below pin its semantics:
+ * `firstLaneWithCallable` (ADR-0067, narrowed by ADR-0078) is the
+ * EDF-augmented chain selector. The four properties below pin its
+ * semantics:
  *
  *   - eligibility: a reservation whose appointmentAt is within
- *     `now + grace` wins over priority and walk-in heads.
+ *     `now + grace` wins over walk-in heads.
  *   - non-eligibility: a reservation outside the window does NOT
- *     pre-empt; the chain falls back to ADR-0062's static order.
+ *     pre-empt; the chain falls back to ADR-0062's static order
+ *     (post-ADR-0078: walkIn > reservation).
  *   - boundary at `grace = +∞`: any reservation always wins.
  *   - boundary at `grace = 0` with all `appointmentAt = null`:
  *     identical to {@link firstLaneWithWaiting}.
@@ -36,7 +38,7 @@ const GRACE_0 = Temporal.Duration.from({ seconds: 0 })
 
 const issueOne = (opts: {
   seq: number
-  lane: "walkIn" | "priority" | "reservation"
+  lane: "walkIn" | "reservation"
   appointmentAt: Temporal.Instant | null
   idHint?: TicketId
 }) => {
@@ -67,15 +69,14 @@ const arbInstantInWindow = (windowMin: number): fc.Arbitrary<Temporal.Instant> =
     .map((deltaMs) => NOW.add({ milliseconds: deltaMs }))
 
 describe("ADR-0067 firstLaneWithCallable — EDF eligibility", () => {
-  it("eligible reservation wins over priority and walkIn heads", () => {
+  it("eligible reservation wins over walkIn heads", () => {
     fc.assert(
       fc.property(
         arbInstantInWindow(4), // appointmentAt within ±4min of NOW (well inside 5min grace)
         (apptAt) => {
           const wkr = issueOne({ seq: 1, lane: "walkIn", appointmentAt: null })
-          const prr = issueOne({ seq: 2, lane: "priority", appointmentAt: null })
-          const rsv = issueOne({ seq: 3, lane: "reservation", appointmentAt: apptAt })
-          const snap = snapshotOf(wkr.ticket, prr.ticket, rsv.ticket)
+          const rsv = issueOne({ seq: 2, lane: "reservation", appointmentAt: apptAt })
+          const snap = snapshotOf(wkr.ticket, rsv.ticket)
           expect(firstLaneWithCallable(snap, NOW, GRACE_5)).toBe("reservation")
         },
       ),
@@ -83,17 +84,16 @@ describe("ADR-0067 firstLaneWithCallable — EDF eligibility", () => {
     )
   })
 
-  it("ineligible reservation falls back to the priority-then-walkIn chain", () => {
+  it("ineligible reservation falls back to the walkIn chain", () => {
     fc.assert(
       fc.property(
         // appointmentAt 6..120 minutes in the future — outside 5min grace
         fc.integer({ min: 6, max: 120 }).map((m) => NOW.add({ minutes: m })),
         (apptAt) => {
           const wkr = issueOne({ seq: 1, lane: "walkIn", appointmentAt: null })
-          const prr = issueOne({ seq: 2, lane: "priority", appointmentAt: null })
-          const rsv = issueOne({ seq: 3, lane: "reservation", appointmentAt: apptAt })
-          const snap = snapshotOf(wkr.ticket, prr.ticket, rsv.ticket)
-          expect(firstLaneWithCallable(snap, NOW, GRACE_5)).toBe("priority")
+          const rsv = issueOne({ seq: 2, lane: "reservation", appointmentAt: apptAt })
+          const snap = snapshotOf(wkr.ticket, rsv.ticket)
+          expect(firstLaneWithCallable(snap, NOW, GRACE_5)).toBe("walkIn")
         },
       ),
       { numRuns: numRuns(50, 200) },
@@ -119,12 +119,12 @@ describe("ADR-0067 firstLaneWithCallable — EDF eligibility", () => {
 
   it("at grace = 0 with all appointmentAt = null, behaves identically to firstLaneWithWaiting", () => {
     fc.assert(
-      fc.property(fc.boolean(), fc.boolean(), (hasPriority, hasWalkIn) => {
+      fc.property(fc.boolean(), fc.boolean(), (hasWalkIn, hasReservation) => {
         const tickets = [
-          ...(hasPriority
-            ? [issueOne({ seq: 1, lane: "priority", appointmentAt: null }).ticket]
+          ...(hasWalkIn ? [issueOne({ seq: 1, lane: "walkIn", appointmentAt: null }).ticket] : []),
+          ...(hasReservation
+            ? [issueOne({ seq: 2, lane: "reservation", appointmentAt: null }).ticket]
             : []),
-          ...(hasWalkIn ? [issueOne({ seq: 2, lane: "walkIn", appointmentAt: null }).ticket] : []),
         ]
         const snap = snapshotOf(...tickets)
         expect(firstLaneWithCallable(snap, NOW, GRACE_0)).toBe(firstLaneWithWaiting(snap))

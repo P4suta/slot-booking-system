@@ -22,6 +22,7 @@
 // avoids a `$lib/paraglide/...` alias that doesn't actually exist
 // (paraglide compiles to `src/paraglide/`, sibling to `src/lib/`).
 import * as m from "../paraglide/messages.js"
+import type { QueueFeedState } from "./api.js"
 
 export { m }
 
@@ -95,4 +96,45 @@ export const helpText = (ctx: HelpContext): string => {
     case "slotPicker":
       return m.help_slotPicker()
   }
+}
+
+export const feedStatusLabel = (state: QueueFeedState): string => {
+  switch (state) {
+    case "open":
+      return m.feed_status_open()
+    case "connecting":
+      return m.feed_status_connecting()
+    case "reconnecting":
+      return m.feed_status_reconnecting()
+    case "closed":
+      return m.feed_status_closed()
+  }
+}
+
+export const feedStatusContextLabel = (): string => m.feed_status_label()
+
+export type StepperStepKey = "received" | "reserved" | "arrived" | "called" | "served"
+
+export const stepperStepLabel = (key: StepperStepKey): string => {
+  switch (key) {
+    case "received":
+      return m.stepper_step_received()
+    case "reserved":
+      return m.stepper_step_reserved()
+    case "arrived":
+      return m.stepper_step_arrived()
+    case "called":
+      return m.stepper_step_called()
+    case "served":
+      return m.stepper_step_served()
+  }
+}
+
+export const stepperTerminalLabel = (
+  state: "Cancelled" | "NoShow",
+  reason: string | null | undefined,
+): string => {
+  if (state === "NoShow") return m.stepper_terminal_noshow()
+  if (reason === "appointment_lapsed") return m.stepper_terminal_appointment_lapsed()
+  return m.stepper_terminal_cancelled()
 }

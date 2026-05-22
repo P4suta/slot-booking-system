@@ -80,6 +80,7 @@ the transition is a named event rather than an attribute update.
 
 - `packages/core/src/domain/queue/Ticket.ts`:
   - New `OverdueSchema` variant:
+
     ```ts
     state: Schema.Literal("Overdue"),
     calledAt: Instant,
@@ -88,21 +89,26 @@ the transition is a named event rather than an attribute update.
     lastNudgedAt: Schema.NullOr(InstantSchema),
     nudgeCount: Schema.Number,  // 0 at MoveToOverdue, incremented per Nudge
     ```
+
   - `TicketState` adds `"Overdue"`. Terminal set is unchanged.
 
 - `packages/core/src/domain/queue/TicketEvent.ts`:
   - New `MovedToOverdueEventSchema`:
+
     ```ts
     type: "MovedToOverdue",
     overdueBy: Actor,  // always "system" in practice; field for shape uniformity
     ```
+
   - New `NudgedEventSchema`:
+
     ```ts
     type: "Nudged",
     nudgedBy: Actor,             // always "system"
     nudgeCount: Schema.Number,   // value AFTER increment (1, 2, 3, …)
     channel: Schema.Literal("ws", "push"),  // ws in Phase 1, push in Phase 2
     ```
+
   - Both added to the top-level union and the
     `ALL_TICKET_EVENT_TYPES` list.
 

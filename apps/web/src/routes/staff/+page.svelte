@@ -2,53 +2,82 @@
   import { onDestroy, onMount } from "svelte"
   import {
     type ApiResult,
-    callBatch,
-    callNext,
     callSpecific,
     connectQueueFeed,
-    type Lane,
     markNoShow,
     markServed,
     type QueueFeedHandle,
     type QueueFeedState,
     recall,
-    reorder,
     staffCancel,
     staffShopState,
     type Ticket,
   } from "$lib/api.js"
   import Button from "$lib/components/Button.svelte"
   import Card from "$lib/components/Card.svelte"
-  import Dialog from "$lib/components/Dialog.svelte"
+  import StateStepper from "$lib/components/StateStepper.svelte"
   import Toast from "$lib/components/Toast.svelte"
-  import { emptyState } from "$lib/messages.js"
+  import {
+    emptyState,
+    errorMessage,
+    feedStatusContextLabel,
+    feedStatusLabel,
+    m,
+  } from "$lib/messages.js"
+  import {
+    clearStaffSession,
+    persistStaffSession,
+    readStoredSession,
+    type StaffSession,
+  } from "$lib/staffSession.js"
 
-  type LaneFilter = "all" | Lane
+  type ToastVariant = "info" | "success" | "warning" | "danger"
+  type ToastState = {
+    message: string
+    variant?: ToastVariant
+    undoLabel?: string
+    onUndo?: () => void
+  }
 
   /* ---------- state ---------- */
-  let token = $state(
-    typeof window === "undefined" ? "" : (localStorage.getItem("queue.staffToken") ?? ""),
-  )
-  let authenticated = $state(token.length > 0)
-  let waitingCount = $state(0)
-  let waiting: ReadonlyArray<Ticket> = $state([])
-  let calling: ReadonlyArray<Ticket> = $state([])
-  let overdueList: ReadonlyArray<Ticket> = $state([])
-  let done: Ticket[] = $state([])
+  // Two distinct concerns, deliberately kept apart so a future
+  // refactor cannot collapse them:
+  //
+  //   - `formToken` mirrors the login form input via `bind:value`.
+  //     It exists only while the operator is typing. Setting it is
+  //     not a session-level event.
+  //   - `session` is the credentialled-or-not flag managed by
+  //     `lib/staffSession.ts`. It transitions ONLY through
+  //     `persistStaffSession()` / `clearStaffSession()` — typing
+  //     into the form cannot reach it. SSR has no localStorage
+  //     access so the initial value is always `anonymous`; the
+  //     `onMount` bootstrap is what picks up a prior session.
+  let formToken = $state("")
+  let session = $state<StaffSession>({ kind: "anonymous" })
+  const authenticated = $derived(session.kind === "authenticated")
+  // Helper: read the current token AT CALL TIME from session. Used
+  // instead of a `$derived` to avoid any read-ordering pitfall
+  // between writes to `session` and immediate REST calls. If the
+  // session is anonymous the helper returns "" — callers MUST treat
+  // an empty token as "don't call the staff API" because the
+  // `/api/v1/queue` route silently degrades to the anonymous
+  // projection (no `terminal`, no PII on tickets) when the header
+  // is missing, which would deserialize into the staff-shaped type
+  // as `undefined` fields and crash the card render.
+  const currentToken = (): string =>
+    session.kind === "authenticated" ? session.token : ""
+  let waiting = $state<ReadonlyArray<Ticket>>([])
+  let calling = $state<ReadonlyArray<Ticket>>([])
+  let overdueList = $state<ReadonlyArray<Ticket>>([])
+  let done = $state<ReadonlyArray<Ticket>>([])
   let busy = $state(false)
-  let error: string | null = $state(null)
+  let error = $state<string | null>(null)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
   let prevWaitingCount: number | null = null
-  let laneFilter: LaneFilter = $state("all")
   let search = $state("")
-  let batchN = $state(1)
-  let selected: Set<string> = $state(new Set())
-  let detail: Ticket | null = $state(null)
-  let toast: { message: string; variant?: "info" | "success" | "warning" | "danger"; undoLabel?: string; onUndo?: () => void } | null = $state(null)
-  let audioCue = $state(
-    typeof window === "undefined" ? false : localStorage.getItem("queue.audioCue") === "1",
-  )
+  let expanded = $state<Set<string>>(new Set())
+  let toast = $state<ToastState | null>(null)
   let now = $state(Date.now())
   let slotChipTick: ReturnType<typeof setInterval> | undefined
 
@@ -67,29 +96,101 @@
     return "future"
   }
 
+  // Render-time canary: the API type pins nameKana/phoneLast4 as
+  // non-empty strings (the server's `IssueTicketBodySchema` rejects
+  // empty + missing inputs, and `TicketSchema` does the same on
+  // every read), so an empty value here means a code path elsewhere
+  // bypassed the boundary. We surface it loudly rather than silently
+  // rendering a blank field — a silent blank is the worst outcome:
+  // the operator sees the same chrome as a valid card and never
+  // learns there is a data-quality bug to investigate.
+  const isPiiMissing = (value: string): boolean => value.length === 0
+
+  // Staff-facing state names. The customer-facing /ticket page uses
+  // friendlier phrasings ("お待ちください" / "応答をお願いします")
+  // because those are sentences directed AT the customer; here they
+  // are status indicators read BY the operator, so we stick to short
+  // labels that match the state-tally chips for visual consistency.
+  const stateLabel = (state: Ticket["state"]): string => {
+    switch (state) {
+      case "Waiting":
+        return m.staff_card_state_waiting()
+      case "Called":
+        return m.staff_card_state_called()
+      case "Overdue":
+        return m.staff_card_state_overdue()
+      case "Served":
+        return m.staff_card_state_served()
+      case "NoShow":
+        return m.staff_card_state_noshow()
+      case "Cancelled":
+        return m.staff_card_state_cancelled()
+    }
+  }
+
   /* ---------- derived ---------- */
-  const filteredWaiting = $derived.by(() => {
-    let list = waiting
-    if (laneFilter !== "all") list = list.filter((t) => t.lane === laneFilter)
+  // Active list — staff sees one stream of tickets that need attention,
+  // ordered by urgency: Called (currently being attended) → Overdue
+  // (needs an answer) → Waiting (head-of-chain). Server gives them as
+  // three arrays; we concatenate via Array#concat (defensive against a
+  // historical render mismatch where the spread `[...callerProxy]`
+  // failed to iterate the reactive proxy in some HMR transitions).
+  // Each slice is already sorted per ADR-0062/0065/0067 within itself.
+  const filteredActive = $derived.by(() => {
+    let list: ReadonlyArray<Ticket> = ([] as ReadonlyArray<Ticket>).concat(
+      calling,
+      overdueList,
+      waiting,
+    )
     const q = search.trim().toLowerCase()
     if (q.length > 0) {
       list = list.filter(
-        (t) =>
-          (t.nameKana ?? "").toLowerCase().includes(q) ||
-          (t.phoneLast4 ?? "") === q,
+        (t) => t.nameKana.toLowerCase().includes(q) || t.phoneLast4 === q,
       )
     }
     return list
   })
-  const selectionCount = $derived(selected.size)
+  const totalActive = $derived(calling.length + overdueList.length + waiting.length)
 
   /* ---------- refresh ---------- */
+  // Response-shape guard: the staff-only path returns a `terminal`
+  // field; the anonymous fallback does not. If the field is absent
+  // it means the request fired without a valid token (the server
+  // happily degrades to the anonymous projection rather than 4xx-ing
+  // on a missing header), so we treat it as an auth failure rather
+  // than blindly assigning `undefined` arrays into the staff-shaped
+  // state — which used to crash the card render via
+  // `t.nameKana.length` on `nameKana: undefined`.
+  const isStaffResponse = (
+    value: unknown,
+  ): value is { readonly terminal: readonly Ticket[] } =>
+    typeof value === "object" &&
+    value !== null &&
+    "terminal" in value &&
+    Array.isArray((value as { terminal: unknown }).terminal)
+
   const refresh = async (): Promise<void> => {
+    const token = currentToken()
+    if (token.length === 0) {
+      // No credential to refresh against — let the bootstrap /
+      // onLogin path own the first call. Bailing here avoids the
+      // anonymous-degrade pitfall described above.
+      return
+    }
     try {
       const r = await staffShopState(token)
       if (!r.ok) {
-        error = `refresh: ${r.error._tag}`
+        error = m.staff_refresh_error_template({ reason: errorMessage(r.error._tag) })
         if (r.error._tag === "MissingStaffCapability") onLogout()
+        return
+      }
+      if (!isStaffResponse(r.value)) {
+        // The server returned the anonymous projection. The stored
+        // token is no longer accepted (rotated secret, etc.) — force
+        // a logout so the operator sees the login form rather than
+        // a half-broken dashboard.
+        error = m.staff_session_expired()
+        onLogout()
         return
       }
       const nextCount = r.value.waitingCount
@@ -97,21 +198,28 @@
         notifyArrival(nextCount - prevWaitingCount)
       }
       prevWaitingCount = nextCount
-      waitingCount = nextCount
       waiting = r.value.waitingPreview
       calling = r.value.calling
       overdueList = r.value.overdue
       done = r.value.terminal
       error = null
     } catch (e) {
-      error = `refresh: ${String(e)}`
+      error = m.staff_refresh_error_template({
+        reason: e instanceof Error ? e.message : m.staff_error_network(),
+      })
     }
   }
 
-  /* ---------- desktop / audio cue ---------- */
+  /* ---------- arrival cue (always on; the staff hears a soft chime
+   * + receives a desktop notification when a new ticket arrives in
+   * the background). The cue is for the operator at the desk, not for
+   * the customer, so an accidental top-bar tap should not silence it. */
   const notifyArrival = (delta: number): void => {
-    const body = delta === 1 ? "新しい順番待ちが追加されました" : `${delta}件の新規順番待ち`
-    if (audioCue && typeof window !== "undefined") {
+    const body =
+      delta === 1
+        ? m.staff_notify_arrival_one()
+        : m.staff_notify_arrival_multi({ count: String(delta) })
+    if (typeof window !== "undefined") {
       try {
         const ctx = new AudioContext()
         const o = ctx.createOscillator()
@@ -133,7 +241,7 @@
     if (Notification.permission !== "granted") return
     if (typeof document !== "undefined" && !document.hidden) return
     try {
-      new Notification("店舗管理", { body, tag: "queue-new-arrival" })
+      new Notification(m.staff_notify_title(), { body, tag: "queue-new-arrival" })
     } catch {
       // mobile Safari: outside ServiceWorker context — silent
     }
@@ -173,133 +281,160 @@
     try {
       const r = await fn()
       if (!r.ok) {
-        error = `${label}: ${r.error._tag} (${r.error.code})`
+        const msg = m.staff_action_error_template({
+          label,
+          reason: errorMessage(r.error._tag),
+        })
+        error = msg
         if (r.error._tag === "MissingStaffCapability") {
           onLogout()
           return
         }
-        showToast(`${label} 失敗 (${r.error._tag})`, "danger")
+        showToast(msg, "danger")
         return
       }
       onSuccess?.(r.value)
     } catch (e) {
-      error = `${label}: ${e instanceof Error ? e.message : String(e)}`
+      error = m.staff_action_error_template({
+        label,
+        reason: e instanceof Error ? e.message : m.staff_error_network(),
+      })
     } finally {
       busy = false
     }
     void refresh()
   }
 
-  const showToast = (message: string, variant?: "info" | "success" | "warning" | "danger", undoLabel?: string, onUndo?: () => void) => {
+  const showToast = (
+    message: string,
+    variant?: ToastVariant,
+    undoLabel?: string,
+    onUndo?: () => void,
+  ): void => {
     toast = { message, variant, undoLabel, onUndo }
   }
 
   /* ---------- auth ---------- */
+  // verify-before-flip: probe the staff endpoint with the typed
+  // token before persisting. An invalid token returns a domain
+  // error which we surface inline — the dashboard never renders for
+  // a credential the server would have rejected on the next call.
   const onLogin = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
-    if (token.length === 0) return
-    localStorage.setItem("queue.staffToken", token)
-    authenticated = true
-    ensureNotificationPermission()
-    await startLiveFeed()
+    const candidate = formToken.trim()
+    if (candidate.length === 0) {
+      error = m.staff_login_token_required()
+      return
+    }
+    busy = true
+    error = null
+    try {
+      const probe = await staffShopState(candidate)
+      if (!probe.ok) {
+        error = m.staff_login_error_template({ reason: errorMessage(probe.error._tag) })
+        return
+      }
+      // The server silently degrades to the anonymous projection when
+      // `x-staff-token` is missing or wrong (200 + `ShopState` shape,
+      // no `terminal` field). A probe that came back without
+      // `terminal` therefore means the token was rejected, not that
+      // login succeeded. Surface as an inline error rather than
+      // persisting the credential — otherwise the page enters a
+      // "persist → refresh → shape-guard → logout" loop that looks
+      // to the operator like the login button reloaded the page.
+      if (!isStaffResponse(probe.value)) {
+        error = m.staff_login_error_invalid_token()
+        return
+      }
+      session = persistStaffSession(candidate)
+      formToken = ""
+      ensureNotificationPermission()
+      await startLiveFeed()
+    } catch (e) {
+      error = m.staff_login_error_template({
+        reason: e instanceof Error ? e.message : m.staff_error_network(),
+      })
+    } finally {
+      busy = false
+    }
   }
 
   const onLogout = (): void => {
-    localStorage.removeItem("queue.staffToken")
-    token = ""
-    authenticated = false
+    session = clearStaffSession()
+    formToken = ""
     feed?.close()
     feed = undefined
-    waitingCount = 0
     waiting = []
     calling = []
     overdueList = []
     done = []
-    selected = new Set()
+    expanded = new Set()
     prevWaitingCount = null
     error = null
   }
 
   /* ---------- operator actions ---------- */
-  const onCallNext = (lane?: Lane) =>
+  const onCallSpecific = (ticketId: string): Promise<void> =>
     runAction(
-      "call-next",
-      () => callNext(token, lane !== undefined ? { lane } : {}),
+      m.staff_runaction_label_call(),
+      () => callSpecific(currentToken(), ticketId),
       (v) => {
         const t = (v as { ticket: Ticket }).ticket
-        showToast(`#${t.displaySeq} を呼び出しました`, "info", "取消", () => onRecallTicket(t.id))
+        showToast(
+          m.staff_toast_called_template({ displaySeq: String(t.displaySeq) }),
+          "info",
+          m.staff_toast_undo_label(),
+          () => onRecallTicket(t.id),
+        )
       },
     )
 
-  const onCallSpecific = (ticketId: string) =>
+  const onMarkServed = (ticketId: string): Promise<void> =>
     runAction(
-      "call-specific",
-      () => callSpecific(token, ticketId),
-      (v) => {
-        const t = (v as { ticket: Ticket }).ticket
-        showToast(`#${t.displaySeq} を呼び出しました`, "info", "取消", () => onRecallTicket(t.id))
-      },
+      m.staff_runaction_label_serve(),
+      () => markServed(currentToken(), ticketId),
+      () => showToast(m.staff_toast_served(), "success"),
     )
 
-  const onCallBatch = () => {
-    const ids = Array.from(selected)
-    if (ids.length === 0) return
-    void runAction(
-      "call-batch",
-      () => callBatch(token, ids),
-      () => {
-        showToast(`${ids.length} 件をまとめて呼び出しました`, "info")
-        selected = new Set()
-      },
+  const onMarkNoShow = (ticketId: string): Promise<void> =>
+    runAction(
+      m.staff_runaction_label_noshow(),
+      () => markNoShow(currentToken(), ticketId),
+      () => showToast(m.staff_toast_noshow(), "warning"),
     )
-  }
 
-  const onCallNextBatch = () => {
-    const ids = filteredWaiting.slice(0, batchN).map((t) => t.id)
-    if (ids.length === 0) return
-    void runAction(
-      "call-next-batch",
-      () => callBatch(token, ids),
-      () => showToast(`${ids.length} 件を順次呼び出しました`, "info"),
+  const onRecallTicket = (ticketId: string): Promise<void> =>
+    runAction(
+      m.staff_runaction_label_recall(),
+      () => recall(currentToken(), ticketId),
+      () => showToast(m.staff_toast_recalled(), "info"),
     )
-  }
 
-  const onMarkServed = (ticketId: string) =>
-    runAction("mark-served", () => markServed(token, ticketId), () => showToast("対応完了", "success"))
+  const onStaffCancel = (ticketId: string): Promise<void> =>
+    runAction(
+      m.staff_runaction_label_cancel(),
+      () => staffCancel(currentToken(), ticketId, "staff-cancel"),
+      () => showToast(m.staff_toast_cancelled(), "warning"),
+    )
 
-  const onMarkNoShow = (ticketId: string) =>
-    runAction("mark-no-show", () => markNoShow(token, ticketId), () => showToast("不在 (NoShow) に記録", "warning"))
-
-  const onRecallTicket = (ticketId: string) =>
-    runAction("recall", () => recall(token, ticketId), () => showToast("取り消しました", "info"))
-
-  const onStaffCancel = (ticketId: string) =>
-    runAction("cancel", () => staffCancel(token, ticketId, "staff-cancel"), () => showToast("キャンセル", "warning"))
-
-  const onReorderToHead = (ticketId: string) =>
-    runAction("reorder", () => reorder(token, { ticketId, afterTicketId: null }), () => showToast("先頭に移動", "info"))
-
-  /* ---------- selection ---------- */
-  const toggleSelect = (id: string, event?: MouseEvent) => {
-    const next = new Set(selected)
-    if (event?.shiftKey === true) {
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-    } else {
-      next.clear()
-      next.add(id)
-    }
-    selected = next
-  }
-
-  const onAudioToggle = () => {
-    audioCue = !audioCue
-    localStorage.setItem("queue.audioCue", audioCue ? "1" : "0")
+  /* ---------- expansion ---------- */
+  const toggleExpand = (id: string): void => {
+    const next = new Set(expanded)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    expanded = next
   }
 
   /* ---------- lifecycle ---------- */
   onMount(async () => {
-    if (authenticated) {
+    // Bootstrap: SSR cannot read localStorage, so the page always
+    // mounts with `session = anonymous`. Pick up a prior credential
+    // here. The page state below the {#if authenticated} branch
+    // never sees a transient "anonymous → authenticated" flicker
+    // because the re-render happens before the user can interact.
+    const stored = readStoredSession()
+    if (stored.kind === "authenticated") {
+      session = stored
       ensureNotificationPermission()
       await startLiveFeed()
     }
@@ -316,239 +451,259 @@
 </script>
 
 <svelte:head>
-  <title>店舗管理 — 整理券</title>
+  <title>{m.staff_title()}</title>
   <meta name="robots" content="noindex" />
 </svelte:head>
 
 {#if !authenticated}
   <section class="login">
     <Card>
-      <h1>担当者ログイン</h1>
+      <h1>{m.staff_login_h1()}</h1>
       <form onsubmit={onLogin}>
         <label class="field">
-          <span class="label">担当者トークン</span>
-          <input type="password" bind:value={token} required autocomplete="off" />
+          <span class="label">{m.staff_login_token_label()}</span>
+          <input
+            type="password"
+            bind:value={formToken}
+            required
+            autocomplete="off"
+            disabled={busy}
+          />
         </label>
-        <Button type="submit" size="lg" fullWidth>ログイン</Button>
+        {#if error !== null}
+          <p class="login-error" role="alert">{error}</p>
+        {/if}
+        <Button type="submit" size="lg" fullWidth disabled={busy}>
+          {busy ? m.staff_login_submit_busy() : m.staff_login_submit()}
+        </Button>
       </form>
     </Card>
   </section>
 {:else}
-  <div class="staff">
-    <!-- top bar -->
-    <header class="topbar">
-      <div class="lane-chips" role="tablist" aria-label="lane filter">
-        {#each ["all", "walkIn", "priority", "reservation"] as filter}
-          <button
-            type="button"
-            role="tab"
-            class="chip"
-            data-active={laneFilter === filter ? "true" : undefined}
-            onclick={() => (laneFilter = filter as LaneFilter)}
-          >
-            {filter === "all" ? "全部" : filter === "priority" ? "優先" : filter === "reservation" ? "予約" : "通常"}
-          </button>
-        {/each}
+  <!-- page header: full-bleed, sticky, tinted so the staff knows at a
+       glance which screen they are on (this is the operator side, not
+       the customer landing). Identifier row shows 店舗管理 + system
+       subtitle, action row carries search + logout. -->
+  <header class="staff-header">
+    <div class="staff-header-inner">
+      <div class="staff-header-identity-row">
+        <div class="staff-header-identity">
+          <span class="staff-header-screen">{m.staff_header_screen()}</span>
+          <span class="staff-header-subtitle">{m.staff_header_subtitle()}</span>
+        </div>
+        <span
+          class="feed-status"
+          data-state={feedState}
+          role="status"
+          aria-live="polite"
+        >
+          <span class="feed-status-dot" aria-hidden="true"></span>
+          <span class="feed-status-text">
+            {feedStatusContextLabel()}: {feedStatusLabel(feedState)}
+          </span>
+        </span>
       </div>
-      <input
-        type="search"
-        bind:value={search}
-        placeholder="名前 (一部) / 末尾4桁"
-        class="search"
-      />
-      <div class="batch">
-        <input type="number" bind:value={batchN} min="1" max="20" />
-        <Button variant="secondary" size="md" onclick={onCallNextBatch}>{batchN} 人呼ぶ</Button>
-      </div>
-      <div class="meta">
-        <span class="dot" data-state={feedState} aria-label={`feed: ${feedState}`}></span>
-        <Button variant="ghost" size="md" onclick={onAudioToggle} aria-label="audio cue">
-          {audioCue ? "🔔" : "🔕"}
+      <div class="staff-header-action-row">
+        <input
+          type="search"
+          bind:value={search}
+          placeholder={m.staff_search_placeholder()}
+          class="search"
+          aria-label={m.staff_search_aria_label()}
+        />
+        <Button variant="ghost" size="md" onclick={onLogout}>
+          {m.staff_logout_button()}
         </Button>
-        <Button variant="ghost" size="md" onclick={onLogout}>ログアウト</Button>
       </div>
-    </header>
+    </div>
+  </header>
 
+  <div class="staff">
     {#if error !== null}
       <p class="error" role="alert">{error}</p>
     {/if}
 
-    <!-- 4-column kanban -->
-    <div class="kanban">
-      <section class="col">
-        <header><h2>待機 ({filteredWaiting.length} / {waitingCount})</h2></header>
-        <div class="cards">
-          {#each filteredWaiting as t (t.id)}
-            <Card interactive>
-              <div
-                class="ticket"
-                role="button"
-                tabindex="0"
-                aria-pressed={selected.has(t.id)}
-                data-selected={selected.has(t.id) ? "true" : undefined}
-                onclick={(e) => toggleSelect(t.id, e)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault()
-                    detail = t
-                  }
-                }}
-                ondblclick={() => (detail = t)}
+    <!-- main: one list of all active tickets, ordered Called → Overdue
+         → Waiting (each slice already sorted per ADR-0062/0065/0067). -->
+    <section class="active">
+      <header class="section-header">
+        <h2>
+          {m.staff_section_active_title({
+            filtered: String(filteredActive.length),
+            total: String(totalActive),
+          })}
+        </h2>
+      </header>
+
+      <div class="cards">
+        {#each filteredActive as t (t.id)}
+          <Card>
+            <article
+              class="ticket"
+              data-state={t.state}
+              data-expanded={expanded.has(t.id) ? "true" : undefined}
+            >
+              <button
+                type="button"
+                class="ticket-summary"
+                aria-expanded={expanded.has(t.id)}
+                aria-label={m.staff_card_actions_aria_label()}
+                onclick={() => toggleExpand(t.id)}
               >
-                <div class="ticket-head">
+                <div class="ticket-headline">
                   <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
+                  <span class="name">
+                    {#if isPiiMissing(t.nameKana)}
+                      <span class="value-missing" title={m.staff_pii_missing_name_tooltip()}>
+                        {m.staff_pii_missing_label()}
+                      </span>
+                    {:else}
+                      {t.nameKana}
+                    {/if}
+                  </span>
+                  <span class="phone">
+                    {#if isPiiMissing(t.phoneLast4)}
+                      <span class="value-missing" title={m.staff_pii_missing_phone_tooltip()}>
+                        {m.staff_pii_missing_label()}
+                      </span>
+                    {:else}
+                      {t.phoneLast4}
+                    {/if}
+                  </span>
+                </div>
+                {#if t.freeText !== null && t.freeText !== undefined && t.freeText.length > 0}
+                  <p class="freeText">{t.freeText}</p>
+                {/if}
+                <div class="ticket-meta">
                   {#if t.appointmentAt !== null}
                     <span class="slot-chip" data-time-state={slotChipState(t.appointmentAt)}>
-                      {t.appointmentAt.slice(11, 16)}
+                      {m.staff_card_appointment_prefix({ time: t.appointmentAt.slice(11, 16) })}
                     </span>
                   {/if}
+                  <span class="state-current-label state-{t.state}">{stateLabel(t.state)}</span>
                 </div>
-                <div class="ticket-body">
-                  <span class="kana">{t.nameKana ?? ""}</span>
-                  <span class="last4">{t.phoneLast4 ?? ""}</span>
+                <div class="ticket-progress">
+                  <StateStepper ticket={t} variant="compact" />
                 </div>
-              </div>
-            </Card>
-          {/each}
-          {#if filteredWaiting.length === 0}
-            <p class="empty">{emptyState("waiting")}</p>
-          {/if}
-        </div>
-      </section>
-
-      <section class="col">
-        <header><h2>呼び出し中 ({calling.length})</h2></header>
-        <div class="cards">
-          {#each calling as t (t.id)}
-            <Card>
-              <div class="ticket" role="group" aria-label="called ticket">
-                <div class="ticket-head">
-                  <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
-                  {#if t.appointmentAt !== null}
-                    <span class="slot-chip" data-time-state={slotChipState(t.appointmentAt)}>
-                      {t.appointmentAt.slice(11, 16)}
-                    </span>
+              </button>
+              {#if expanded.has(t.id)}
+                <div class="ticket-actions">
+                  {#if t.state === "Waiting"}
+                    <Button
+                      variant="primary"
+                      size="md"
+                      disabled={busy}
+                      onclick={() => onCallSpecific(t.id)}
+                    >
+                      {m.staff_action_call()}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="md"
+                      disabled={busy}
+                      onclick={() => onStaffCancel(t.id)}
+                    >
+                      {m.common_cancel()}
+                    </Button>
+                  {:else if t.state === "Called" || t.state === "Overdue"}
+                    <Button
+                      variant="primary"
+                      size="md"
+                      disabled={busy}
+                      onclick={() => onMarkServed(t.id)}
+                    >
+                      {m.staff_action_serve()}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="md"
+                      disabled={busy}
+                      onclick={() => onMarkNoShow(t.id)}
+                    >
+                      {m.staff_action_noshow()}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="md"
+                      disabled={busy}
+                      onclick={() => onRecallTicket(t.id)}
+                    >
+                      {m.staff_action_recall()}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="md"
+                      disabled={busy}
+                      onclick={() => onStaffCancel(t.id)}
+                    >
+                      {m.common_cancel()}
+                    </Button>
                   {/if}
                 </div>
-                <div class="ticket-body">
-                  <span class="kana">{t.nameKana ?? ""}</span>
-                  <span class="last4">{t.phoneLast4 ?? ""}</span>
-                </div>
-                <div class="row">
-                  <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
-                  <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>不在</Button>
-                  <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>取消</Button>
-                  <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>キャンセル</Button>
-                </div>
-              </div>
-            </Card>
-          {/each}
-          {#if calling.length === 0}
-            <p class="empty">{emptyState("calling")}</p>
-          {/if}
-        </div>
-      </section>
-
-      <section class="col">
-        <header><h2>応答待ち ({overdueList.length})</h2></header>
-        <div class="cards">
-          {#each overdueList as t (t.id)}
-            <Card>
-              <div class="ticket overdue" role="group" aria-label="overdue ticket">
-                <div class="ticket-head">
-                  <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane lane-{t.lane}">{t.lane === "priority" ? "優先" : t.lane === "reservation" ? "予約" : "通常"}</span>
-                  {#if t.nudgeCount !== undefined && t.nudgeCount > 0}
-                    <span class="nudge-badge" aria-label="nudge count">{t.nudgeCount}回催促</span>
-                  {/if}
-                  {#if t.appointmentAt !== null}
-                    <span class="slot-chip" data-time-state={slotChipState(t.appointmentAt)}>
-                      {t.appointmentAt.slice(11, 16)}
-                    </span>
-                  {/if}
-                </div>
-                <div class="ticket-body">
-                  <span class="kana">{t.nameKana ?? ""}</span>
-                  <span class="last4">{t.phoneLast4 ?? ""}</span>
-                </div>
-                <div class="row">
-                  <Button variant="primary" size="md" onclick={() => onMarkServed(t.id)} disabled={busy}>完了</Button>
-                  <Button variant="ghost" size="md" onclick={() => onMarkNoShow(t.id)} disabled={busy}>不在</Button>
-                  <Button variant="ghost" size="md" onclick={() => onRecallTicket(t.id)} disabled={busy}>取消</Button>
-                  <Button variant="ghost" size="md" onclick={() => onStaffCancel(t.id)} disabled={busy}>キャンセル</Button>
-                </div>
-              </div>
-            </Card>
-          {/each}
-          {#if overdueList.length === 0}
-            <p class="empty">{emptyState("overdue")}</p>
-          {/if}
-        </div>
-      </section>
-
-      <section class="col">
-        <header><h2>履歴</h2></header>
-        <div class="cards">
-          {#each done.slice(0, 8) as t (t.id)}
-            <Card>
-              <div class="ticket muted">
-                <div class="ticket-head">
-                  <span class="numeral">{t.displaySeq}</span>
-                  <span class="lane">{t.state}</span>
-                </div>
-              </div>
-            </Card>
-          {/each}
-          {#if done.length === 0}
-            <p class="empty">{emptyState("terminal")}</p>
-          {/if}
-        </div>
-      </section>
-    </div>
-
-    <!-- bottom action bar -->
-    {#if selectionCount > 0}
-      <footer class="action-bar">
-        <span>{selectionCount} 件選択</span>
-        <Button variant="primary" onclick={onCallBatch} disabled={busy}>{selectionCount} 件呼ぶ</Button>
-        <Button variant="ghost" onclick={() => (selected = new Set())}>選択解除</Button>
-      </footer>
-    {/if}
-
-    <!-- detail drawer (Dialog) -->
-    <Dialog
-      bind:open={() => detail !== null, (v) => { if (!v) detail = null }}
-      title={detail !== null ? `#${detail.displaySeq} 詳細` : ""}
-      onClose={() => (detail = null)}
-    >
-      {#if detail !== null}
-        <dl class="detail">
-          <dt>state</dt><dd>{detail.state}</dd>
-          <dt>lane</dt><dd>{detail.lane}</dd>
-          <dt>seq</dt><dd>{detail.seq}</dd>
-          <dt>displaySeq</dt><dd>{detail.displaySeq}</dd>
-          <dt>name</dt><dd>{detail.nameKana ?? ""}</dd>
-          <dt>last4</dt><dd>{detail.phoneLast4 ?? ""}</dd>
-          {#if detail.freeText !== null && detail.freeText !== undefined}
-            <dt>用件</dt><dd>{detail.freeText}</dd>
-          {/if}
-        </dl>
-      {/if}
-      {#snippet actions()}
-        {#if detail !== null}
-          {#if detail.state === "Waiting"}
-            <Button variant="primary" onclick={() => detail !== null && onCallSpecific(detail.id)}>個別呼び出し</Button>
-            <Button variant="secondary" onclick={() => detail !== null && onReorderToHead(detail.id)}>先頭に移動</Button>
-          {/if}
-          <Button variant="ghost" onclick={() => (detail = null)}>閉じる</Button>
+              {/if}
+            </article>
+          </Card>
+        {/each}
+        {#if filteredActive.length === 0}
+          <p class="empty">
+            {totalActive === 0
+              ? m.staff_empty_active()
+              : m.staff_empty_filtered()}
+          </p>
         {/if}
-      {/snippet}
-    </Dialog>
+      </div>
+    </section>
 
-    <!-- help dialog -->
-    <!-- toast -->
+    <!-- history: read-only recent terminal tickets, muted, no actions -->
+    <section class="history">
+      <header class="section-header">
+        <h2>{m.staff_section_history_title({ count: String(done.length) })}</h2>
+      </header>
+      <div class="cards">
+        {#each done.slice(0, 8) as t (t.id)}
+          <Card>
+            <article class="ticket muted" data-state={t.state}>
+              <div class="ticket-headline">
+                <span class="numeral">{t.displaySeq}</span>
+                <span class="name">
+                  {#if isPiiMissing(t.nameKana)}
+                    <span class="value-missing" title={m.staff_pii_missing_name_tooltip()}>
+                      {m.staff_pii_missing_label()}
+                    </span>
+                  {:else}
+                    {t.nameKana}
+                  {/if}
+                </span>
+                <span class="phone">
+                  {#if isPiiMissing(t.phoneLast4)}
+                    <span class="value-missing" title={m.staff_pii_missing_phone_tooltip()}>
+                      {m.staff_pii_missing_label()}
+                    </span>
+                  {:else}
+                    {t.phoneLast4}
+                  {/if}
+                </span>
+              </div>
+              <div class="ticket-meta">
+                {#if t.appointmentAt !== null}
+                  <span class="slot-chip" data-time-state={slotChipState(t.appointmentAt)}>
+                    {m.staff_card_appointment_prefix({ time: t.appointmentAt.slice(11, 16) })}
+                  </span>
+                {/if}
+                <span class="state-current-label state-{t.state}">{stateLabel(t.state)}</span>
+              </div>
+              <div class="ticket-progress">
+                <StateStepper ticket={t} variant="compact" />
+              </div>
+            </article>
+          </Card>
+        {/each}
+        {#if done.length === 0}
+          <p class="empty">{emptyState("terminal")}</p>
+        {/if}
+      </div>
+    </section>
+
     {#if toast !== null}
       <div class="toast-host">
         <Toast
@@ -573,6 +728,14 @@
     font: var(--text-numeral-md);
     margin: 0 0 var(--space-4);
   }
+  .login-error {
+    background: oklch(95% 0.05 25);
+    color: var(--color-state-danger);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    margin: 0 0 var(--space-4);
+    font: var(--text-body-sm);
+  }
   .field {
     display: flex;
     flex-direction: column;
@@ -592,64 +755,106 @@
   }
   .staff {
     padding: var(--space-4);
+    max-width: 56rem;
+    margin: 0 auto;
   }
-  .topbar {
+  /* full-bleed sticky page header — gives the staff a constant
+   * "you are on the operator screen" cue, even after they scroll the
+   * card list. Tinted background distinguishes it from the customer-
+   * facing pages, which use the bare layout chrome. */
+  .staff-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: oklch(95% 0.025 250 / 92%);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--color-border-subtle);
+    box-shadow: var(--shadow-sm);
+  }
+  .staff-header-inner {
+    max-width: 56rem;
+    margin: 0 auto;
+    padding: var(--space-3) var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .staff-header-identity-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .staff-header-identity {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .staff-header-screen {
+    font: var(--text-numeral-md);
+    color: var(--color-fg-primary);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .staff-header-subtitle {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+  }
+  .staff-header-action-row {
     display: flex;
     align-items: center;
     gap: var(--space-3);
     flex-wrap: wrap;
-    margin-bottom: var(--space-4);
   }
-  .lane-chips {
-    display: flex;
+  .feed-status {
+    display: inline-flex;
+    align-items: center;
     gap: var(--space-2);
-  }
-  .chip {
-    background: transparent;
-    color: var(--color-fg-secondary);
-    border: 1px solid var(--color-border-subtle);
+    padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-pill);
-    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     font: var(--text-label-sm);
+    color: var(--color-fg-secondary);
   }
-  .chip[data-active="true"] {
-    background: var(--color-fg-primary);
-    color: var(--color-bg-surface);
-    border-color: transparent;
+  .feed-status-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-fg-muted);
+    flex-shrink: 0;
+  }
+  .feed-status[data-state="open"] {
+    background: oklch(95% 0.07 145 / 50%);
+    border-color: var(--color-state-serving);
+    color: oklch(35% 0.13 145);
+  }
+  .feed-status[data-state="open"] .feed-status-dot {
+    background: var(--color-state-serving);
+  }
+  .feed-status[data-state="reconnecting"],
+  .feed-status[data-state="connecting"] {
+    background: oklch(95% 0.07 65 / 50%);
+    border-color: var(--color-state-called);
+    color: oklch(40% 0.13 65);
+  }
+  .feed-status[data-state="reconnecting"] .feed-status-dot,
+  .feed-status[data-state="connecting"] .feed-status-dot {
+    background: var(--color-state-called);
+  }
+  .feed-status[data-state="closed"] {
+    background: oklch(95% 0.05 25 / 50%);
+    border-color: var(--color-state-danger);
+    color: var(--color-state-danger);
+  }
+  .feed-status[data-state="closed"] .feed-status-dot {
+    background: var(--color-state-danger);
   }
   .search {
     flex: 1;
-    min-width: 12rem;
-  }
-  .batch {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-  }
-  .batch input {
-    width: 4rem;
-    padding: var(--space-2);
-  }
-  .meta {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-    margin-left: auto;
-  }
-  .dot {
-    width: 0.75rem;
-    height: 0.75rem;
-    border-radius: var(--radius-pill);
-    background: var(--color-fg-muted);
-  }
-  .dot[data-state="open"] {
-    background: var(--color-state-serving);
-  }
-  .dot[data-state="reconnecting"] {
-    background: var(--color-state-called);
-  }
-  .dot[data-state="closed"] {
-    background: var(--color-state-danger);
+    min-width: 14rem;
   }
   .error {
     background: oklch(95% 0.05 25);
@@ -659,25 +864,17 @@
     margin: 0 0 var(--space-4);
     font: var(--text-body-sm);
   }
-  .kanban {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: var(--space-4);
+  .active,
+  .history {
+    margin-bottom: var(--space-8);
   }
-  @container (min-width: 56rem) {
-    .kanban {
-      grid-template-columns: 1.5fr 1fr 1fr 1fr;
-    }
-  }
-  @media (min-width: 56rem) {
-    .kanban {
-      grid-template-columns: 1.5fr 1fr 1fr 1fr;
-    }
-  }
-  .col header {
+  .section-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
     margin-bottom: var(--space-3);
   }
-  .col h2 {
+  .section-header h2 {
     font: var(--text-label-md);
     margin: 0;
     color: var(--color-fg-secondary);
@@ -692,52 +889,96 @@
   .ticket {
     display: flex;
     flex-direction: column;
+    gap: var(--space-3);
+  }
+  .ticket[data-state="Called"] {
+    border-left: 4px solid var(--color-state-called);
+    padding-left: var(--space-3);
+  }
+  .ticket[data-state="Overdue"] {
+    border-left: 4px solid oklch(70% 0.18 30);
+    padding-left: var(--space-3);
+  }
+  .ticket-summary {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    text-align: left;
+    width: 100%;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-2);
   }
-  .ticket[data-selected="true"] {
+  .ticket-summary:focus-visible {
     outline: 2px solid var(--color-accent-primary);
     outline-offset: 2px;
     border-radius: var(--radius-md);
   }
-  .ticket-head {
-    display: flex;
+  /* Card head: numeral + name + phone を 1 行で大きく。
+   * 整理券番号は最大文字、 名前と末尾4桁はその右に並べて
+   * 操作者が 1m 離れた position からも読める情報密度に。 */
+  .ticket-headline {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
     align-items: baseline;
-    justify-content: space-between;
+    gap: var(--space-4);
   }
-  .numeral {
+  .ticket-headline .numeral {
     font: var(--text-numeral-md);
     font-variant-numeric: tabular-nums;
     color: var(--color-fg-primary);
+    line-height: 1;
   }
-  .lane {
+  .ticket-headline .name {
+    font: var(--text-body-lg);
+    color: var(--color-fg-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .ticket-headline .phone {
+    font: var(--text-mono-md);
+    color: var(--color-fg-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .ticket-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .ticket-progress {
+    margin-top: var(--space-1);
+  }
+  .state-current-label {
     font: var(--text-label-sm);
-    color: var(--color-fg-muted);
-    background: var(--color-bg-subtle);
-    border-radius: var(--radius-pill);
-    padding: var(--space-1) var(--space-3);
+    color: var(--color-fg-secondary);
+    font-weight: 600;
   }
-  .lane.lane-priority {
-    color: var(--color-state-called);
-    background: oklch(95% 0.05 65 / 30%);
+  .state-current-label.state-Called {
+    color: oklch(40% 0.13 65);
   }
+  .state-current-label.state-Overdue {
+    color: oklch(35% 0.18 30);
+  }
+  .state-current-label.state-Served {
+    color: oklch(35% 0.13 145);
+  }
+  /* Waiting / NoShow / Cancelled の現在地ラベルは muted のまま。
+   * stepper 内の dot / terminal glyph 色で進行は十分伝わるので、
+   * 文字色で更に主張すると history 列の muted 感と競合する。 */
   .slot-chip {
     font: var(--text-mono-sm);
     color: var(--color-fg-secondary);
     background: var(--color-bg-subtle);
     border-radius: var(--radius-pill);
     padding: var(--space-1) var(--space-3);
-  }
-  .nudge-badge {
-    font: var(--text-label-sm);
-    color: oklch(35% 0.22 25);
-    background: oklch(92% 0.13 30 / 60%);
-    border-radius: var(--radius-pill);
-    padding: var(--space-1) var(--space-3);
-    font-weight: 600;
-  }
-  .ticket.overdue {
-    border-left: 3px solid oklch(70% 0.18 30);
-    padding-left: var(--space-2);
   }
   .slot-chip[data-time-state="soon"] {
     color: oklch(40% 0.13 65);
@@ -753,17 +994,33 @@
     background: oklch(85% 0.18 25 / 70%);
     font-weight: 700;
   }
-  .ticket-body {
-    display: flex;
-    justify-content: space-between;
+  /* Canary marker — surfaces when a PII field is empty even though
+   * the API type pins it as non-empty. If this ever shows up on
+   * screen, a code path bypassed `IssueTicketBodySchema` /
+   * `TicketSchema`. Styled loud so the staff (and reviewing devs)
+   * cannot miss it. */
+  .value-missing {
+    color: var(--color-state-danger);
+    background: oklch(95% 0.05 25 / 60%);
+    border: 1px dashed var(--color-state-danger);
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-2);
+    font-style: italic;
+    font-weight: 600;
+  }
+  .freeText {
+    margin: 0;
+    color: var(--color-fg-primary);
     font: var(--text-body-sm);
-    color: var(--color-fg-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
-  .last4 {
-    font: var(--text-mono-sm);
-    color: var(--color-fg-muted);
-  }
-  .row {
+  .ticket-actions {
+    border-top: 1px solid var(--color-border-subtle);
+    padding-top: var(--space-3);
     display: flex;
     gap: var(--space-2);
     flex-wrap: wrap;
@@ -775,39 +1032,7 @@
     padding: var(--space-4);
   }
   .muted {
-    opacity: 0.55;
-  }
-  .action-bar {
-    position: fixed;
-    bottom: var(--space-4);
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--color-bg-raised);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-pill);
-    box-shadow: var(--shadow-lg);
-    padding: var(--space-3) var(--space-5);
-    display: flex;
-    gap: var(--space-3);
-    align-items: center;
-    z-index: 100;
-  }
-  .detail,
-  .help {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: var(--space-2) var(--space-4);
-    margin: 0;
-  }
-  .detail dt,
-  .help dt {
-    font: var(--text-label-md);
-    color: var(--color-fg-secondary);
-  }
-  .detail dd,
-  .help dd {
-    margin: 0;
-    color: var(--color-fg-primary);
+    opacity: 0.65;
   }
   .toast-host {
     position: fixed;

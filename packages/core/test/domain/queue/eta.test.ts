@@ -18,7 +18,7 @@ const NOW = at("2026-05-08T13:55:00Z")
 
 const issue = (
   seq: number,
-  opts?: { lane?: "walkIn" | "priority" | "reservation"; appointmentAt?: Temporal.Instant | null },
+  opts?: { lane?: "walkIn" | "reservation"; appointmentAt?: Temporal.Instant | null },
 ) => {
   const id = newTicketId()
   return applyIssue({

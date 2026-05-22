@@ -33,7 +33,6 @@ import type {
   NoShowedEvent,
   NudgedEvent,
   RecalledEvent,
-  ReorderedEvent,
   RescheduledEvent,
   ServedEvent,
   TicketEvent,
@@ -375,32 +374,6 @@ export const applyLapseAppointment = (
 }
 
 /* -------------------------------------------------------------------------- */
-/* Reorder — Waiting → Waiting (ADR-0065). The transition itself does not     */
-/* mutate the ticket; `displaySeq` rebalancing is the projection's job        */
-/* (it requires visibility of all lane peers, which a single-ticket helper    */
-/* does not have).                                                             */
-/* -------------------------------------------------------------------------- */
-
-export type ReorderArgs = {
-  readonly afterTicketId: TicketId | null
-  readonly at: Temporal.Instant
-  readonly eventId: TicketEventId
-  readonly reorderedBy?: Actor
-}
-
-export const applyReorder = (t: Waiting, args: ReorderArgs): ApplyResult => {
-  const reorderedBy = args.reorderedBy ?? "staff"
-  const ticket: Waiting = { ...common(t), state: "Waiting" }
-  const event: ReorderedEvent = {
-    ...baseEvent(args.eventId, t.id, args.at),
-    type: "Reordered",
-    afterTicketId: args.afterTicketId,
-    reorderedBy,
-  }
-  return { ticket, event }
-}
-
-/* -------------------------------------------------------------------------- */
 /* CheckIn — Waiting → Waiting (ADR-0068). Customer hit the 「到着しました」    */
 /* button on /ticket after `now ≥ appointmentAt - 10min`. The ticket stays   */
 /* in Waiting (it is not yet at the counter); the CheckedIn event lands in   */
@@ -481,7 +454,6 @@ export type TicketCommand =
   | "MarkNoShow"
   | "Cancel"
   | "Recall"
-  | "Reorder"
   | "CheckIn"
 
 const terminalError = (state: TicketState): DomainError | null => {

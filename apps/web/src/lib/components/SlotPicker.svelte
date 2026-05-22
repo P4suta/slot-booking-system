@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte"
   import { listSlots, type SlotEntry } from "$lib/api.js"
-  import { emptyState, loadingState } from "$lib/messages.js"
+  import { emptyState, loadingState, m } from "$lib/messages.js"
   import {
     defaultDateTabs,
     labelOfBucket,
@@ -101,13 +101,18 @@
         class="slot-cell"
         disabled={slot.available === 0}
         aria-label={slot.available === 0
-          ? `${labelOfBucket(slot.bucketId, granularity)} 満席`
-          : `${labelOfBucket(slot.bucketId, granularity)} 残り ${slot.available} 枠`}
+          ? m.slotpicker_full_label({ label: labelOfBucket(slot.bucketId, granularity) })
+          : m.slotpicker_available_label({
+              label: labelOfBucket(slot.bucketId, granularity),
+              available: String(slot.available),
+            })}
         onclick={() => onSelect(slotInstantOf(slot.date, slot.bucketId, granularity))}
       >
         <span class="slot-time">{labelOfBucket(slot.bucketId, granularity)}</span>
         <span class="slot-meta">
-          {slot.available === 0 ? "満席" : `残${slot.available}`}
+          {slot.available === 0
+            ? m.slotpicker_full_text()
+            : m.slotpicker_available_text({ available: String(slot.available) })}
         </span>
       </button>
     {/each}

@@ -93,9 +93,18 @@ describe("TicketSchema discrimination", () => {
     expect(Result.isFailure(r)).toBe(true)
   })
 
-  it.each(["walkIn", "priority", "reservation"])("decodes a %s lane", (lane) => {
+  it.each(["walkIn", "reservation"])("decodes a %s lane", (lane) => {
     const t = decodeOrThrow({ ...baseFields, lane, state: "Waiting" })
     expect(t.lane).toBe(lane)
+  })
+
+  it("rejects the legacy 'priority' lane (ADR-0078 removed it)", () => {
+    const r = Schema.decodeUnknownResult(TicketSchema)({
+      ...baseFields,
+      lane: "priority",
+      state: "Waiting",
+    })
+    expect(Result.isFailure(r)).toBe(true)
   })
 
   it("rejects an unknown lane", () => {

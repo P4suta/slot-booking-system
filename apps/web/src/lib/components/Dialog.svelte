@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte"
   import { onDestroy } from "svelte"
+  import { m } from "$lib/messages.js"
 
   type Props = {
     open: boolean
@@ -50,7 +51,9 @@
 >
   <header>
     <h2 id="dialog-title">{title}</h2>
-    <button type="button" class="close" aria-label="閉じる" onclick={onClose}>×</button>
+    <button type="button" class="close" aria-label={m.common_close_label()} onclick={onClose}>
+      ×
+    </button>
   </header>
   <div class="body">
     {@render children()}

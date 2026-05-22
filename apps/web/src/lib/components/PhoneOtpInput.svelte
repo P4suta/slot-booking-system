@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte"
   import type { FullAutoFill } from "svelte/elements"
+  import { m } from "$lib/messages.js"
 
   type Props = {
     value: string
@@ -8,7 +9,8 @@
     autocomplete?: FullAutoFill
   }
 
-  let { value = $bindable(""), label = "電話番号末尾4桁", autocomplete = "off" }: Props = $props()
+  let { value = $bindable(""), label = m.phone_input_label(), autocomplete = "off" }: Props =
+    $props()
 
   const SLOTS = 4 as const
   let inputs: (HTMLInputElement | null)[] = $state(new Array(SLOTS).fill(null))
@@ -26,6 +28,19 @@
       (_, i): string => cleaned[i] ?? "",
     )
   })
+
+  /**
+   * Index of the first not-yet-filled slot, or -1 when all four are
+   * filled. Slots strictly after this index are not yet reachable —
+   * we disable them so the operator (or the customer) cannot click
+   * into "the 3rd digit box" and start typing there, which used to
+   * leave gaps in the middle (e.g. `_ _ 7 _`) and silently emit a
+   * 3-char value upstream. Already-filled slots remain editable so
+   * the customer can correct an earlier typo.
+   */
+  const firstEmptyIdx = $derived(digits.findIndex((d) => d === ""))
+  const isSlotLocked = (i: number): boolean =>
+    firstEmptyIdx !== -1 && i > firstEmptyIdx
 
   const focusSlot = async (idx: number): Promise<void> => {
     if (idx < 0 || idx >= SLOTS) return
@@ -119,6 +134,23 @@
     value = slots.join("")
     void focusSlot(Math.min(cursor, SLOTS - 1))
   }
+
+  /**
+   * Click on a filled slot = "edit from here". Truncate value at this
+   * index so the clicked slot becomes the new first-empty and every
+   * downstream slot is discarded. The user typed something wrong
+   * earlier; rather than fiddling with individual digits they just
+   * re-enter from the offending position forward. Keyboard tab does
+   * NOT trigger this (no click event), so navigating across already-
+   * filled slots stays non-destructive.
+   */
+  const onClickSlot = (idx: number, event: MouseEvent): void => {
+    // Empty / first-empty slot: ordinary click, nothing to discard.
+    if (digits[idx] === "") return
+    event.preventDefault()
+    value = digits.slice(0, idx).join("")
+    void focusSlot(idx)
+  }
 </script>
 
 <fieldset>
@@ -133,11 +165,13 @@
         maxlength="1"
         autocomplete={i === 0 ? autocomplete : "off"}
         value={digit}
+        disabled={isSlotLocked(i)}
         onbeforeinput={onBeforeInput}
         oninput={(e) => onInput(i, e)}
         onkeydown={(e) => onKeydown(i, e)}
         onpaste={(e) => onPaste(i, e)}
-        aria-label={`末尾4桁の${i + 1}桁目`}
+        onclick={(e) => onClickSlot(i, e)}
+        aria-label={m.phone_input_digit_aria({ position: String(i + 1) })}
       />
     {/each}
   </div>
@@ -176,11 +210,21 @@
     padding: 0;
     /* iOS / macOS Safari: numbers spinner suppression */
     -moz-appearance: textfield;
+    appearance: textfield;
   }
   input::-webkit-outer-spin-button,
   input::-webkit-inner-spin-button {
     -webkit-appearance: none;
     margin: 0;
+  }
+  /* Locked slot: not yet reachable in the sequential entry flow. The
+   * default disabled styling is functional but hard to distinguish
+   * from an empty editable slot; tone it down so the eye lands on
+   * the first-empty (editable) slot instead. */
+  input:disabled {
+    background: #f5f5f7;
+    color: #d2d2d7;
+    cursor: not-allowed;
   }
   input:focus {
     outline: 2px solid #0071e3;

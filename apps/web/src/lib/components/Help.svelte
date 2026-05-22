@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { m } from "$lib/messages.js"
+
   // Per-instance helper id so multiple Help icons on the same page
   // each get their own aria-describedby target without colliding.
   let nextId = 0
@@ -12,7 +14,7 @@
     label?: string
   }
 
-  let { text, label = "詳細を表示" }: Props = $props()
+  let { text, label = m.help_default_label() }: Props = $props()
 
   let open = $state(false)
   const popoverId = localId()

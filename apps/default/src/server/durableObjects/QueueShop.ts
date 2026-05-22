@@ -23,7 +23,6 @@ import {
   MoveToOverdue,
   Nudge,
   Recall,
-  Reorder,
   RescheduleTicket,
   reservationsByDeadline,
   type StorageError,
@@ -220,7 +219,6 @@ export class QueueShop extends DurableObject<Env> {
         MarkServed: (a) => MarkServed(a.ticketId),
         MarkNoShow: (a) => MarkNoShow(a.ticketId, a.actor),
         Recall: (a) => Recall(a.ticketId, a.actor),
-        Reorder: (a) => Reorder(a.ticketId, a.afterTicketId, a.actor),
         CancelTicket: (a) => CancelTicket(a.ticketId, a.actor, a.reason, a.handle),
         CheckIn: (a) => CheckIn(a.ticketId),
         RescheduleTicket: (a) => {
@@ -596,7 +594,6 @@ export class QueueShop extends DurableObject<Env> {
       waitingCount: waiting.length,
       laneCounts: {
         walkIn: laneCount("walkIn"),
-        priority: laneCount("priority"),
         reservation: laneCount("reservation"),
       },
       calling: calling.map(project),

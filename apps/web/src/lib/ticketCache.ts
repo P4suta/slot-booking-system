@@ -150,10 +150,7 @@ export const isTerminalState = (state: string): boolean => TERMINAL_STATES.inclu
  * Exposed here so the customer-facing routes can detect a staff
  * session and funnel back to `/staff` instead of rendering the
  * customer landing / forms while a staff session is live (ADR-0069
- * §Stage 10).
+ * §Stage 10). The implementation lives in `staffSession.ts`; this
+ * re-export keeps the import sites stable.
  */
-export const hasStaffToken = (): boolean => {
-  if (typeof window === "undefined") return false
-  const t = window.localStorage.getItem("queue.staffToken")
-  return t !== null && t.length > 0
-}
+export { hasStaffSession as hasStaffToken } from "./staffSession.js"

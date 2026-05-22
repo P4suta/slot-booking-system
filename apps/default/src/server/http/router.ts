@@ -25,7 +25,6 @@ import {
   MyTicketQuerySchema,
   PushSubscriptionBodySchema,
   PushSubscriptionDeleteQuerySchema,
-  ReorderBodySchema,
   RescheduleBodySchema,
   SlotsQuerySchema,
   StaffCancelBodySchema,
@@ -63,7 +62,6 @@ import type { Env } from "./types.js"
  *   POST  /queue/call-next                        staff: call next (body lane?)
  *   POST  /queue/call-specific                    staff: call a specific Waiting (ADR-0065)
  *   POST  /queue/call-batch                       staff: atomic batch call (ADR-0065)
- *   POST  /queue/reorder                          staff: reorder within lane (ADR-0065)
  *   GET   /queue/feed                             DO Hibernating WebSocket projection feed (ADR-0061)
  */
 
@@ -543,7 +541,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       displaySeq: t.displaySeq,
       appointmentAt: t.appointmentAt,
     })
-    const laneCount = (lane: "walkIn" | "priority" | "reservation") =>
+    const laneCount = (lane: "walkIn" | "reservation") =>
       waiting.filter((t) => t.lane === lane).length
     // Compute the EDF next-deadline from the encoded snapshot. The
     // helper expects decoded Tickets, so we round-trip via Schema.
@@ -554,10 +552,21 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       ranked[0]?.appointmentAt !== null && ranked[0]?.appointmentAt !== undefined
         ? String(ranked[0].appointmentAt)
         : null
-    const isStaff =
-      c.env.STAFF_SESSION_SECRET !== undefined &&
-      c.req.header("x-staff-token") === c.env.STAFF_SESSION_SECRET
-    if (isStaff) {
+    // Three-way: no header → public projection; header present but
+    // invalid → 403 (was: silently degrade to public, which left the
+    // client deserializing anonymous shape into staff-typed state and
+    // crashing on `terminal: undefined` / `nameKana: undefined`); header
+    // present and valid via timing-safe compare → staff projection.
+    const headerToken = c.req.header("x-staff-token")
+    if (headerToken !== undefined && headerToken !== "") {
+      if (
+        c.env.STAFF_SESSION_SECRET === undefined ||
+        !timingSafeEqual(headerToken, c.env.STAFF_SESSION_SECRET)
+      ) {
+        return failResponse(403, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
+          reason: "invalid-staff-token",
+        })
+      }
       return new Response(
         JSON.stringify({
           ok: true,
@@ -565,7 +574,6 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
           waitingCount: waiting.length,
           laneCounts: {
             walkIn: laneCount("walkIn"),
-            priority: laneCount("priority"),
             reservation: laneCount("reservation"),
           },
           calling,
@@ -584,7 +592,6 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
         waitingCount: waiting.length,
         laneCounts: {
           walkIn: laneCount("walkIn"),
-          priority: laneCount("priority"),
           reservation: laneCount("reservation"),
         },
         calling: calling.map(project),
@@ -673,31 +680,6 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       await stub(c.env).dispatch({
         type: "CallBatch",
         ticketIds: [head, ...ids.slice(1)] as const,
-        actor: "staff",
-      }),
-    )
-  })
-
-  // POST /api/v1/queue/reorder — staff. Body
-  // `{ ticketId, afterTicketId: TicketId | null }` (ADR-0065). Lane
-  // mismatch surfaces 409 LaneMismatch.
-  app.post("/api/v1/queue/reorder", rateLimitMiddleware("RL_OPERATE"), async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const parsed = await parseJsonBody(c)
-    if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
-    }
-    const decoded = Schema.decodeUnknownResult(ReorderBodySchema)(parsed.raw)
-    if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
-    }
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({
-        type: "Reorder",
-        ticketId: decoded.success.ticketId,
-        afterTicketId: decoded.success.afterTicketId,
         actor: "staff",
       }),
     )

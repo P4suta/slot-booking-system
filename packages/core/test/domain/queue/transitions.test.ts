@@ -13,7 +13,6 @@ import {
   applyMoveToOverdue,
   applyNudge,
   applyRecall,
-  applyReorder,
   guardActive,
   invalidTransition,
 } from "../../../src/domain/queue/transitions.js"
@@ -57,21 +56,21 @@ describe("applyIssue", () => {
     const { ticket, event } = applyIssue({
       id,
       seq: 5,
-      lane: "priority",
+      lane: "reservation",
       displaySeq: 1,
       nameKana: kana,
       phoneLast4: phone,
       freeText: null,
-      appointmentAt: null,
+      appointmentAt: at("2026-05-08T14:00:00Z"),
       at: at("2026-05-08T09:00:00Z"),
       eventId: newTicketEventId(),
     })
     expect(ticket.id).toBe(id)
-    expect(ticket.lane).toBe("priority")
+    expect(ticket.lane).toBe("reservation")
     expect(event.type).toBe("Issued")
     if (event.type === "Issued") {
       expect(event.seq).toBe(5)
-      expect(event.lane).toBe("priority")
+      expect(event.lane).toBe("reservation")
       expect(event.displaySeq).toBe(1)
       expect(event.freeText).toBeNull()
     }
@@ -430,45 +429,6 @@ describe("applyRecall", () => {
   })
 })
 
-describe("applyReorder", () => {
-  it("emits a Reordered event with afterTicketId", () => {
-    const a = issued()
-    const otherId = newTicketId()
-    const { ticket, event } = applyReorder(a, {
-      afterTicketId: otherId,
-      at: at("2026-05-08T09:02:00Z"),
-      eventId: newTicketEventId(),
-    })
-    expect(ticket.state).toBe("Waiting")
-    expect(event.type).toBe("Reordered")
-    if (event.type === "Reordered") {
-      expect(event.afterTicketId).toBe(otherId)
-      expect(event.reorderedBy).toBe("staff")
-    }
-  })
-
-  it("emits a Reordered event with afterTicketId === null for lane-head insertion", () => {
-    const { event } = applyReorder(issued(), {
-      afterTicketId: null,
-      at: at("2026-05-08T09:02:00Z"),
-      eventId: newTicketEventId(),
-    })
-    if (event.type === "Reordered") {
-      expect(event.afterTicketId).toBeNull()
-    }
-  })
-
-  it("respects an explicit reorderedBy actor", () => {
-    const { event } = applyReorder(issued(), {
-      afterTicketId: null,
-      at: at("2026-05-08T09:02:00Z"),
-      eventId: newTicketEventId(),
-      reorderedBy: "system",
-    })
-    if (event.type === "Reordered") expect(event.reorderedBy).toBe("system")
-  })
-})
-
 describe("applyCheckIn", () => {
   it("transitions Waiting → Waiting and sets checkedInAt", () => {
     const w = issued()
@@ -510,7 +470,6 @@ describe("invalidTransition", () => {
   it("accepts the ADR-0065 command names", () => {
     expect(invalidTransition("Served", "CallSpecific").command).toBe("CallSpecific")
     expect(invalidTransition("Cancelled", "CallBatch").command).toBe("CallBatch")
-    expect(invalidTransition("Called", "Reorder").command).toBe("Reorder")
   })
 
   it("accepts the ADR-0072 / ADR-0075 command names", () => {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte"
+  import { m } from "$lib/messages.js"
 
   type Variant = "info" | "success" | "warning" | "danger"
 
@@ -45,7 +46,9 @@
   {#if undoLabel !== undefined && onUndo !== undefined}
     <button type="button" class="undo" onclick={handleUndo}>{undoLabel}</button>
   {/if}
-  <button type="button" class="dismiss" aria-label="閉じる" onclick={onDismiss}>×</button>
+  <button type="button" class="dismiss" aria-label={m.common_close_label()} onclick={onDismiss}>
+    ×
+  </button>
 </div>
 
 <style>
