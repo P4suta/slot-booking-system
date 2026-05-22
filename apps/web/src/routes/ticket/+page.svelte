@@ -28,6 +28,7 @@
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import Help from "$lib/components/Help.svelte"
   import SlotPicker from "$lib/components/SlotPicker.svelte"
+  import StateStepper from "$lib/components/StateStepper.svelte"
   import { errorMessage, helpText, loadingState, m } from "$lib/messages.js"
   import { subscribeToPush, unsubscribeFromPush } from "$lib/pushSubscribe.js"
   import { buildShareRecoveryUrl, renderQrToDataUrl } from "$lib/qr.js"
@@ -42,9 +43,9 @@
 
   type Stored = { ticketId: string; nameKana: string; phoneLast4: string }
 
-  let stored: Stored | null = $state(null)
-  let ticket: Ticket | null = $state(null)
-  let snapshot: ShopState | null = $state(null)
+  let stored = $state<Stored | null>(null)
+  let ticket = $state<Ticket | null>(null)
+  let snapshot = $state<ShopState | null>(null)
   let qrDataUrl: string | null = $state(null)
   let shareUrl: string | null = $state(null)
   let error: { tag: string; code: string; message: string } | null = $state(null)
@@ -78,34 +79,30 @@
   // a misconfigured fixture / future bug from showing reservation UI
   // to a walk-in customer.
   const isReservation = $derived(
-    ticket?.lane === "reservation" &&
-      ticket?.appointmentAt !== null &&
-      ticket?.appointmentAt !== undefined,
+    ticket !== null && ticket.lane === "reservation" && ticket.appointmentAt !== null,
   )
   const isActive = $derived(
-    ticket?.state === "Waiting" ||
-      ticket?.state === "Called" ||
-      ticket?.state === "Overdue",
+    ticket !== null &&
+      (ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Overdue"),
   )
   // Visibility guard for the reschedule button. Disable-on-WS-drop
   // is delegated to the button itself, mirroring how cancel handles
   // a feedState !== "open" tab.
   const canReschedule = $derived(isReservation && isActive)
   const appointmentMs = $derived(
-    ticket?.appointmentAt !== null && ticket?.appointmentAt !== undefined
-      ? Date.parse(ticket.appointmentAt)
-      : null,
+    ticket !== null && ticket.appointmentAt !== null ? Date.parse(ticket.appointmentAt) : null,
   )
   const minutesUntilAppointment = $derived(
     appointmentMs !== null ? Math.round((appointmentMs - now) / 60000) : null,
   )
   const checkInAvailable = $derived(
     appointmentMs !== null &&
-      ticket?.state === "Waiting" &&
+      ticket !== null &&
+      ticket.state === "Waiting" &&
       ticket.checkedInAt === null &&
       now >= appointmentMs - CHECK_IN_WINDOW_MS,
   )
-  const alreadyCheckedIn = $derived(ticket?.checkedInAt !== null && ticket?.checkedInAt !== undefined)
+  const alreadyCheckedIn = $derived(ticket !== null && ticket.checkedInAt !== null)
 
   const onCheckIn = async (): Promise<void> => {
     if (stored === null || ticket === null) return
@@ -186,8 +183,8 @@
       error = null
       writeTicketCache({
         ticketId: t.id,
-        nameKana: t.nameKana ?? id.nameKana,
-        phoneLast4: t.phoneLast4 ?? id.phoneLast4,
+        nameKana: t.nameKana,
+        phoneLast4: t.phoneLast4,
         lastKnownState: t.state,
       })
       // Called observation — fires chime / vibrate / notification on
@@ -244,24 +241,26 @@
     if (ticket === null) return ""
     switch (ticket.state) {
       case "Waiting":
-        return "お待ちください"
+        return m.ticket_state_waiting()
       case "Called":
-        return "呼ばれました"
+        return m.ticket_state_called()
       case "Overdue": {
         // M4: surface the nudge count so the customer perceives "more
         // urgent on the second / third ping". We do NOT expose
         // MAX_NUDGES to the client (operational info).
         const n = ticket.nudgeCount ?? 0
-        return n > 0 ? `応答をお願いします（${String(n)} 回目）` : "応答をお願いします"
+        return n > 0
+          ? m.ticket_state_overdue_with_nudge({ count: String(n) })
+          : m.ticket_state_overdue()
       }
       case "Served":
-        return "対応完了"
+        return m.ticket_state_served()
       case "NoShow":
-        return "キャンセル扱い (時間切れ)"
+        return m.ticket_state_noshow()
       case "Cancelled":
         return ticket.reason === "appointment_lapsed"
-          ? "予約時刻を過ぎたためキャンセルされました"
-          : "キャンセル済"
+          ? m.ticket_state_cancelled_appointment_lapsed()
+          : m.ticket_state_cancelled()
     }
   })
 
@@ -436,7 +435,7 @@
 </script>
 
 <svelte:head>
-  <title>ご自分の番号 — 整理券</title>
+  <title>{m.ticket_title()}</title>
   <meta name="robots" content="noindex" />
 </svelte:head>
 
@@ -446,7 +445,7 @@
       tag={error.tag}
       code={error.code}
       message={error.message}
-      retryLabel="再読み込み"
+      retryLabel={m.ticket_retry_label()}
       onRetry={() => stored !== null && refresh(stored)}
     />
   {/if}
@@ -454,29 +453,27 @@
   {#if ticket !== null}
     <div class="numeral-hero" data-state={ticket.state}>
       <span class="state-tag">{stateLabel}</span>
+      <span class="numeral-label">{m.ticket_numeral_label()}</span>
       <span class="numeral">{ticket.displaySeq}</span>
-      <span class="lane">
-        {ticket.lane === "priority"
-          ? "優先"
-          : ticket.lane === "reservation"
-            ? "予約"
-            : "通常"}
-      </span>
+    </div>
+
+    <div class="stepper-row">
+      <StateStepper ticket={ticket} variant="full" />
     </div>
 
     {#if isReservation && minutesUntilAppointment !== null}
       <Card>
         <div class="appointment">
-          <span class="appointment-label">予約時刻</span>
+          <span class="appointment-label">{m.ticket_appointment_label()}</span>
           <span class="appointment-time">{ticket.appointmentAt?.slice(11, 16) ?? ""}</span>
           {#if alreadyCheckedIn}
-            <span class="appointment-badge badge-arrived">到着済み</span>
+            <span class="appointment-badge badge-arrived">{m.ticket_appointment_arrived()}</span>
           {:else if minutesUntilAppointment > 0}
             <span class="appointment-countdown">
-              あと {minutesUntilAppointment} 分
+              {m.ticket_appointment_countdown({ minutes: String(minutesUntilAppointment) })}
             </span>
           {:else}
-            <span class="appointment-countdown overdue">時間です</span>
+            <span class="appointment-countdown overdue">{m.ticket_appointment_overdue()}</span>
           {/if}
           {#if checkInAvailable && !alreadyCheckedIn}
             <Button
@@ -485,7 +482,7 @@
               disabled={checkInBusy}
               onclick={onCheckIn}
             >
-              {checkInBusy ? "送信中…" : "到着しました"}
+              {checkInBusy ? m.common_submit_busy() : m.ticket_checkin_button()}
             </Button>
           {/if}
           {#if canReschedule}
@@ -497,20 +494,17 @@
                 disabled={feedState !== "open"}
                 onclick={openRescheduleDialog}
               >
-                予約時刻を変更
+                {m.ticket_reschedule_button()}
               </Button>
-              <Help text={helpText("reschedule")} label="予約時刻変更の説明を表示" />
+              <Help text={helpText("reschedule")} label={m.ticket_reschedule_help_label()} />
             </div>
-            <p class="reservation-modify-help">
-              {m.reservation_modify_help()}
-            </p>
           {/if}
         </div>
       </Card>
     {:else if ticket.state === "Waiting" && positionInfo !== null}
       <Card>
         <p class="position">
-          あなたの前に <strong>{positionInfo}</strong> 人
+          {m.ticket_position_template({ count: String(positionInfo) })}
         </p>
       </Card>
     {/if}
@@ -520,11 +514,10 @@
         <div class="notif-opt-in">
           <p class="notif-msg">
             {m.notify_permission_question()}
-            <Help text={helpText("notifyPermission")} label="通知の説明を表示" />
+            <Help text={helpText("notifyPermission")} label={m.ticket_notify_help_label()} />
           </p>
-          <p class="notif-help">{m.notify_permission_help()}</p>
           <Button variant="secondary" size="md" onclick={onRequestNotification}>
-            通知を許可する
+            {m.ticket_notify_button()}
           </Button>
         </div>
       </Card>
@@ -537,10 +530,12 @@
     {#if qrDataUrl !== null}
       <Card>
         <div class="qr">
-          <img src={qrDataUrl} alt="QR (別端末で開く用 URL)" width="240" height="240" />
+          <img src={qrDataUrl} alt={m.ticket_qr_alt()} width="240" height="240" />
           <div class="qr-help">
-            <p>別の端末で開けます。 名前 (カタカナ) と電話末尾を入力して開きます。</p>
-            <Button variant="secondary" size="md" onclick={onCopyUrl}>URL をコピー</Button>
+            <p>{m.ticket_qr_label()}</p>
+            <Button variant="secondary" size="md" onclick={onCopyUrl}>
+              {m.ticket_qr_copy_button()}
+            </Button>
           </div>
         </div>
       </Card>
@@ -548,9 +543,7 @@
 
     {#if ticket.state === "Waiting" || ticket.state === "Called" || ticket.state === "Overdue"}
       {#if ticket.state === "Overdue"}
-        <p class="overdue-note" role="status">
-          応答が確認できていません。窓口にお越しいただけない場合はキャンセルしてください。
-        </p>
+        <p class="overdue-note" role="status">{m.ticket_overdue_note()}</p>
       {/if}
       <div class="actions">
         <Button
@@ -559,7 +552,7 @@
           disabled={feedState !== "open"}
           onclick={() => (cancelDialogOpen = true)}
         >
-          キャンセル
+          {m.common_cancel()}
         </Button>
       </div>
     {/if}
@@ -569,28 +562,32 @@
 
   <Dialog
     bind:open={cancelDialogOpen}
-    title="キャンセルしますか?"
+    title={m.ticket_cancel_dialog_title()}
     onClose={() => (cancelDialogOpen = false)}
   >
     <p>{m.confirm_cancel_body()}</p>
-    <p class="dialog-hint">差し支えなければ理由をお書きください (任意):</p>
-    <textarea bind:value={cancelReason} rows="2" placeholder="例: 都合がつかなくなった"></textarea>
+    <p class="dialog-hint">{m.ticket_cancel_reason_hint()}</p>
+    <textarea
+      bind:value={cancelReason}
+      rows="2"
+      placeholder={m.ticket_cancel_reason_placeholder()}
+    ></textarea>
     {#snippet actions()}
-      <Button variant="ghost" onclick={() => (cancelDialogOpen = false)}>戻る</Button>
+      <Button variant="ghost" onclick={() => (cancelDialogOpen = false)}>{m.common_back()}</Button>
       <Button variant="destructive" disabled={cancelBusy} onclick={onCancelConfirm}>
-        {cancelBusy ? "送信中…" : "キャンセル"}
+        {cancelBusy ? m.common_submit_busy() : m.common_cancel()}
       </Button>
     {/snippet}
   </Dialog>
 
   <Dialog
     bind:open={rescheduleDialogOpen}
-    title="予約時刻を変更しますか?"
+    title={m.ticket_reschedule_dialog_title()}
     onClose={() => (rescheduleDialogOpen = false)}
   >
     {#if ticket !== null && ticket.appointmentAt !== null && ticket.appointmentAt !== undefined}
       <p class="reschedule-current">
-        現在の予約時刻:
+        {m.ticket_reschedule_current_label()}
         <strong>{ticket.appointmentAt.slice(11, 16)}</strong>
       </p>
     {/if}
@@ -610,7 +607,7 @@
       />
     {/if}
     {#snippet actions()}
-      <Button variant="ghost" onclick={() => (rescheduleDialogOpen = false)}>戻る</Button>
+      <Button variant="ghost" onclick={() => (rescheduleDialogOpen = false)}>{m.common_back()}</Button>
       <Button
         variant="primary"
         disabled={rescheduleBusy ||
@@ -618,7 +615,7 @@
           rescheduleNewISO === ticket?.appointmentAt}
         onclick={onRescheduleConfirm}
       >
-        {rescheduleBusy ? "送信中…" : "この時間に変更する"}
+        {rescheduleBusy ? m.common_submit_busy() : m.ticket_reschedule_confirm()}
       </Button>
     {/snippet}
   </Dialog>
@@ -668,6 +665,11 @@
     background: var(--color-bg-subtle);
     color: var(--color-fg-muted);
   }
+  .numeral-label {
+    font: var(--text-label-sm);
+    color: var(--color-fg-muted);
+    margin-top: var(--space-1);
+  }
   .numeral {
     font: var(--text-numeral-hero);
     font-variant-numeric: tabular-nums;
@@ -679,20 +681,14 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .lane {
-    font: var(--text-label-sm);
-    color: var(--color-fg-muted);
+  .stepper-row {
+    margin-block: var(--space-6);
+    padding-inline: var(--space-2);
   }
   .position {
     text-align: center;
     margin: 0;
     font: var(--text-body-md);
-  }
-  .position strong {
-    font: var(--text-numeral-md);
-    color: var(--color-fg-primary);
-    font-variant-numeric: tabular-nums;
-    margin: 0 var(--space-2);
   }
   .notif-opt-in {
     display: flex;
@@ -704,11 +700,6 @@
     font: var(--text-body-md);
     color: var(--color-fg-primary);
     margin: 0;
-  }
-  .notif-help {
-    font: var(--text-body-sm);
-    color: var(--color-fg-muted);
-    margin: 0 0 var(--space-2);
   }
   .qr {
     display: flex;
@@ -809,12 +800,6 @@
   }
   .appointment-action :global(button) {
     flex: 1;
-  }
-  .reservation-modify-help {
-    margin: var(--space-2) 0 0;
-    color: var(--color-fg-muted);
-    font: var(--text-body-sm);
-    text-align: left;
   }
   .dialog-hint {
     margin: var(--space-3) 0 var(--space-2);

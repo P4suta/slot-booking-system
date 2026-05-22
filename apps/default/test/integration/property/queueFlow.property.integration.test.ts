@@ -57,7 +57,7 @@ const cmdArb: fc.Arbitrary<Command> = fc.oneof(
 type ProjectionEntry = {
   readonly id: string
   readonly seq: number
-  readonly lane: "walkIn" | "priority" | "reservation"
+  readonly lane: "walkIn" | "reservation"
   readonly displaySeq: number
 }
 
@@ -67,7 +67,6 @@ type Projection = {
   readonly waitingCount: number
   readonly laneCounts: {
     readonly walkIn: number
-    readonly priority: number
     readonly reservation: number
   }
   readonly calling: readonly ProjectionEntry[]
@@ -166,9 +165,9 @@ describe("HTTP queue flow (property, integration)", () => {
             }
           }
         }
-        // laneCounts agrees with waitingCount across the three lanes.
-        const laneTotal =
-          final.laneCounts.walkIn + final.laneCounts.priority + final.laneCounts.reservation
+        // laneCounts agrees with waitingCount across the two lanes
+        // (ADR-0078 dropped priority).
+        const laneTotal = final.laneCounts.walkIn + final.laneCounts.reservation
         expect(laneTotal).toBe(final.waitingCount)
       }),
       { numRuns: NUM_RUNS, verbose: false },

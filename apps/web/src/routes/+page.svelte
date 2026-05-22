@@ -4,18 +4,15 @@
   import Card from "$lib/components/Card.svelte"
   import {
     connectQueueFeed,
-    type LaneCounts,
     type QueueFeedHandle,
     type QueueFeedState,
     type ShopState,
     shopState,
   } from "$lib/api.js"
-  import { loadingState } from "$lib/messages.js"
+  import { loadingState, m } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache } from "$lib/ticketCache.js"
 
   let waitingCount = $state(0)
-  let laneCounts: LaneCounts = $state({ walkIn: 0, priority: 0, reservation: 0 })
-  let calling = $state(0)
   let feedState: QueueFeedState = $state("connecting")
   let feed: QueueFeedHandle | undefined
   // ADR-0069 §Stage 8 — if the customer already has an active ticket
@@ -27,8 +24,6 @@
 
   const refresh = (data: ShopState) => {
     waitingCount = data.waitingCount
-    laneCounts = data.laneCounts
-    calling = data.calling.length + data.overdue.length
   }
 
   onMount(async () => {
@@ -63,13 +58,12 @@
 </script>
 
 <svelte:head>
-  <title>並ぶ — 整理券</title>
+  <title>{m.landing_title()}</title>
 </svelte:head>
 
 {#if !booting}
   <section class="hero">
-    <h1>並ぶ</h1>
-    <p class="lede">店の行列に番号を取って加わる。 列の進みはそのまま見える。</p>
+    <h1>{m.landing_h1()}</h1>
 
     {#if feedState === "reconnecting"}
       <p class="banner" role="status" aria-live="polite">{loadingState("revalidate")}</p>
@@ -77,33 +71,16 @@
 
     <div class="status">
       <Card>
-        <div class="status-grid">
-          <div class="metric">
-            <span class="metric-label">待ち人数</span>
-            <span class="metric-value">{waitingCount}</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">対応中</span>
-            <span class="metric-value">{calling}</span>
-          </div>
+        <div class="metric">
+          <span class="metric-label">{m.landing_waiting_count_label()}</span>
+          <span class="metric-value">{waitingCount}</span>
         </div>
-        {#if waitingCount > 0}
-          <div class="lanes">
-            {#if laneCounts.priority > 0}
-              <span class="lane-chip priority">優先 {laneCounts.priority}</span>
-            {/if}
-            <span class="lane-chip">通常 {laneCounts.walkIn}</span>
-            {#if laneCounts.reservation > 0}
-              <span class="lane-chip">予約 {laneCounts.reservation}</span>
-            {/if}
-          </div>
-        {/if}
       </Card>
     </div>
 
     <div class="actions">
-      <a class="cta" href="/issue">並ぶ</a>
-      <a class="link" href="/recover">自分の番号を確認</a>
+      <a class="cta" href="/issue">{m.landing_cta_issue()}</a>
+      <a class="link" href="/recover">{m.landing_cta_recover()}</a>
     </div>
   </section>
 {/if}
@@ -117,25 +94,16 @@
   }
   h1 {
     font: var(--text-numeral-xl);
-    margin: 0 0 var(--space-2);
-    letter-spacing: -0.02em;
-  }
-  .lede {
-    color: var(--color-fg-muted);
-    font: var(--text-body-lg);
     margin: 0 0 var(--space-8);
+    letter-spacing: -0.02em;
   }
   .status {
     margin: 0 0 var(--space-8);
   }
-  .status-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-6);
-  }
   .metric {
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: var(--space-1);
   }
   .metric-label {
@@ -146,24 +114,6 @@
     font: var(--text-numeral-md);
     color: var(--color-fg-primary);
     font-variant-numeric: tabular-nums;
-  }
-  .lanes {
-    display: flex;
-    gap: var(--space-2);
-    justify-content: center;
-    margin-top: var(--space-4);
-    flex-wrap: wrap;
-  }
-  .lane-chip {
-    font: var(--text-label-sm);
-    color: var(--color-fg-secondary);
-    background: var(--color-bg-subtle);
-    border-radius: var(--radius-pill);
-    padding: var(--space-1) var(--space-3);
-  }
-  .lane-chip.priority {
-    color: var(--color-state-called);
-    background: oklch(95% 0.05 65 / 30%);
   }
   .actions {
     display: flex;

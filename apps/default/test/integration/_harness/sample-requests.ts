@@ -18,7 +18,7 @@ export type Handle = {
   readonly phoneLast4: string
 }
 
-export type Lane = "walkIn" | "priority" | "reservation"
+export type Lane = "walkIn" | "reservation"
 
 export const issueTicket = (
   body: { handle: Handle; freeText: string | null; lane?: Lane; appointmentAt?: string },
@@ -104,19 +104,6 @@ export const callBatch = (ticketIds: readonly string[], staffHeaders: Record<str
     method: "POST",
     headers: { "content-type": "application/json", ...staffHeaders },
     body: JSON.stringify({ ticketIds }),
-  })
-
-export const reorder = (
-  body: { ticketId: string; afterTicketId: string | null },
-  staffHeaders: Record<string, string>,
-) =>
-  buildRequest("/api/v1/queue/reorder", {
-    method: "POST",
-    headers: { "content-type": "application/json", ...staffHeaders },
-    body: JSON.stringify({
-      ticketId: body.ticketId,
-      afterTicketId: body.afterTicketId,
-    }),
   })
 
 export const markServed = (ticketId: string, staffHeaders: Record<string, string>) =>

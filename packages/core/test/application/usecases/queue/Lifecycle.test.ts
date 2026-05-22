@@ -15,7 +15,6 @@ import {
   MoveToOverdue,
   Nudge,
   Recall,
-  Reorder,
   RescheduleTicket,
 } from "../../../../src/application/usecases/queue/index.js"
 import { AggregateNotFoundError } from "../../../../src/domain/errors/Errors.js"
@@ -683,90 +682,6 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
-  it("Reorder moves a Waiting ticket to lane head (afterTicketId = null)", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const a = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        const b = yield* IssueTicket({ handle: handle("サトウ ハナコ", "5678"), freeText: null })
-        const reordered = yield* Reorder(b.id, null)
-        expect(reordered.state).toBe("Waiting")
-        // a was originally first; b moves ahead of it.
-        expect(reordered.id).toBe(b.id)
-        expect(a.id).not.toBe(reordered.id)
-      }),
-    ))
-
-  it("Reorder accepts an after-ticket in the same lane", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const a = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        const b = yield* IssueTicket({ handle: handle("サトウ ハナコ", "5678"), freeText: null })
-        const c = yield* IssueTicket({ handle: handle("タナカ ジロウ", "9999"), freeText: null })
-        const out = yield* Reorder(c.id, a.id)
-        expect(out.state).toBe("Waiting")
-        expect(b.id).not.toBe(out.id)
-      }),
-    ))
-
-  it("Reorder against a Called ticket yields InvalidStateTransition", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const t1 = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        yield* CallNext()
-        const r = yield* eitherEffect(Reorder(t1.id, null))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("InvalidStateTransition")
-      }),
-    ))
-
-  it("Reorder against a terminal ticket yields the matching Already* error", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const h = handle("ヤマダ タロウ", "1234")
-        const t1 = yield* IssueTicket({ handle: h, freeText: null })
-        yield* CancelTicket(t1.id, "customer", "x", h)
-        const r = yield* eitherEffect(Reorder(t1.id, null))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("AlreadyCancelled")
-      }),
-    ))
-
-  it("Reorder on a non-existent ticket yields TicketNotFound", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const r = yield* eitherEffect(Reorder("tkt_00000000000000000000000000" as never, null))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
-      }),
-    ))
-
-  it("Reorder with an unknown afterTicketId yields TicketNotFound", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        const t1 = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        const r = yield* eitherEffect(Reorder(t1.id, "tkt_00000000000000000000000099" as never))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("TicketNotFound")
-      }),
-    ))
-
-  it("Reorder against a peer in a different lane yields LaneMismatch", async () =>
-    runScenario(
-      Effect.gen(function* () {
-        // a lands in walkIn (default), b lands in priority. Reordering
-        // a after b crosses lanes — ADR-0065 forbids it.
-        const a = yield* IssueTicket({ handle: handle("ヤマダ タロウ", "1234"), freeText: null })
-        const b = yield* IssueTicket({
-          handle: handle("サトウ ハナコ", "5678"),
-          freeText: null,
-          lane: "priority",
-        })
-        const r = yield* eitherEffect(Reorder(a.id, b.id))
-        expect(r.ok).toBe(false)
-        if (!r.ok) expect((r.error as { _tag: string })._tag).toBe("LaneMismatch")
-      }),
-    ))
-
   /**
    * The CallNext use case has a defensive `catchTag("AggregateNotFound")`
    * that maps a head/load race to QueueEmpty. Single-writer InMemory
@@ -835,7 +750,7 @@ describe("queue lifecycle round-trip", () => {
       }),
     ))
 
-  it("CallNext promotes an eligible reservation past the static priority chain (ADR-0067 EDF)", async () =>
+  it("CallNext promotes an eligible reservation past the static lane chain (ADR-0067 EDF)", async () =>
     runScenario(
       Effect.gen(function* () {
         // Walk-in lands first; then a reservation whose appointmentAt
@@ -983,12 +898,12 @@ describe("queue lifecycle round-trip", () => {
       Effect.gen(function* () {
         const h = handle("ヤマダ タロウ", "1234")
         const t1 = yield* IssueTicket({ handle: h, freeText: null, lane: "walkIn" })
-        // Second issue tries to upgrade lane → priority + supply appointmentAt;
+        // Second issue tries to upgrade lane → reservation + supply appointmentAt;
         // both fields stay at the first issue's values.
         const t2 = yield* IssueTicket({
           handle: h,
           freeText: null,
-          lane: "priority",
+          lane: "reservation",
           appointmentAt: Temporal.Instant.from("2026-05-15T10:30:00Z"),
         })
         expect(t2.id).toBe(t1.id)

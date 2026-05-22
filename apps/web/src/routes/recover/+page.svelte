@@ -6,8 +6,8 @@
   import ErrorCard from "$lib/components/ErrorCard.svelte"
   import Help from "$lib/components/Help.svelte"
   import PhoneOtpInput from "$lib/components/PhoneOtpInput.svelte"
-  import { toKatakana } from "$lib/kana.js"
-  import { errorMessage, helpText } from "$lib/messages.js"
+  import { containsHiragana, toKatakana, validateNameKana } from "$lib/kana.js"
+  import { errorMessage, helpText, m } from "$lib/messages.js"
   import { hasStaffToken, readTicketCache, writeTicketCache } from "$lib/ticketCache.js"
 
   let nameKana = $state("")
@@ -18,6 +18,27 @@
   // active ticket in localStorage, /recover is a wasted prompt;
   // bounce straight to /ticket.
   let booting = $state(true)
+
+  // Client-side mirror of NameKanaSchema — same rationale as /issue:
+  // block obviously-invalid submissions before the round-trip and
+  // give the customer an actionable inline reason. Empty stays
+  // silent (no nag before they type); the submit button gates on
+  // the full form anyway.
+  const nameKanaError = $derived.by((): string | null => {
+    const result = validateNameKana(nameKana)
+    switch (result) {
+      case "ok":
+      case "empty":
+        return null
+      case "too_long":
+        return m.name_kana_error_too_long()
+      case "invalid_chars":
+        return m.name_kana_error_invalid_chars()
+    }
+  })
+  const canSubmit = $derived(
+    !busy && nameKana.length > 0 && nameKanaError === null && phoneLast4.length === 4,
+  )
 
   onMount(async () => {
     // Stage 10: staff session sandbox — staff token in localStorage
@@ -35,9 +56,14 @@
     booting = false
   })
 
+  // ひらがな→カタカナ変換は IME 確定 (compositionend) のみ。 composition 中は
+  // 触らない (詳細は /issue 側のコメント)。
   const onNameInput = (event: Event): void => {
-    const el = event.currentTarget as HTMLInputElement
-    nameKana = toKatakana(el.value)
+    if ((event as InputEvent).isComposing) return
+    nameKana = toKatakana(nameKana)
+  }
+  const onNameCompositionEnd = (): void => {
+    nameKana = toKatakana(nameKana)
   }
 
   const onSubmit = async (event: SubmitEvent): Promise<void> => {
@@ -60,8 +86,8 @@
       const t = r.value.ticket
       writeTicketCache({
         ticketId: t.id,
-        nameKana: t.nameKana ?? nameKana,
-        phoneLast4: t.phoneLast4 ?? phoneLast4,
+        nameKana: t.nameKana,
+        phoneLast4: t.phoneLast4,
         lastKnownState: t.state,
       })
       await goto(`/ticket?id=${encodeURIComponent(t.id)}`)
@@ -78,31 +104,37 @@
 </script>
 
 <svelte:head>
-  <title>番号を確認 — 整理券</title>
+  <title>{m.recover_title()}</title>
   <meta name="robots" content="noindex" />
 </svelte:head>
 
 {#if !booting}
   <section class="recover">
     <h1>
-      番号を確認
-      <Help text={helpText("recoverHandle")} label="復帰の説明を表示" />
+      {m.recover_h1()}
+      <Help text={helpText("recoverHandle")} label={m.recover_help_label()} />
     </h1>
-    <p class="lede">
-      お名前 (カタカナ) と電話番号末尾 4 桁を入力すると、 ご自分の番号画面を開けます。
-    </p>
 
     <form onsubmit={onSubmit}>
       <label class="field">
-        <span class="label">お名前 (カタカナ)</span>
+        <span class="label">{m.name_kana_label()}</span>
         <input
           type="text"
-          value={nameKana}
+          bind:value={nameKana}
           oninput={onNameInput}
+          oncompositionend={onNameCompositionEnd}
           required
-          placeholder="ヤマダ タロウ"
+          aria-invalid={nameKanaError !== null}
+          placeholder={m.name_kana_placeholder()}
           autocomplete="off"
         />
+        {#if nameKanaError !== null}
+          <p class="kana-error" role="alert">{nameKanaError}</p>
+        {:else if containsHiragana(nameKana)}
+          <p class="kana-preview" aria-live="polite">
+            {m.name_kana_preview({ katakana: toKatakana(nameKana) })}
+          </p>
+        {/if}
       </label>
 
       <PhoneOtpInput bind:value={phoneLast4} />
@@ -111,8 +143,8 @@
         <ErrorCard tag={error.tag} code={error.code} message={error.message} />
       {/if}
 
-      <Button type="submit" size="lg" fullWidth disabled={busy}>
-        {busy ? "確認中…" : "番号を表示"}
+      <Button type="submit" size="lg" fullWidth disabled={!canSubmit}>
+        {busy ? m.recover_submit_busy() : m.recover_submit()}
       </Button>
     </form>
   </section>
@@ -126,11 +158,6 @@
   }
   h1 {
     font: var(--text-numeral-md);
-    margin: 0 0 var(--space-2);
-  }
-  .lede {
-    color: var(--color-fg-muted);
-    font: var(--text-body-md);
     margin: 0 0 var(--space-6);
   }
   form {
@@ -146,6 +173,22 @@
   .label {
     font: var(--text-label-md);
     color: var(--color-fg-secondary);
+  }
+  /* IME 確定前のひらがな→カタカナ視覚プレビュー (input には触らない)。 */
+  .kana-preview {
+    margin: 0;
+    font: var(--text-body-sm);
+    color: var(--color-fg-muted);
+  }
+  /* カタカナ化できない入力 (漢字 / ASCII / 記号) の警告。 */
+  .kana-error {
+    margin: 0;
+    font: var(--text-body-sm);
+    color: var(--color-state-danger);
+    font-weight: 500;
+  }
+  input[aria-invalid="true"] {
+    border-color: var(--color-state-danger);
   }
   input {
     background: var(--color-bg-raised);

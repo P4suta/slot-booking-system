@@ -8,7 +8,7 @@ type ErrorEnvelope = {
   readonly reason?: string
 }
 
-export type Lane = "walkIn" | "priority" | "reservation"
+export type Lane = "walkIn" | "reservation"
 
 export type Ticket = {
   readonly id: string
@@ -16,8 +16,15 @@ export type Ticket = {
   readonly lane: Lane
   readonly displaySeq: number
   readonly state: "Waiting" | "Called" | "Overdue" | "Served" | "NoShow" | "Cancelled"
-  readonly nameKana: string | null
-  readonly phoneLast4: string | null
+  // nameKana / phoneLast4 are non-null by domain invariant. The
+  // `IssueTicketBodySchema` at the server boundary requires them
+  // (`NameKanaSchema` non-empty, `PhoneLast4Schema` 4 digits) and
+  // every Ticket variant in `packages/core/src/domain/queue/Ticket.ts`
+  // carries them via `CommonFields`. Encoding through
+  // `TicketSchema` would throw before serialisation if either were
+  // null, so this type matches the wire reality.
+  readonly nameKana: string
+  readonly phoneLast4: string
   readonly freeText: string | null
   readonly issuedAt: string
   readonly calledAt?: string
@@ -59,9 +66,8 @@ type OverdueProjectionEntry = ProjectionEntry & {
   readonly nudgeCount: number
 }
 
-export type LaneCounts = {
+type LaneCounts = {
   readonly walkIn: number
-  readonly priority: number
   readonly reservation: number
 }
 
@@ -374,16 +380,6 @@ const staffHeaders = (token: string) => ({
   "x-staff-token": token,
 })
 
-export const callNext = async (
-  token: string,
-  body: { lane?: Lane } = {},
-): Promise<ApiResult<{ ticket: Ticket }>> =>
-  fetchJson(`${baseUrl()}/api/v1/queue/call-next`, {
-    method: "POST",
-    headers: staffHeaders(token),
-    body: body.lane !== undefined ? JSON.stringify({ lane: body.lane }) : undefined,
-  })
-
 export const callSpecific = async (
   token: string,
   ticketId: string,
@@ -392,26 +388,6 @@ export const callSpecific = async (
     method: "POST",
     headers: staffHeaders(token),
     body: JSON.stringify({ ticketId }),
-  })
-
-export const callBatch = async (
-  token: string,
-  ticketIds: readonly string[],
-): Promise<ApiResult<{ tickets: readonly Ticket[] }>> =>
-  fetchJson(`${baseUrl()}/api/v1/queue/call-batch`, {
-    method: "POST",
-    headers: staffHeaders(token),
-    body: JSON.stringify({ ticketIds }),
-  })
-
-export const reorder = async (
-  token: string,
-  body: { ticketId: string; afterTicketId: string | null },
-): Promise<ApiResult<{ ticket: Ticket }>> =>
-  fetchJson(`${baseUrl()}/api/v1/queue/reorder`, {
-    method: "POST",
-    headers: staffHeaders(token),
-    body: JSON.stringify(body),
   })
 
 export const markServed = async (

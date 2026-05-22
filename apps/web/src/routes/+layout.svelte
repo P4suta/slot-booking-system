@@ -1,8 +1,18 @@
 <script lang="ts">
   import "../app.css"
+  import { page } from "$app/state"
   import { onMount } from "svelte"
+  import { m } from "$lib/messages.js"
 
   let { children } = $props()
+
+  // /staff owns its own page header (brand, connection status, search,
+  // logout). The customer-side global header would otherwise put a
+  // one-click "整理券" link to the customer landing right next to the
+  // operator's tools — a footgun for tech-shy staff. Suppress the
+  // global header on /staff and let the staff layout drive its own
+  // chrome.
+  const isStaffRoute = $derived(page.url.pathname.startsWith("/staff"))
 
   type Theme = "light" | "dark" | "auto"
   let theme: Theme = $state("auto")
@@ -38,22 +48,24 @@
   })
 </script>
 
-<header>
-  <nav aria-label="Primary">
-    <a href="/">Queue</a>
-  </nav>
-  <button
-    type="button"
-    class="theme-toggle"
-    aria-label="theme toggle"
-    title="theme: {theme}"
-    onclick={() => setTheme(theme === "dark" ? "light" : theme === "light" ? "auto" : "dark")}
-  >
-    {theme === "dark" ? "☾" : theme === "light" ? "☀" : "↺"}
-  </button>
-</header>
+{#if !isStaffRoute}
+  <header>
+    <nav aria-label="Primary">
+      <a href="/">{m.layout_brand()}</a>
+    </nav>
+    <button
+      type="button"
+      class="theme-toggle"
+      aria-label={m.layout_theme_toggle_label()}
+      title={m.layout_theme_toggle_title({ theme })}
+      onclick={() => setTheme(theme === "dark" ? "light" : theme === "light" ? "auto" : "dark")}
+    >
+      {theme === "dark" ? "☾" : theme === "light" ? "☀" : "↺"}
+    </button>
+  </header>
+{/if}
 
-<main>
+<main class:full-height={isStaffRoute}>
   {@render children()}
 </main>
 
@@ -89,5 +101,8 @@
   }
   main {
     min-height: calc(100vh - 4rem);
+  }
+  main.full-height {
+    min-height: 100vh;
   }
 </style>

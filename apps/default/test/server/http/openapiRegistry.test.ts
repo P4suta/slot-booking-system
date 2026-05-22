@@ -37,7 +37,8 @@ describe("openapiRegistry — boundary Schema → JSON Schema derive", () => {
 
   it("registry covers every boundary export referenced by the router", () => {
     // Trivial existence pin — keep the registry from quietly losing
-    // an entry as boundarySchemas.ts evolves.
-    expect(keys.length).toBeGreaterThanOrEqual(13)
+    // an entry as boundarySchemas.ts evolves. Floor lowered to 12
+    // when ADR-0080 removed `ReorderBody`.
+    expect(keys.length).toBeGreaterThanOrEqual(12)
   })
 })

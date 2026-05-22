@@ -41,12 +41,6 @@ export type QueueAction =
   | { type: "MarkNoShow"; ticketId: TicketId; actor: "staff" | "system" }
   | { type: "Recall"; ticketId: TicketId; actor: "staff" | "system" }
   | {
-      type: "Reorder"
-      ticketId: TicketId
-      afterTicketId: TicketId | null
-      actor: "staff" | "system"
-    }
-  | {
       type: "CancelTicket"
       ticketId: TicketId
       actor: "customer" | "staff"

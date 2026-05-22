@@ -48,7 +48,7 @@ const TICKET_SCHEMA = {
   properties: {
     id: { type: "string", pattern: "^tkt_[A-Za-z0-9]{8,}$" },
     seq: { type: "integer", minimum: 1 },
-    lane: { type: "string", enum: ["walkIn", "priority", "reservation"] },
+    lane: { type: "string", enum: ["walkIn", "reservation"] },
     displaySeq: { type: "integer", minimum: 1 },
     state: {
       type: "string",

@@ -87,15 +87,6 @@ export const CallBatchBodySchema = Schema.Struct({
   ticketIds: NonEmptyTicketIdArraySchema,
 })
 
-/**
- * `POST /api/v1/queue/reorder` (ADR-0065). `afterTicketId === null`
- * means "lane head".
- */
-export const ReorderBodySchema = Schema.Struct({
-  ticketId: TicketIdSchema,
-  afterTicketId: Schema.NullOr(TicketIdSchema),
-})
-
 export const MyTicketQuerySchema = Schema.Struct({
   ticketId: TicketIdSchema,
   nameKana: NameKanaSchema,

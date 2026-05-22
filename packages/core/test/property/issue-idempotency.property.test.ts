@@ -51,7 +51,7 @@ const arbLast4 = fc.stringMatching(/^[0-9]{4}$/)
 const arbHandle: fc.Arbitrary<CustomerHandle> = fc
   .tuple(arbKana, arbLast4)
   .map(([k, p]) => handleOf(k, p))
-const arbLane: fc.Arbitrary<Lane> = fc.constantFrom("walkIn", "priority", "reservation")
+const arbLane: fc.Arbitrary<Lane> = fc.constantFrom("walkIn", "reservation")
 const APPT_AT = Temporal.Instant.from("2026-05-15T10:30:00Z")
 
 describe("ADR-0069 issue idempotency — handle as active-set primary key", () => {
