@@ -29,9 +29,6 @@ Thumbs.db
 # Claude Code runtime state (scheduled-task lock etc.)
 .claude/
 
-# Session-handoff scratch (delete after PR merge)
-HANDOFF.md
-
 # Serena MCP per-project cache. The MCP server is configured at
 # user scope (`claude mcp add -s user serena ...`), so the project
 # repo itself stays Serena-free; only the runtime cache shows up
