@@ -78,6 +78,7 @@ back.
 | [0078](./adr/0078-openapi-derived-from-schema.md)   | OpenAPI derived from Effect.Schema boundary registry          | accepted |
 | [0079](./adr/0079-remove-priority-lane.md)          | Remove the priority lane                                      | accepted |
 | [0080](./adr/0080-global-displayseq-and-reorder-removal.md) | Global `displaySeq` and Reorder removal               | accepted |
+| [0081](./adr/0081-looping-chime-acknowledge-button.md) | Looping chime + acknowledge button                         | accepted |
 | [0082](./adr/0082-router-auto-generation-from-boundary-registry.md) | Router auto-generation from boundary registry  | accepted |
 | [0083](./adr/0083-openapi-derived-web-client-types.md) | OpenAPI-derived web client types                           | accepted |
 | [0084](./adr/0084-queue-endpoint-split.md)          | `/queue` endpoint split (anonymous vs. staff)                 | accepted |

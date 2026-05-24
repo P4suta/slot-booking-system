@@ -22,6 +22,7 @@
     notificationPermissionState,
     requestNotificationPermission,
   } from "$lib/calledAlert.js"
+  import { chimeController } from "$lib/chimeController.js"
   import Button from "$lib/components/Button.svelte"
   import Card from "$lib/components/Card.svelte"
   import Dialog from "$lib/components/Dialog.svelte"
@@ -70,6 +71,11 @@
   let now = $state(Date.now())
   let checkInBusy = $state(false)
   let countdownTick: ReturnType<typeof setInterval> | undefined
+  // ADR-0081 — mirror the chime controller's reactive flag into a
+  // `$state` so the ack button shows iff the loop is running. The
+  // unsubscribe handle is wired up in `onMount` / `onDestroy`.
+  let chimePlaying = $state(false)
+  let chimeUnsubscribe: (() => void) | undefined
 
   // ADR-0068: customer can hit 「到着しました」 once `now ≥ appointmentAt - 10min`.
   const CHECK_IN_WINDOW_MS = 10 * 60 * 1000
@@ -207,6 +213,10 @@
       if (isTerminalState(t.state)) {
         purgeTicketCache()
         clearAlertMemory()
+        // ADR-0081 — make sure the looping chime is silenced once
+        // the ticket reaches Served/Cancelled/NoShow; otherwise the
+        // 15 s loop would keep ringing after the customer is done.
+        chimeController.stop()
         // Abort any pending subscribeToPush so we don't race the
         // unsubscribe with a late register.
         subscribeAbort.abort()
@@ -344,6 +354,11 @@
       await goto("/staff")
       return
     }
+    // ADR-0081 — bind the chime controller's listener so the
+    // ack-button visibility reflects loop state in real time.
+    chimeUnsubscribe = chimeController.subscribe((p) => {
+      chimePlaying = p
+    })
     notificationState = notificationPermissionState()
     stored = readStored()
     if (stored === null) {
@@ -431,6 +446,11 @@
     feed?.close()
     if (countdownTick !== undefined) clearInterval(countdownTick)
     subscribeAbort.abort()
+    // ADR-0081 — page unmount must always silence the loop; we
+    // unsubscribe first so the local $state doesn't get a final
+    // `false` notification after the component is gone.
+    chimeUnsubscribe?.()
+    chimeController.stop()
   })
 </script>
 
@@ -545,6 +565,18 @@
       {#if ticket.state === "Overdue"}
         <p class="overdue-note" role="status">{m.ticket_overdue_note()}</p>
       {/if}
+      {#if chimePlaying}
+        <div class="actions">
+          <Button
+            variant="primary"
+            size="md"
+            fullWidth
+            onclick={() => chimeController.stop()}
+          >
+            {m.ticket_chime_acknowledge_button()}
+          </Button>
+        </div>
+      {/if}
       <div class="actions">
         <Button
           variant="ghost"
@@ -641,21 +673,21 @@
     gap: var(--space-2);
   }
   .numeral-hero[data-state="Called"] {
-    background: oklch(95% 0.07 65);
+    background: var(--color-state-called-bg-soft);
     border-color: var(--color-state-called);
   }
   .numeral-hero[data-state="Overdue"] {
-    background: oklch(92% 0.13 30 / 60%);
-    border-color: oklch(70% 0.18 30);
+    background: var(--color-state-danger-bg-soft);
+    border-color: var(--color-state-danger-border-soft);
   }
   .numeral-hero[data-state="Served"] {
-    background: oklch(95% 0.07 145);
+    background: var(--color-state-serving-bg-soft);
     border-color: var(--color-state-serving);
   }
   .overdue-note {
-    background: oklch(95% 0.07 30 / 50%);
-    color: oklch(35% 0.18 30);
-    border-left: 3px solid oklch(70% 0.18 30);
+    background: var(--color-state-danger-bg-soft);
+    color: var(--color-state-danger-fg-soft);
+    border-left: 3px solid var(--color-state-danger-border-soft);
     padding: var(--space-3) var(--space-4);
     margin: var(--space-3) 0;
     font: var(--text-body-sm);
@@ -726,9 +758,9 @@
     color: var(--color-fg-muted);
   }
   .banner {
-    background: oklch(95% 0.07 65);
-    color: oklch(40% 0.13 65);
-    border: 1px solid oklch(85% 0.15 65);
+    background: var(--color-state-called-bg-soft);
+    color: var(--color-state-called-fg-soft);
+    border: 1px solid var(--color-state-called-border-soft);
     border-radius: var(--radius-md);
     padding: var(--space-3) var(--space-4);
     margin: 0;
@@ -764,8 +796,8 @@
     font: var(--text-label-sm);
   }
   .badge-arrived {
-    background: oklch(95% 0.07 145);
-    color: oklch(35% 0.13 145);
+    background: var(--color-state-serving-bg-soft);
+    color: var(--color-state-serving-fg-soft);
   }
   textarea {
     width: 100%;

@@ -13,7 +13,16 @@
  * `nudgeCount = 0`; each `Nudged` event increments `nudgeCount`.
  * A staff `Recall → re-Call` cycle mints a new `calledAt`, so the
  * second call also fires.
+ *
+ * Audio playback was upgraded from a single 500 ms two-tone chime
+ * to a 15 s loop of a 1.5 s five-tone pattern (ADR-0081); the loop
+ * lives in `chimeController` so the `/ticket` page can render an
+ * acknowledge button and stop the chime mid-loop. This file owns
+ * the dedup + vibrate + Notification signals only.
  */
+
+import { chimeController } from "./chimeController.js"
+import { m } from "./messages.js"
 
 const STORAGE_KEY = "queue.lastNotifiedCalledAt"
 
@@ -40,58 +49,6 @@ export const requestNotificationPermission = async (): Promise<NotificationPermi
   return await N.requestPermission()
 }
 
-/**
- * Two-tone chime synthesised with the Web Audio API — no asset
- * dependency. A5 (880Hz) → E6 (1318Hz), 220ms per tone with a
- * smoothed amplitude envelope to avoid the click that a hard
- * gate would emit. Returns the AudioContext closure so the caller
- * can decide when to release the resource (we close after the
- * second tone finishes).
- */
-const playChime = (): void => {
-  if (typeof window === "undefined") return
-  // window.AudioContext is non-nullable in lib.dom.d.ts, but at
-  // runtime older / restricted browsers (private mode, some
-  // embedded webviews) leave it undefined. Cast through unknown
-  // so eslint's "no-unnecessary-condition" doesn't trip on the
-  // defensive ??.
-  const w = window as unknown as {
-    AudioContext?: typeof AudioContext
-    webkitAudioContext?: typeof AudioContext
-  }
-  const AudioCtor = w.AudioContext ?? w.webkitAudioContext
-  if (AudioCtor === undefined) return
-  const ctx = new AudioCtor()
-  // Browsers gate AudioContext on a user-gesture; we attempt
-  // resume() and continue regardless — chime stays silent on
-  // locked contexts but the rest of the alert (vibrate / notify)
-  // still fires. Fire-and-forget so the chime tones schedule
-  // immediately, not after a resume round-trip.
-  ctx.resume().catch(() => {
-    /* locked by autoplay policy — silent fallback */
-  })
-  const playTone = (freq: number, startAt: number, durationMs: number): void => {
-    const o = ctx.createOscillator()
-    const g = ctx.createGain()
-    o.type = "sine"
-    o.frequency.value = freq
-    o.connect(g)
-    g.connect(ctx.destination)
-    const peak = 0.25
-    const startTime = ctx.currentTime + startAt
-    const endTime = startTime + durationMs / 1000
-    g.gain.setValueAtTime(0, startTime)
-    g.gain.linearRampToValueAtTime(peak, startTime + 0.02)
-    g.gain.linearRampToValueAtTime(0, endTime)
-    o.start(startTime)
-    o.stop(endTime)
-  }
-  playTone(880, 0, 220)
-  playTone(1318, 0.24, 260)
-  // 0.5s total + tail.
-  setTimeout(() => void ctx.close(), 800)
-}
-
 const vibratePattern = (): void => {
   if (typeof navigator === "undefined") return
   if (!("vibrate" in navigator)) return
@@ -102,11 +59,16 @@ const showNotification = (displaySeq: number, kind: "called" | "overdue"): void 
   const N = notificationOnWindow()
   if (N === null) return
   if (N.permission !== "granted") return
-  const title = kind === "called" ? "呼ばれました" : "応答をお願いします"
+  // Phase A3 — Notification copy goes through paraglide so the
+  // catalogue parity test (`test/i18n/paraglide-keys.test.ts`)
+  // pins the JA / EN pair, and no inline strings linger on the
+  // wire-side of the boundary ([[feedback-ui-copy-in-paraglide]]).
+  const displaySeqStr = String(displaySeq)
+  const title = kind === "called" ? m.notification_called_title() : m.notification_overdue_title()
   const body =
     kind === "called"
-      ? `${String(displaySeq)} 番の方、 受付までお越しください`
-      : `${String(displaySeq)} 番の方、 ご応答をお願いします`
+      ? m.notification_called_body({ displaySeq: displaySeqStr })
+      : m.notification_overdue_body({ displaySeq: displaySeqStr })
   try {
     const n = new N(title, {
       body,
@@ -170,7 +132,7 @@ export const maybeTriggerCalledAlert = (input: {
   const last = readLastNotifiedAt()
   if (last === key) return
   writeLastNotifiedAt(key)
-  playChime()
+  chimeController.start()
   vibratePattern()
   showNotification(input.displaySeq, input.state === "Called" ? "called" : "overdue")
 }

@@ -5,6 +5,7 @@ import {
   notificationPermissionState,
   requestNotificationPermission,
 } from "../src/lib/calledAlert.js"
+import { chimeController } from "../src/lib/chimeController.js"
 
 /**
  * Called-alert helper contract (Stage 7 of the slot-booking
@@ -119,9 +120,17 @@ const stubNotification = (permission: NotificationPermission): { ctor: number } 
 beforeEach(() => {
   vi.stubGlobal("window", winStub())
   delete (globalThis.navigator as unknown as { vibrate?: unknown }).vibrate
+  // ADR-0081: the chime is now a looping 15 s effect — without fake
+  // timers the setTimeouts would leak across tests and the singleton
+  // would still be playing when the next test reads `audio.plays`.
+  vi.useFakeTimers()
 })
 
 afterEach(() => {
+  // Stop the controller before tearing down the stubbed window so
+  // its `ctx.close()` runs against the still-alive fake AudioContext.
+  chimeController.stop()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -135,8 +144,9 @@ describe("ADR-0069 Stage 7 — called alert", () => {
       calledAt: "2026-05-11T10:00:00.000Z",
       displaySeq: 42,
     })
-    // 2-tone chime → 2 oscillators.
-    expect(audio.plays).toBe(2)
+    // ADR-0081: one cycle of the looping chime fires 5 oscillators
+    // (4 short 880 Hz pulses + 1 long 1318 Hz tone).
+    expect(audio.plays).toBe(5)
     expect(vibrate.calls).toHaveLength(1)
     expect(vibrate.calls[0]).toEqual([300, 120, 300])
     expect(notif.ctor).toBe(1)
@@ -161,7 +171,7 @@ describe("ADR-0069 Stage 7 — called alert", () => {
       calledAt: "2026-05-11T10:00:00.000Z",
       displaySeq: 42,
     })
-    expect(audio.plays).toBe(2)
+    expect(audio.plays).toBe(5)
     expect(vibrate.calls).toHaveLength(1)
     expect(notif.ctor).toBe(1)
   })
@@ -180,7 +190,8 @@ describe("ADR-0069 Stage 7 — called alert", () => {
       calledAt: "2026-05-11T10:05:00.000Z",
       displaySeq: 42,
     })
-    expect(audio.plays).toBe(4)
+    // Each fire restarts the chime loop → 5 oscillators × 2 fires.
+    expect(audio.plays).toBe(10)
     expect(vibrate.calls).toHaveLength(2)
     expect(notif.ctor).toBe(2)
   })
@@ -259,7 +270,7 @@ describe("ADR-0069 Stage 7 — called alert", () => {
       displaySeq: 42,
     })
     expect(notif.ctor).toBe(4)
-    expect(audio.plays).toBe(2 * 4) // 2-tone chime × 4 fires (initial Called + 3 nudges)
+    expect(audio.plays).toBe(5 * 4) // 5-osc chime cycle × 4 fires (initial Called + 3 nudges)
     expect(vibrate.calls).toHaveLength(4)
     const w = window as unknown as { localStorage: Storage }
     expect(w.localStorage.getItem("queue.lastNotifiedCalledAt")).toBe(`${baseCalledAt}#3`)
