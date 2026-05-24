@@ -140,9 +140,9 @@
     text-decoration: underline;
   }
   .banner {
-    background: oklch(95% 0.07 65);
-    color: oklch(40% 0.13 65);
-    border: 1px solid oklch(85% 0.15 65);
+    background: var(--color-state-called-bg-soft);
+    color: var(--color-state-called-fg-soft);
+    border: 1px solid var(--color-state-called-border-soft);
     border-radius: var(--radius-md);
     padding: var(--space-3) var(--space-4);
     margin: 0 0 var(--space-4);

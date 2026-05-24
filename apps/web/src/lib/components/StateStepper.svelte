@@ -115,12 +115,12 @@
   .step[data-status="current"] .dot {
     background: var(--color-state-called);
     border-color: var(--color-state-called);
-    box-shadow: 0 0 0 4px oklch(95% 0.07 65 / 50%);
+    box-shadow: 0 0 0 4px var(--color-state-called-bg-soft);
   }
   .step[data-status="current"][data-danger="true"] .dot {
-    background: oklch(70% 0.18 30);
-    border-color: oklch(70% 0.18 30);
-    box-shadow: 0 0 0 4px oklch(92% 0.13 30 / 60%);
+    background: var(--color-state-danger-border-soft);
+    border-color: var(--color-state-danger-border-soft);
+    box-shadow: 0 0 0 4px var(--color-state-danger-bg-soft);
   }
   .step[data-status="terminal"] .dot {
     border-color: var(--color-fg-muted);
@@ -142,7 +142,7 @@
     font-weight: 600;
   }
   .step[data-status="current"][data-danger="true"] .label {
-    color: oklch(40% 0.18 30);
+    color: var(--color-state-danger-fg-soft);
   }
   .step[data-status="done"] .label {
     color: var(--color-fg-secondary);
@@ -159,8 +159,8 @@
     height: 1.25rem;
     padding: 0 0.25rem;
     border-radius: var(--radius-pill);
-    background: oklch(70% 0.18 30);
-    color: oklch(99% 0.005 0);
+    background: var(--color-state-danger-border-soft);
+    color: var(--color-fg-inverted);
     font: var(--text-label-sm);
     font-weight: 700;
     line-height: 1.25rem;
@@ -183,10 +183,10 @@
     top: 0.3125rem;
   }
   .stepper[data-variant="compact"] .step[data-status="current"] .dot {
-    box-shadow: 0 0 0 2px oklch(95% 0.07 65 / 50%);
+    box-shadow: 0 0 0 2px var(--color-state-called-bg-soft);
   }
   .stepper[data-variant="compact"] .step[data-status="current"][data-danger="true"] .dot {
-    box-shadow: 0 0 0 2px oklch(92% 0.13 30 / 60%);
+    box-shadow: 0 0 0 2px var(--color-state-danger-bg-soft);
   }
   .stepper[data-variant="compact"] .label {
     position: absolute;

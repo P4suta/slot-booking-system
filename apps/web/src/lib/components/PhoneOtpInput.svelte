@@ -204,9 +204,9 @@
     font-size: 1.5rem;
     font-weight: 500;
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    border: 1px solid #d2d2d7;
-    border-radius: 12px;
-    background: white;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-raised);
     padding: 0;
     /* iOS / macOS Safari: numbers spinner suppression */
     -moz-appearance: textfield;
@@ -222,12 +222,12 @@
    * from an empty editable slot; tone it down so the eye lands on
    * the first-empty (editable) slot instead. */
   input:disabled {
-    background: #f5f5f7;
-    color: #d2d2d7;
+    background: var(--color-bg-subtle);
+    color: var(--color-border-strong);
     cursor: not-allowed;
   }
   input:focus {
-    outline: 2px solid #0071e3;
+    outline: 2px solid var(--color-border-focus);
     border-color: transparent;
   }
 </style>

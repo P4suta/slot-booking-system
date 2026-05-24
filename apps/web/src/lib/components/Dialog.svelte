@@ -77,7 +77,7 @@
     width: 100%;
   }
   dialog::backdrop {
-    background: oklch(0% 0 0 / 50%);
+    background: var(--color-overlay);
   }
   header {
     display: flex;

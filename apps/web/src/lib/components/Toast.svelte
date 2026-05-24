@@ -65,15 +65,15 @@
   }
   .toast[data-variant="success"] {
     background: var(--color-state-serving);
-    color: oklch(15% 0 0);
+    color: var(--color-fg-primary);
   }
   .toast[data-variant="warning"] {
     background: var(--color-state-called);
-    color: oklch(15% 0 0);
+    color: var(--color-fg-primary);
   }
   .toast[data-variant="danger"] {
     background: var(--color-state-danger);
-    color: oklch(99% 0 0);
+    color: var(--color-fg-inverted);
   }
   .message {
     font: var(--text-body-md);
