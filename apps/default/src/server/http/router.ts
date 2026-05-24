@@ -8,20 +8,16 @@ import {
 } from "@booking/core"
 import { Result, Schema } from "effect"
 import { Hono } from "hono"
-import type { QueueAction, QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
+import type { QueueResult, QueueShop } from "../durableObjects/QueueShop.js"
 import { verifyStaffJwt } from "../security/jwt.js"
 import { readSessionCookie, verifySession } from "../security/session.js"
 import { timingSafeEqual } from "../security/timingSafeEqual.js"
 import { handleStaffLogin } from "./auth/login.js"
 import {
   ByHandleQuerySchema,
-  CallBatchBodySchema,
-  CallNextBodySchema,
-  CallSpecificBodySchema,
   CancelBodySchema,
   decodeTicketIdParam,
   dispatchDecodeFailure,
-  IssueTicketBodySchema,
   MyTicketQuerySchema,
   PushSubscriptionBodySchema,
   PushSubscriptionDeleteQuerySchema,
@@ -36,6 +32,7 @@ import { openApiDocument } from "./openapi.js"
 import { parseJsonBody } from "./parseJsonBody.js"
 import { rateLimitMiddleware } from "./rateLimit.js"
 import { requestLog } from "./requestLog.js"
+import { buildRouterFromRegistry, routingRegistry } from "./routerRegistry.js"
 import { corsAllowlist, parseAllowlist, securityHeaders } from "./securityHeaders.js"
 import type { Env } from "./types.js"
 
@@ -67,6 +64,73 @@ import type { Env } from "./types.js"
 
 const stub = (env: Env): DurableObjectStub<QueueShop> =>
   env.QUEUE_SHOP.get(env.QUEUE_SHOP.idFromName("shop"))
+
+/**
+ * Shared computation for the `GET /queue` and `GET /queue/staff`
+ * projections (ADR-0084 split). Returns the sorted buckets + lane
+ * counts + EDF next-deadline; the route handlers decide whether to
+ * project to the anonymous shape or keep the full ticket rows.
+ *
+ * Kept inside `router.ts` rather than a separate module because it
+ * is the only consumer of `listTickets()` that needs both shapes;
+ * extracting it any further would make the route handler bodies
+ * indirect for no readability win.
+ */
+type QueueBuckets = {
+  readonly waiting: readonly Awaited<ReturnType<QueueShop["listTickets"]>>[number][]
+  readonly calling: readonly Awaited<ReturnType<QueueShop["listTickets"]>>[number][]
+  readonly overdue: readonly Awaited<ReturnType<QueueShop["listTickets"]>>[number][]
+  readonly laneCounts: { readonly walkIn: number; readonly reservation: number }
+  readonly nextReservationDeadline: string | null
+}
+
+const computeQueueBuckets = (
+  tickets: Awaited<ReturnType<QueueShop["listTickets"]>>,
+): QueueBuckets => {
+  const waiting = tickets
+    .filter((t) => t.state === "Waiting")
+    .sort((a, b) => a.displaySeq - b.displaySeq)
+  const calling = tickets
+    .filter((t) => t.state === "Called")
+    .sort((a, b) => a.displaySeq - b.displaySeq)
+  const overdue = tickets
+    .filter((t) => t.state === "Overdue")
+    .sort((a, b) => a.displaySeq - b.displaySeq)
+  const laneCount = (lane: "walkIn" | "reservation"): number =>
+    waiting.filter((t) => t.lane === lane).length
+  // Compute the EDF next-deadline from the encoded snapshot. The
+  // helper expects decoded Tickets, so we round-trip via Schema.
+  const decodedWaiting = waiting.map((w) => Schema.decodeUnknownSync(TicketSchema)(w))
+  const decodedMap = new Map(decodedWaiting.map((t) => [t.id, t] as const))
+  const ranked = reservationsByDeadline({ tickets: decodedMap })
+  const nextReservationDeadline =
+    ranked[0]?.appointmentAt !== null && ranked[0]?.appointmentAt !== undefined
+      ? String(ranked[0].appointmentAt)
+      : null
+  return {
+    waiting,
+    calling,
+    overdue,
+    laneCounts: { walkIn: laneCount("walkIn"), reservation: laneCount("reservation") },
+    nextReservationDeadline,
+  }
+}
+
+const projectAnonymous = (
+  t: Awaited<ReturnType<QueueShop["listTickets"]>>[number],
+): {
+  readonly id: string
+  readonly seq: number
+  readonly lane: "walkIn" | "reservation"
+  readonly displaySeq: number
+  readonly appointmentAt: string | null
+} => ({
+  id: t.id,
+  seq: t.seq,
+  lane: t.lane,
+  displaySeq: t.displaySeq,
+  appointmentAt: t.appointmentAt,
+})
 
 /**
  * ADR-0073 / ADR-0074 — gate `POST .../push-subscription` to the
@@ -212,46 +276,27 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
   app.use("*", envelopeLog)
   app.onError(onError)
 
+  // ADR-0082 — every action-dispatch endpoint (`stub.dispatch(...)`)
+  // is registered through the schema-driven generator. Direct DO
+  // method calls (`getTicketById`, `listTickets`,
+  // `register/unregisterPushSubscription`), the customer/staff-
+  // branching cancel + reschedule paths, and the truly-special
+  // login / openapi.json / queue/feed handlers stay manual below.
+  // The deliberate split keeps the abstraction tight: the generator
+  // owns the uniform ceremony, the rest stays explicit.
+  buildRouterFromRegistry(app, routingRegistry, {
+    stub,
+    dispatchEnvelope,
+    failResponse,
+    requireStaff,
+  })
+
   // Staff login — exchanges the deployment secret for a JWT
   // (response body) + an HMAC-signed cookie session. Bearer +
   // cookie are both honoured by requireStaff.
   app.post("/api/v1/staff/login", (c) => handleStaffLogin(c))
 
-  // Issue is rate-limited per CF-Connecting-IP (60 / min).
-  app.post("/api/v1/tickets", rateLimitMiddleware("RL_ISSUE"), async (c) => {
-    const parsed = await parseJsonBody(c)
-    if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
-    }
-    const decoded = Schema.decodeUnknownResult(IssueTicketBodySchema)(parsed.raw)
-    if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
-    }
-    const action: QueueAction = {
-      type: "IssueTicket",
-      handle: {
-        nameKana: decoded.success.nameKana,
-        phoneLast4: decoded.success.phoneLast4,
-      },
-      freeText: decoded.success.freeText,
-      ...(decoded.success.lane !== undefined ? { lane: decoded.success.lane } : {}),
-      // String-encode at the wire — the DO RPC boundary serialises
-      // every arg through structuredClone, which rejects
-      // Temporal.Instant. The DO dispatch decodes via core's
-      // InstantSchema before handing off to the use case.
-      ...(decoded.success.appointmentAt !== undefined
-        ? { appointmentAt: String(decoded.success.appointmentAt) }
-        : {}),
-    }
-    // ADR-0069: idempotent merge surfaces as 200 OK; a fresh issue
-    // remains 201 Created. The body carries `merged: true` on the
-    // merged variant so the web client can show "this is your
-    // existing ticket" rather than a fresh-issue label.
-    const result = await stub(c.env).dispatch(action)
-    const merged = result.ok && "ticket" in result && result.merged === true
-    return dispatchEnvelope(result, merged ? 200 : 201)
-  })
+  // POST /api/v1/tickets — see `routingRegistry` (ADR-0082).
 
   // GET /api/v1/tickets/me — customer self-fetch (handle in querystring).
   // Rate-limited per CF-Connecting-IP (RL_VERIFY, 30 / min) to slow
@@ -313,15 +358,7 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     })
   })
 
-  // POST /api/v1/tickets/:id/check-in — customer-side arrival audit
-  // for reservation tickets (ADR-0068). The CheckIn use case gates
-  // on Waiting+reservation+within-window; the void return surfaces
-  // as `{ ok: true }` (no `ticket` field) on the wire.
-  app.post("/api/v1/tickets/:id/check-in", rateLimitMiddleware("RL_VERIFY"), async (c) => {
-    const idR = decodeTicketIdParam(c.req.param("id"))
-    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    return dispatchEnvelope(await stub(c.env).dispatch({ type: "CheckIn", ticketId: idR.success }))
-  })
+  // POST /api/v1/tickets/:id/check-in — see `routingRegistry` (ADR-0082).
 
   // POST /api/v1/tickets/:id/reschedule — atomic appointmentAt swap
   // (ADR-0070). Customer path (handle in body) or staff path (token
@@ -507,23 +544,39 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
     )
   })
 
-  // GET /api/v1/queue — shop projection v4 (ADR-0062 / 0065 /
-  // 0066 / 0067 / 0071 / 0072). Anonymous payload exposes lane /
-  // displaySeq / appointmentAt + calling[] + overdue[] arrays;
-  // staff payload carries the full ticket rows (PII inclusive).
-  // `nextReservationDeadline` mirrors the WS broadcast field so
-  // initial-load and live-update paths converge on the same shape.
+  // GET /api/v1/queue and /api/v1/queue/staff — ADR-0084 split.
+  // The legacy "shape-shifting" endpoint (different response body
+  // based on `x-staff-token`) is replaced by two paths with
+  // statically known shapes; the web client now picks the path
+  // instead of toggling a header. The shared computation lives in
+  // `computeQueueBuckets` so both paths agree on sort order +
+  // EDF deadline + lane counts.
   app.get("/api/v1/queue", async (c) => {
     const tickets = await stub(c.env).listTickets()
-    const waiting = tickets
-      .filter((t) => t.state === "Waiting")
-      .sort((a, b) => a.displaySeq - b.displaySeq)
-    const calling = tickets
-      .filter((t) => t.state === "Called")
-      .sort((a, b) => a.displaySeq - b.displaySeq)
-    const overdue = tickets
-      .filter((t) => t.state === "Overdue")
-      .sort((a, b) => a.displaySeq - b.displaySeq)
+    const buckets = computeQueueBuckets(tickets)
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        v: 4,
+        waitingCount: buckets.waiting.length,
+        laneCounts: buckets.laneCounts,
+        calling: buckets.calling.map(projectAnonymous),
+        overdue: buckets.overdue.map(projectAnonymous),
+        waitingPreview: buckets.waiting.slice(0, 10).map(projectAnonymous),
+        nextReservationDeadline: buckets.nextReservationDeadline,
+      }),
+      { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
+    )
+  })
+
+  // GET /api/v1/queue/staff — full-ticket PII payload (ADR-0084).
+  // Staff guard runs first; an invalid / missing token returns 401
+  // before any projection work happens.
+  app.get("/api/v1/queue/staff", async (c) => {
+    const guard = await requireStaff(c)
+    if (!guard.ok) return guard.res
+    const tickets = await stub(c.env).listTickets()
+    const buckets = computeQueueBuckets(tickets)
     // ADR-0069 §Stage 11 — staff 履歴 column needs the recent terminal
     // tickets so an operator can see what just finished. `seq` is
     // monotone over the queue's lifetime, so sorting desc + slicing 8
@@ -534,197 +587,28 @@ export const buildQueueApi = (): Hono<{ Bindings: Env }> => {
       .filter((t) => t.state === "Served" || t.state === "Cancelled" || t.state === "NoShow")
       .sort((a, b) => b.seq - a.seq)
       .slice(0, 8)
-    const project = (t: (typeof tickets)[number]) => ({
-      id: t.id,
-      seq: t.seq,
-      lane: t.lane,
-      displaySeq: t.displaySeq,
-      appointmentAt: t.appointmentAt,
-    })
-    const laneCount = (lane: "walkIn" | "reservation") =>
-      waiting.filter((t) => t.lane === lane).length
-    // Compute the EDF next-deadline from the encoded snapshot. The
-    // helper expects decoded Tickets, so we round-trip via Schema.
-    const decodedWaiting = waiting.map((w) => Schema.decodeUnknownSync(TicketSchema)(w))
-    const decodedMap = new Map(decodedWaiting.map((t) => [t.id, t] as const))
-    const ranked = reservationsByDeadline({ tickets: decodedMap })
-    const nextReservationDeadline =
-      ranked[0]?.appointmentAt !== null && ranked[0]?.appointmentAt !== undefined
-        ? String(ranked[0].appointmentAt)
-        : null
-    // Three-way: no header → public projection; header present but
-    // invalid → 403 (was: silently degrade to public, which left the
-    // client deserializing anonymous shape into staff-typed state and
-    // crashing on `terminal: undefined` / `nameKana: undefined`); header
-    // present and valid via timing-safe compare → staff projection.
-    const headerToken = c.req.header("x-staff-token")
-    if (headerToken !== undefined && headerToken !== "") {
-      if (
-        c.env.STAFF_SESSION_SECRET === undefined ||
-        !timingSafeEqual(headerToken, c.env.STAFF_SESSION_SECRET)
-      ) {
-        return failResponse(403, "MissingStaffCapability", "E_VAL_MISSING_STAFF_CAPABILITY", {
-          reason: "invalid-staff-token",
-        })
-      }
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          v: 4,
-          waitingCount: waiting.length,
-          laneCounts: {
-            walkIn: laneCount("walkIn"),
-            reservation: laneCount("reservation"),
-          },
-          calling,
-          overdue,
-          waitingPreview: waiting.slice(0, 20),
-          terminal: terminalRecent,
-          nextReservationDeadline,
-        }),
-        { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
-      )
-    }
     return new Response(
       JSON.stringify({
         ok: true,
         v: 4,
-        waitingCount: waiting.length,
-        laneCounts: {
-          walkIn: laneCount("walkIn"),
-          reservation: laneCount("reservation"),
-        },
-        calling: calling.map(project),
-        overdue: overdue.map(project),
-        waitingPreview: waiting.slice(0, 10).map(project),
-        nextReservationDeadline,
+        waitingCount: buckets.waiting.length,
+        laneCounts: buckets.laneCounts,
+        calling: buckets.calling,
+        overdue: buckets.overdue,
+        waitingPreview: buckets.waiting.slice(0, 20),
+        terminal: terminalRecent,
+        nextReservationDeadline: buckets.nextReservationDeadline,
       }),
       { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
     )
   })
 
-  // POST /api/v1/queue/call-next — staff. Body `{ lane? }` chooses
-  // a specific lane head; an empty body means "preferred-lane chain
-  // default" (ADR-0062). Rate-limited per token hash (300 / min).
-  app.post("/api/v1/queue/call-next", rateLimitMiddleware("RL_OPERATE"), async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    let raw: unknown = {}
-    try {
-      const text = await c.req.text()
-      if (text.length > 0) raw = JSON.parse(text)
-    } catch (err) {
-      return failResponse(400, "InvalidPayload", "E_VAL_PAYLOAD", {
-        reason: err instanceof Error ? err.message : "non-json body",
-      })
-    }
-    const decoded = Schema.decodeUnknownResult(CallNextBodySchema)(raw)
-    if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
-    }
-    const action: QueueAction = {
-      type: "CallNext",
-      actor: "staff",
-      ...(decoded.success.lane !== undefined ? { lane: decoded.success.lane } : {}),
-    }
-    return dispatchEnvelope(await stub(c.env).dispatch(action))
-  })
-
-  // POST /api/v1/queue/call-specific — staff. Body `{ ticketId }`
-  // (ADR-0065).
-  app.post("/api/v1/queue/call-specific", rateLimitMiddleware("RL_OPERATE"), async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const parsed = await parseJsonBody(c)
-    if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
-    }
-    const decoded = Schema.decodeUnknownResult(CallSpecificBodySchema)(parsed.raw)
-    if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
-    }
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({
-        type: "CallSpecific",
-        ticketId: decoded.success.ticketId,
-        actor: "staff",
-      }),
-    )
-  })
-
-  // POST /api/v1/queue/call-batch — staff. Body
-  // `{ ticketIds: NonEmpty<TicketId> }` (ADR-0065). Atomic batch:
-  // any per-member failure rolls every member back; the response
-  // carries `tickets[]` (every member that landed Called).
-  app.post("/api/v1/queue/call-batch", rateLimitMiddleware("RL_OPERATE"), async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const parsed = await parseJsonBody(c)
-    if (!parsed.ok) {
-      return failResponse(parsed.status, parsed.tag, parsed.code, { reason: parsed.reason })
-    }
-    const decoded = Schema.decodeUnknownResult(CallBatchBodySchema)(parsed.raw)
-    if (Result.isFailure(decoded)) {
-      const fail = dispatchDecodeFailure(decoded.failure)
-      return failResponse(fail.status, fail.tag, fail.code)
-    }
-    const ids = decoded.success.ticketIds
-    const head = ids[0]
-    /* v8 ignore next 3 */
-    if (head === undefined) {
-      return failResponse(422, "InvalidBody", "E_VAL_BODY")
-    }
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({
-        type: "CallBatch",
-        ticketIds: [head, ...ids.slice(1)] as const,
-        actor: "staff",
-      }),
-    )
-  })
-
-  // POST /api/v1/tickets/:id/served — staff
-  app.post("/api/v1/tickets/:id/served", async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const idR = decodeTicketIdParam(c.req.param("id"))
-    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({ type: "MarkServed", ticketId: idR.success }),
-    )
-  })
-
-  // POST /api/v1/tickets/:id/no-show — staff
-  app.post("/api/v1/tickets/:id/no-show", async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const idR = decodeTicketIdParam(c.req.param("id"))
-    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({
-        type: "MarkNoShow",
-        ticketId: idR.success,
-        actor: "staff",
-      }),
-    )
-  })
-
-  // POST /api/v1/tickets/:id/recall — staff
-  app.post("/api/v1/tickets/:id/recall", async (c) => {
-    const guard = await requireStaff(c)
-    if (!guard.ok) return guard.res
-    const idR = decodeTicketIdParam(c.req.param("id"))
-    if (Result.isFailure(idR)) return failResponse(404, "TicketNotFound", "E_DOM_TICKET_NOT_FOUND")
-    return dispatchEnvelope(
-      await stub(c.env).dispatch({
-        type: "Recall",
-        ticketId: idR.success,
-        actor: "staff",
-      }),
-    )
-  })
+  // POST /api/v1/queue/call-next — see `routingRegistry` (ADR-0082).
+  // POST /api/v1/queue/call-specific — see `routingRegistry` (ADR-0082).
+  // POST /api/v1/queue/call-batch — see `routingRegistry` (ADR-0082).
+  // POST /api/v1/tickets/:id/served — see `routingRegistry` (ADR-0082).
+  // POST /api/v1/tickets/:id/no-show — see `routingRegistry` (ADR-0082).
+  // POST /api/v1/tickets/:id/recall — see `routingRegistry` (ADR-0082).
 
   // POST /api/v1/tickets/:id/push-subscription — customer registers
   // a Web Push subscription for the ticket. Customer-authenticated:

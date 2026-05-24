@@ -223,11 +223,13 @@ export class InsufficientCapabilityError extends Schema.TaggedErrorClass<Insuffi
 }
 
 /**
- * A `Reorder` command targets two tickets whose lanes differ. Per
- * ADR-0065, reorder is restricted to within a single lane — moving
- * a ticket across lanes is a `Lane` mutation, not a reorder, and is
- * not currently exposed (an explicit operator action would be a
- * separate ADR).
+ * A reservation-only command (`RescheduleTicket` / `LapseAppointment`)
+ * targets a walk-in ticket. The original `Reorder` motivation was
+ * dropped in ADR-0080; the live producers are the two reservation-
+ * lane invariants — see `RescheduleTicket.ts` § "reservation lane
+ * only" and `LapseAppointment.ts` § lane check. The error carries
+ * the observed `ticketLane` + the expected `targetLane` so the
+ * caller can surface a specific 422 to the operator.
  */
 export class LaneMismatchError extends Schema.TaggedErrorClass<LaneMismatchError>()(
   "LaneMismatch",

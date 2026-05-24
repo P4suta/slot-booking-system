@@ -26,7 +26,9 @@
       "!**/migrations/*.sql",
       "!**/*.svelte",
       "!apps/web/src/paraglide",
-      "!apps/web/src/graphql-env.d.ts"
+      "!apps/web/src/generated",
+      "!apps/web/src/graphql-env.d.ts",
+      "!docs/openapi.json"
     ]
   },
   "formatter": {

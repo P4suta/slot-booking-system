@@ -22,8 +22,15 @@ Thumbs.db
 # Direnv
 .envrc.local
 
+# docker-compose UID/GID substitution (B6.2). Copy `.env.example`
+# to `.env` to bind container writes to the host user.
+.env
+
 # Claude Code runtime state (scheduled-task lock etc.)
 .claude/
+
+# Session-handoff scratch (delete after PR merge)
+HANDOFF.md
 
 # Serena MCP per-project cache. The MCP server is configured at
 # user scope (`claude mcp add -s user serena ...`), so the project
@@ -44,6 +51,10 @@ build/
 .turbo/
 .tsbuildinfo*
 **/.tsbuildinfo*
+# TS project-ref incremental output named after the tsconfig (no
+# leading dot); appears under apps/web etc. when `tsc -b` runs.
+tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
 
 # Test / coverage
 coverage/

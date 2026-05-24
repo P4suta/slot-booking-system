@@ -65,7 +65,13 @@ pre-push:
     test:
       run: scripts/dev-exec.ts corepack pnpm exec tsx scripts/test/runner.ts @booking/core
     test-default:
-      run: scripts/dev-exec.ts env TEST_DEADLINE=90 corepack pnpm exec tsx scripts/test/runner.ts default
+      # B6.4 — pre-push runs the node-only fast lane (`vitest --project=node`,
+      # ~3 s for 55 tests on apps/default). The miniflare-backed
+      # integration suite is deferred to CI where its 2-minute cost
+      # is absorbed by a dedicated job. `TEST_DEADLINE=30` is the
+      # tighter deadline that the fast lane fits inside; the legacy
+      # 90 s budget covered the integration cohort.
+      run: scripts/dev-exec.ts env TEST_DEADLINE=30 corepack pnpm exec tsx scripts/test/runner.ts default --project=node
     test-web:
       run: scripts/dev-exec.ts corepack pnpm exec tsx scripts/test/runner.ts web
     test-scripts:

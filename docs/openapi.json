@@ -1,0 +1,3428 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "slot-booking-system queue REST API",
+    "version": "1.0.0",
+    "summary": "Customer takes a number, staff calls the next in line. Anonymous handle (nameKana + phoneLast4) for self-service mutations; the staff token gates the operate-queue surface."
+  },
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "customer",
+      "description": "Customer-facing endpoints"
+    },
+    {
+      "name": "staff",
+      "description": "Operator endpoints; require x-staff-token"
+    },
+    {
+      "name": "projection",
+      "description": "Read-side projection feeds"
+    }
+  ],
+  "paths": {
+    "/tickets": {
+      "post": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Issue a new ticket (walk-in or reservation, ADR-0066/0068)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nameKana": {
+                    "type": "string"
+                  },
+                  "phoneLast4": {
+                    "type": "string",
+                    "allOf": [
+                      {
+                        "pattern": "^\\d{4}$"
+                      }
+                    ]
+                  },
+                  "freeText": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "lane": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "walkIn",
+                          "reservation"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "appointmentAt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/Instant"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "nameKana",
+                  "phoneLast4",
+                  "freeText"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent merge envelope (ADR-0069); existing ticket returned with `merged: true`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueTicketMergedEnvelope"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Ticket envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/check-in": {
+      "post": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Customer-side arrival audit (reservation only, ADR-0068)",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CheckedIn event recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/slots": {
+      "get": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Slot grid availability for the customer's booking picker (ADR-0066/0068)",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "$ref": "#/components/schemas/PlainDate"
+                    },
+                    "to": {
+                      "$ref": "#/components/schemas/PlainDate"
+                    },
+                    "granularity": {
+                      "type": "number",
+                      "enum": [
+                        15,
+                        30,
+                        60
+                      ]
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to",
+                    "granularity"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bucket grid with capacity / taken / available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "slots"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "slots": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "date",
+                          "bucketId",
+                          "granularity",
+                          "capacity",
+                          "taken",
+                          "available"
+                        ],
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "format": "date"
+                          },
+                          "bucketId": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "granularity": {
+                            "type": "integer",
+                            "enum": [
+                              15,
+                              30,
+                              60
+                            ]
+                          },
+                          "capacity": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "taken": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "available": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/by-handle": {
+      "get": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Customer recovery — look up the active ticket by handle (ADR-0069)",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "nameKana": {
+                      "type": "string"
+                    },
+                    "phoneLast4": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\d{4}$"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "nameKana",
+                    "phoneLast4"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticket envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/cancel": {
+      "post": {
+        "tags": [
+          "customer",
+          "staff"
+        ],
+        "summary": "Cancel a ticket (customer with handle, or staff)",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "nameKana": {
+                        "type": "string"
+                      },
+                      "phoneLast4": {
+                        "type": "string",
+                        "allOf": [
+                          {
+                            "pattern": "^\\d{4}$"
+                          }
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "nameKana",
+                      "phoneLast4",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ticket envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/push-subscription": {
+      "post": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Register a Web Push subscription for the ticket",
+        "description": "ADR-0073 / ADR-0074. The customer registers a browser-side PushSubscription so the alarm sweep can deliver Overdue nudges to a closed tab. Customer-authenticated via `(nameKana, phoneLast4)` (cancel-pattern parity). The endpoint host is gated to the known push services (FCM / Mozilla / Apple).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nameKana": {
+                    "type": "string"
+                  },
+                  "phoneLast4": {
+                    "type": "string",
+                    "allOf": [
+                      {
+                        "pattern": "^\\d{4}$"
+                      }
+                    ]
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "allOf": [
+                      {
+                        "maxLength": 2048
+                      }
+                    ]
+                  },
+                  "p256dh": {
+                    "type": "string"
+                  },
+                  "auth": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "nameKana",
+                  "phoneLast4",
+                  "endpoint",
+                  "p256dh",
+                  "auth"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Subscription registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Unregister a Web Push subscription",
+        "description": "ADR-0073 / ADR-0074. Customer-initiated unsubscribe (e.g. on permission revoke or device cleanup). Idempotent; missing row still returns 200. Authenticated via query string (DELETE bodies are non-portable across user-agents).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "nameKana": {
+                      "type": "string"
+                    },
+                    "phoneLast4": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\d{4}$"
+                        }
+                      ]
+                    },
+                    "endpoint": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "maxLength": 2048
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "nameKana",
+                    "phoneLast4",
+                    "endpoint"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subscription unregistered (idempotent)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/reschedule": {
+      "post": {
+        "tags": [
+          "customer",
+          "staff"
+        ],
+        "summary": "Reschedule a reservation ticket (atomic appointmentAt swap)",
+        "description": "ADR-0070. Same ticketId / seq / displaySeq / handle / lane stay; only `appointmentAt` is replaced. Customer path verifies the handle constant-time against the stored ticket; staff path uses the `x-staff-token` header. Same-slot submissions return 200 with the unchanged ticket (no-op success).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nameKana": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "phoneLast4": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "allOf": [
+                          {
+                            "pattern": "^\\d{4}$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "newAppointmentAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "newAppointmentAt"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ticket envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/served": {
+      "post": {
+        "tags": [
+          "staff"
+        ],
+        "summary": "Staff: mark Called or Overdue → Served",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticket envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/no-show": {
+      "post": {
+        "tags": [
+          "staff"
+        ],
+        "summary": "Staff: mark Called or Overdue → NoShow",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticket envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{id}/recall": {
+      "post": {
+        "tags": [
+          "staff"
+        ],
+        "summary": "Staff: recall (Called or Overdue → Waiting, original seq preserved)",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticket envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue": {
+      "get": {
+        "tags": [
+          "projection"
+        ],
+        "summary": "Anonymous shop projection — PII-free, seq/lane/displaySeq only (ADR-0084)",
+        "description": "ADR-0084 split — this endpoint returns the anonymous projection regardless of any auth header. Staff dashboards call `/queue/staff` for the full-ticket payload.",
+        "responses": {
+          "200": {
+            "description": "Anonymous projection envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "v",
+                    "waitingCount",
+                    "laneCounts",
+                    "calling",
+                    "overdue",
+                    "waitingPreview",
+                    "nextReservationDeadline"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "v": {
+                      "const": 4
+                    },
+                    "waitingCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "laneCounts": {
+                      "type": "object",
+                      "required": [
+                        "walkIn",
+                        "reservation"
+                      ],
+                      "properties": {
+                        "walkIn": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "reservation": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "calling": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProjectionEntry"
+                      }
+                    },
+                    "overdue": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProjectionEntry"
+                      }
+                    },
+                    "waitingPreview": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProjectionEntry"
+                      }
+                    },
+                    "nextReservationDeadline": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue/staff": {
+      "get": {
+        "tags": [
+          "staff",
+          "projection"
+        ],
+        "summary": "Staff shop projection — full Ticket rows + `terminal` history (ADR-0084)",
+        "description": "ADR-0084 split — staff dashboards call this endpoint instead of `/queue` so the response shape is statically known. Requires `x-staff-token`, `Authorization: Bearer <jwt>`, or the `__Host-staff_session` cookie.",
+        "responses": {
+          "200": {
+            "description": "Staff projection envelope (PII inclusive)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "v",
+                    "waitingCount",
+                    "laneCounts",
+                    "calling",
+                    "overdue",
+                    "waitingPreview",
+                    "terminal",
+                    "nextReservationDeadline"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "v": {
+                      "const": 4
+                    },
+                    "waitingCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "laneCounts": {
+                      "type": "object",
+                      "required": [
+                        "walkIn",
+                        "reservation"
+                      ],
+                      "properties": {
+                        "walkIn": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "reservation": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "calling": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Ticket"
+                      }
+                    },
+                    "overdue": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Ticket"
+                      }
+                    },
+                    "waitingPreview": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Ticket"
+                      }
+                    },
+                    "terminal": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Ticket"
+                      }
+                    },
+                    "nextReservationDeadline": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue/call-next": {
+      "post": {
+        "tags": [
+          "staff"
+        ],
+        "summary": "Staff: call the next Waiting ticket",
+        "responses": {
+          "200": {
+            "description": "Ticket envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/queue/feed": {
+      "get": {
+        "tags": [
+          "projection"
+        ],
+        "summary": "DO Hibernating WebSocket projection feed — server-push on every dispatch.",
+        "description": "Upgrade with `Connection: Upgrade` + `Upgrade: websocket`. The DO emits the anonymous projection (waitingCount, calling, overdue, waitingPreview) on every successful queue mutation. The current snapshot is sent immediately on connect.",
+        "responses": {
+          "101": {
+            "description": "Switching Protocols (WebSocket established)"
+          },
+          "426": {
+            "description": "Upgrade Required (no Upgrade: websocket header)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/staff/login": {
+      "post": {
+        "tags": [
+          "staff"
+        ],
+        "summary": "Exchange the staff secret for a JWT + cookie session",
+        "description": "Accepts `{ password }`. On success returns `{ ok: true, token, expiresIn }` and sets the `__Host-staff_session` cookie. The Bearer token + the cookie are both honoured by requireStaff; clients pick whichever fits their transport.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "token",
+                    "expiresIn"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "token": {
+                      "type": "string"
+                    },
+                    "expiresIn": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Domain or validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "_tag",
+                        "code"
+                      ],
+                      "properties": {
+                        "_tag": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [
+          "projection"
+        ],
+        "summary": "This OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Instant": {
+        "type": "string"
+      },
+      "PlainDate": {
+        "type": "string"
+      },
+      "Ticket": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "allOf": [
+              {
+                "pattern": "^tkt_[A-Za-z0-9]{8,}$"
+              }
+            ]
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "lane": {
+            "type": "string",
+            "enum": [
+              "walkIn",
+              "reservation"
+            ]
+          },
+          "displaySeq": {
+            "type": "integer"
+          },
+          "nameKana": {
+            "type": "string"
+          },
+          "phoneLast4": {
+            "type": "string",
+            "allOf": [
+              {
+                "pattern": "^[0-9]{4}$"
+              }
+            ]
+          },
+          "freeText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issuedAt": {
+            "type": "string"
+          },
+          "appointmentAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkedInAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "Waiting",
+              "Called",
+              "Overdue",
+              "Served",
+              "NoShow",
+              "Cancelled"
+            ]
+          },
+          "calledAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "calledBy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "staff",
+                  "system"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "overdueAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastNudgedAt": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nudgeCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "servedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "servedBy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "staff",
+                  "system"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "markedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "markedBy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "staff",
+                  "system"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelledAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelledBy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "staff",
+                  "system"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "lane",
+          "displaySeq",
+          "nameKana",
+          "phoneLast4",
+          "freeText",
+          "issuedAt",
+          "appointmentAt",
+          "checkedInAt",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "ProjectionEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "allOf": [
+              {
+                "pattern": "^tkt_[A-Za-z0-9]{8,}$"
+              }
+            ]
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "lane": {
+            "type": "string",
+            "enum": [
+              "walkIn",
+              "reservation"
+            ]
+          },
+          "displaySeq": {
+            "type": "integer"
+          },
+          "appointmentAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nudgeCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "lane",
+          "displaySeq",
+          "appointmentAt"
+        ],
+        "additionalProperties": false
+      },
+      "TicketEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "ticket": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "allOf": [
+                  {
+                    "pattern": "^tkt_[A-Za-z0-9]{8,}$"
+                  }
+                ]
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "lane": {
+                "type": "string",
+                "enum": [
+                  "walkIn",
+                  "reservation"
+                ]
+              },
+              "displaySeq": {
+                "type": "integer"
+              },
+              "nameKana": {
+                "type": "string"
+              },
+              "phoneLast4": {
+                "type": "string",
+                "allOf": [
+                  {
+                    "pattern": "^[0-9]{4}$"
+                  }
+                ]
+              },
+              "freeText": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "issuedAt": {
+                "type": "string"
+              },
+              "appointmentAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "checkedInAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "Waiting",
+                  "Called",
+                  "Overdue",
+                  "Served",
+                  "NoShow",
+                  "Cancelled"
+                ]
+              },
+              "calledAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "calledBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "staff",
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "overdueAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastNudgedAt": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "nudgeCount": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "servedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "servedBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "staff",
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "markedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "markedBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "staff",
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cancelledAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cancelledBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "staff",
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "seq",
+              "lane",
+              "displaySeq",
+              "nameKana",
+              "phoneLast4",
+              "freeText",
+              "issuedAt",
+              "appointmentAt",
+              "checkedInAt",
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "ticket"
+        ],
+        "additionalProperties": false
+      },
+      "IssueTicketMergedEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "ticket": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "allOf": [
+                  {
+                    "pattern": "^tkt_[A-Za-z0-9]{8,}$"
+                  }
+                ]
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "lane": {
+                "type": "string",
+                "enum": [
+                  "walkIn",
+                  "reservation"
+                ]
+              },
+              "displaySeq": {
+                "type": "integer"
+              },
+              "nameKana": {
+                "type": "string"
+              },
+              "phoneLast4": {
+                "type": "string",
+                "allOf": [
+                  {
+                    "pattern": "^[0-9]{4}$"
+                  }
+                ]
+              },
+              "freeText": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "issuedAt": {
+                "type": "string"
+              },
+              "appointmentAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "checkedInAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "Waiting",
+                  "Called",
+                  "Overdue",
+                  "Served",
+                  "NoShow",
+                  "Cancelled"
+                ]
+              },
+              "calledAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "calledBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "staff",
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "overdueAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastNudgedAt": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "nudgeCount": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "servedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "servedBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "staff",
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "markedAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "markedBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "staff",
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cancelledAt": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cancelledBy": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "staff",
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "seq",
+              "lane",
+              "displaySeq",
+              "nameKana",
+              "phoneLast4",
+              "freeText",
+              "issuedAt",
+              "appointmentAt",
+              "checkedInAt",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          "merged": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "ticket",
+          "merged"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

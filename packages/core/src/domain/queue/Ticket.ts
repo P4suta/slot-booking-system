@@ -25,10 +25,12 @@ export type Actor = Schema.Schema.Type<typeof ActorSchema>
  *
  * `seq` is a monotonic per-shop counter handed out at `Issue` time
  * (ADR-0051). It is the global total-order anchor — audit-side, every
- * event has a `seq`-derivable position. `displaySeq` is the per-lane
- * FIFO position consumed by UI ordering and `head` (ADR-0065): Issue
- * assigns the next per-lane displaySeq, Reorder rebalances it. `lane`
- * partitions the queue per ADR-0062.
+ * event has a `seq`-derivable position. `displaySeq` is the
+ * **globally monotone** customer-facing ticket number assigned at
+ * Issue time (ADR-0080 — superseded the earlier per-lane numbering;
+ * the Reorder transition that rebalanced lanes was removed in the
+ * same ADR). `lane` partitions the queue per ADR-0062 (walk-in vs.
+ * reservation; ADR-0079 removed the earlier priority lane).
  *
  * `appointmentAt` (ADR-0066) is the booked slot start instant for
  * reservation-lane tickets and `null` for walk-in / priority. The

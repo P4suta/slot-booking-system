@@ -3,19 +3,23 @@
  *
  * Request-body and query schemas are derived from the
  * `boundarySchemas.ts` declarations through
- * `openapiRegistry.ts#bodySchemaFor` — adding a new wire shape
- * is one entry in `boundaryRegistry` plus the path stanza here.
- * The narrative pieces (paths, summaries, tag groupings, response
- * envelopes, auth-side request bodies that have no Effect.Schema
- * counterpart) remain hand-written. See ADR-0078 for the
- * two-step migration that landed this layout.
+ * `openapiRegistry.ts#bodySchemaFor` (ADR-0078). Response-side
+ * Ticket / ProjectionEntry / envelope shapes are derived from
+ * `responseSchemas.ts` through `openapiRegistry.ts#responseSchemaFor`
+ * (ADR-0085) — adding a new response shape is one entry in
+ * `responseRegistry` plus the path stanza here. The narrative
+ * pieces (paths, summaries, tag groupings, auth-side request
+ * bodies that have no Effect.Schema counterpart) remain hand-
+ * written.
  *
  * The shared `components.schemas` slot carries every `$defs`
  * entry the derived schemas pull in (e.g. `Instant`), keyed under
  * the sanitised OpenAPI component names produced by
- * `JsonSchema.toMultiDocumentOpenApi3_1`.
+ * `JsonSchema.toMultiDocumentOpenApi3_1`, plus the response-side
+ * shapes (Ticket, ProjectionEntry, …) lifted as named components
+ * so paths can `$ref` them.
  */
-import { bodySchemaFor, buildOpenApiBundle } from "./openapiRegistry.js"
+import { bodySchemaFor, buildOpenApiBundle, responseSchemaFor } from "./openapiRegistry.js"
 
 const openApiBundle = buildOpenApiBundle()
 const ERROR_RESPONSE = {
@@ -42,44 +46,31 @@ const ERROR_RESPONSE = {
   },
 } as const
 
-const TICKET_SCHEMA = {
-  type: "object",
-  required: ["id", "seq", "lane", "displaySeq", "state", "nameKana", "phoneLast4", "issuedAt"],
-  properties: {
-    id: { type: "string", pattern: "^tkt_[A-Za-z0-9]{8,}$" },
-    seq: { type: "integer", minimum: 1 },
-    lane: { type: "string", enum: ["walkIn", "reservation"] },
-    displaySeq: { type: "integer", minimum: 1 },
-    state: {
-      type: "string",
-      enum: ["Waiting", "Called", "Overdue", "Served", "NoShow", "Cancelled"],
-    },
-    nameKana: { type: "string" },
-    phoneLast4: { type: "string", pattern: "^[0-9]{4}$" },
-    freeText: { type: ["string", "null"] },
-    issuedAt: { type: "string", format: "date-time" },
-    calledAt: { type: "string", format: "date-time" },
-    servedAt: { type: "string", format: "date-time" },
-    cancelledAt: { type: "string", format: "date-time" },
-    markedAt: { type: "string", format: "date-time" },
-    appointmentAt: { type: ["string", "null"], format: "date-time" },
-    checkedInAt: { type: ["string", "null"], format: "date-time" },
-    overdueAt: { type: "string", format: "date-time" },
-    lastNudgedAt: { type: ["string", "null"], format: "date-time" },
-    nudgeCount: { type: "integer", minimum: 0 },
-  },
-  additionalProperties: true,
-} as const
+// The `Ticket`, `ProjectionEntry`, `TicketEnvelope`, and
+// `IssueTicketMergedEnvelope` shapes live in `components.schemas`
+// (below) and are derived from `responseSchemas.ts` (ADR-0085).
+// Endpoints `$ref` the lifted name so the per-path `responses`
+// stay declarative and stay in sync when the wire schema changes.
+const TICKET_REF = { $ref: "#/components/schemas/Ticket" } as const
+const PROJECTION_ENTRY_REF = { $ref: "#/components/schemas/ProjectionEntry" } as const
 
 const TICKET_ENVELOPE = {
   description: "Ticket envelope",
   content: {
     "application/json": {
-      schema: {
-        type: "object",
-        required: ["ok", "ticket"],
-        properties: { ok: { const: true }, ticket: TICKET_SCHEMA },
-      },
+      schema: { $ref: "#/components/schemas/TicketEnvelope" },
+    },
+  },
+} as const
+
+// ADR-0069 §idempotent merge — the `IssueTicket` handler returns
+// `200 OK` with `merged: true` on a duplicate-handle issue. The
+// envelope carries the same `ticket` shape as the 201 fresh case.
+const ISSUE_TICKET_MERGED_ENVELOPE = {
+  description: "Idempotent merge envelope (ADR-0069); existing ticket returned with `merged: true`",
+  content: {
+    "application/json": {
+      schema: { $ref: "#/components/schemas/IssueTicketMergedEnvelope" },
     },
   },
 } as const
@@ -113,7 +104,7 @@ export const openApiDocument = {
         },
         responses: {
           "201": TICKET_ENVELOPE,
-          "200": TICKET_ENVELOPE,
+          "200": ISSUE_TICKET_MERGED_ENVELOPE,
           "422": ERROR_RESPONSE,
           "429": ERROR_RESPONSE,
         },
@@ -391,26 +382,109 @@ export const openApiDocument = {
     "/queue": {
       get: {
         tags: ["projection"],
-        summary: "Shop projection — staff sees PII, anonymous client sees seq only",
+        summary: "Anonymous shop projection — PII-free, seq/lane/displaySeq only (ADR-0084)",
+        description:
+          "ADR-0084 split — this endpoint returns the anonymous projection " +
+          "regardless of any auth header. Staff dashboards call " +
+          "`/queue/staff` for the full-ticket payload.",
         responses: {
           "200": {
-            description: "Projection envelope",
+            description: "Anonymous projection envelope",
             content: {
               "application/json": {
                 schema: {
                   type: "object",
-                  required: ["ok", "waitingCount"],
+                  required: [
+                    "ok",
+                    "v",
+                    "waitingCount",
+                    "laneCounts",
+                    "calling",
+                    "overdue",
+                    "waitingPreview",
+                    "nextReservationDeadline",
+                  ],
                   properties: {
                     ok: { const: true },
+                    v: { const: 4 },
                     waitingCount: { type: "integer", minimum: 0 },
-                    calling: { type: "array", items: TICKET_SCHEMA },
-                    overdue: { type: "array", items: TICKET_SCHEMA },
-                    waitingPreview: { type: "array", items: TICKET_SCHEMA },
+                    laneCounts: {
+                      type: "object",
+                      required: ["walkIn", "reservation"],
+                      properties: {
+                        walkIn: { type: "integer", minimum: 0 },
+                        reservation: { type: "integer", minimum: 0 },
+                      },
+                    },
+                    calling: { type: "array", items: PROJECTION_ENTRY_REF },
+                    overdue: { type: "array", items: PROJECTION_ENTRY_REF },
+                    waitingPreview: { type: "array", items: PROJECTION_ENTRY_REF },
+                    nextReservationDeadline: {
+                      type: ["string", "null"],
+                      format: "date-time",
+                    },
                   },
                 },
               },
             },
           },
+        },
+      },
+    },
+    "/queue/staff": {
+      get: {
+        tags: ["staff", "projection"],
+        summary: "Staff shop projection — full Ticket rows + `terminal` history (ADR-0084)",
+        description:
+          "ADR-0084 split — staff dashboards call this endpoint instead " +
+          "of `/queue` so the response shape is statically known. " +
+          "Requires `x-staff-token`, `Authorization: Bearer <jwt>`, or " +
+          "the `__Host-staff_session` cookie.",
+        responses: {
+          "200": {
+            description: "Staff projection envelope (PII inclusive)",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: [
+                    "ok",
+                    "v",
+                    "waitingCount",
+                    "laneCounts",
+                    "calling",
+                    "overdue",
+                    "waitingPreview",
+                    "terminal",
+                    "nextReservationDeadline",
+                  ],
+                  properties: {
+                    ok: { const: true },
+                    v: { const: 4 },
+                    waitingCount: { type: "integer", minimum: 0 },
+                    laneCounts: {
+                      type: "object",
+                      required: ["walkIn", "reservation"],
+                      properties: {
+                        walkIn: { type: "integer", minimum: 0 },
+                        reservation: { type: "integer", minimum: 0 },
+                      },
+                    },
+                    calling: { type: "array", items: TICKET_REF },
+                    overdue: { type: "array", items: TICKET_REF },
+                    waitingPreview: { type: "array", items: TICKET_REF },
+                    terminal: { type: "array", items: TICKET_REF },
+                    nextReservationDeadline: {
+                      type: ["string", "null"],
+                      format: "date-time",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "401": ERROR_RESPONSE,
+          "503": ERROR_RESPONSE,
         },
       },
     },
@@ -506,6 +580,17 @@ export const openApiDocument = {
     },
   },
   components: {
-    schemas: openApiBundle.components,
+    schemas: {
+      ...openApiBundle.components,
+      // Response-side shapes lifted to component refs (ADR-0085).
+      // Derived from `responseSchemas.ts` through the same
+      // Effect-Schema → OpenAPI 3.1 pipeline that powers the
+      // boundary registry. Adding a new shared response shape is
+      // a 1-line edit in `responseRegistry`.
+      Ticket: responseSchemaFor("Ticket"),
+      ProjectionEntry: responseSchemaFor("ProjectionEntry"),
+      TicketEnvelope: responseSchemaFor("TicketEnvelope"),
+      IssueTicketMergedEnvelope: responseSchemaFor("IssueTicketMergedEnvelope"),
+    },
   },
 } as const

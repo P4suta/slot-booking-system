@@ -76,6 +76,12 @@ back.
 | [0076](./adr/0076-schema-driven-action-handler-table.md) | Schema-driven QueueAction handler table                   | accepted |
 | [0077](./adr/0077-push-subscription-port.md)        | Push subscription as a separate aggregate port                | accepted |
 | [0078](./adr/0078-openapi-derived-from-schema.md)   | OpenAPI derived from Effect.Schema boundary registry          | accepted |
+| [0079](./adr/0079-remove-priority-lane.md)          | Remove the priority lane                                      | accepted |
+| [0080](./adr/0080-global-displayseq-and-reorder-removal.md) | Global `displaySeq` and Reorder removal               | accepted |
+| [0082](./adr/0082-router-auto-generation-from-boundary-registry.md) | Router auto-generation from boundary registry  | accepted |
+| [0083](./adr/0083-openapi-derived-web-client-types.md) | OpenAPI-derived web client types                           | accepted |
+| [0084](./adr/0084-queue-endpoint-split.md)          | `/queue` endpoint split (anonymous vs. staff)                 | accepted |
+| [0085](./adr/0085-response-schema-derivation.md)    | Response-side wire schemas via Effect Schema + drift test     | accepted |
 
 > ADR-0022 through 0025 are intentionally unallocated (reserved during Phase 0.5
 > for proposals that did not survive review).

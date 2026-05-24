@@ -63,6 +63,7 @@ describe("openapi.json (ADR-0078 Step 2)", () => {
       "/tickets/{id}/no-show",
       "/tickets/{id}/recall",
       "/queue",
+      "/queue/staff",
       "/queue/call-next",
       "/queue/feed",
       "/staff/login",

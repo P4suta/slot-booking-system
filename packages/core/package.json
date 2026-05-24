@@ -36,6 +36,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
+    "test:fast": "vitest run --exclude='test/property/**'",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:property": "vitest run --reporter=verbose test/property",
