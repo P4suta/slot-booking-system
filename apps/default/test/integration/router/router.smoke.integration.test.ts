@@ -90,9 +90,25 @@ describe("router smoke (HTTP shape contract)", () => {
   it("GET /api/v1/queue — anonymous returns 200 + projection envelope", async () => {
     const res = await worker().fetch(req.queueProjection())
     expect(res.status).toBe(200)
-    const body = await parseJson<{ ok: boolean; waitingCount: number }>(res)
+    const body = await parseJson<{ ok: boolean; waitingCount: number; terminal?: unknown }>(res)
     expect(body.ok).toBe(true)
     expect(typeof body.waitingCount).toBe("number")
+    // ADR-0084: anonymous projection never carries the `terminal`
+    // PII history slice — that lives only on /queue/staff.
+    expect(body.terminal).toBeUndefined()
+  })
+
+  it("GET /api/v1/queue/staff — staff token required, missing returns 401", async () => {
+    const res = await worker().fetch(req.staffQueueProjection({}))
+    expect(res.status).toBe(401)
+  })
+
+  it("GET /api/v1/queue/staff — valid staff token returns 200 + terminal slice", async () => {
+    const res = await worker().fetch(req.staffQueueProjection({ "x-staff-token": SECRET }))
+    expect(res.status).toBe(200)
+    const body = await parseJson<{ ok: boolean; waitingCount: number; terminal: unknown[] }>(res)
+    expect(body.ok).toBe(true)
+    expect(Array.isArray(body.terminal)).toBe(true)
   })
 
   it("GET /api/v1/openapi.json — returns 200 + valid OpenAPI 3.1 document", async () => {

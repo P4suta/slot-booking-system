@@ -40,6 +40,9 @@ export default tseslint.config(
       "apps/web/src/paraglide/**",
       // Codegen scripts run via tsx outside the workspace tsconfig.
       "apps/default/scripts/**",
+      // openapi-typescript output — generated d.ts uses index signatures
+      // and `interface` shapes that conflict with project lint rules.
+      "apps/web/src/generated/**",
       // Service worker / static assets — not part of the SvelteKit
       // TS project graph; the worker runs in the browser SW global.
       "apps/web/static/**",

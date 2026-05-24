@@ -127,6 +127,9 @@ export const recall = (ticketId: string, staffHeaders: Record<string, string>) =
 export const queueProjection = (extraHeaders: Record<string, string> = {}) =>
   buildRequest("/api/v1/queue", { headers: extraHeaders })
 
+export const staffQueueProjection = (staffHeaders: Record<string, string>) =>
+  buildRequest("/api/v1/queue/staff", { headers: staffHeaders })
+
 export const openApiDocument = () => buildRequest("/api/v1/openapi.json")
 
 export const staffLogin = (password: string) =>

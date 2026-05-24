@@ -2,11 +2,19 @@ services:
   # Default dev container — wrangler dev (apps/default, port 8787),
   # tsc / vitest / biome / typecheck. apps/web の vite dev は port
   # 衝突を避けるため `dev-web` service に分離。
+  #
+  # `user:` runs the container as the host's UID/GID (defaults to
+  # 1000:1000, the typical Linux desktop user). Without this the
+  # container runs as root, codegen / paraglide / pnpm install
+  # produce root-owned files in the bind-mounted workspace, and
+  # any host-side `pnpm` call later trips EACCES. UID / GID are
+  # read from a `.env` file at the repo root (see `.env.example`).
   dev:
     build:
       context: .
       target: dev
     image: slot-booking-system-dev:latest
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
       PNPM_HOME: /workspace/.pnpm-home
@@ -29,6 +37,7 @@ services:
       context: .
       target: dev
     image: slot-booking-system-dev:latest
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
       PNPM_HOME: /workspace/.pnpm-home

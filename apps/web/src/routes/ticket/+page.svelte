@@ -201,7 +201,7 @@
       maybeTriggerCalledAlert({
         state: t.state,
         calledAt: "calledAt" in t ? t.calledAt : null,
-        nudgeCount: "nudgeCount" in t ? t.nudgeCount : 0,
+        nudgeCount: ("nudgeCount" in t ? t.nudgeCount : null) ?? 0,
         displaySeq: t.displaySeq,
       })
       // Terminal observation — keep the view rendered so the

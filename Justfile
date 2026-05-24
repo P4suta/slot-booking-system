@@ -25,8 +25,25 @@ default:
 # ---------------------------------------------------------------------------
 
 # Build the dev image, install workspace deps, compile generated
-# code (paraglide messages), register git hooks.
-bootstrap: image install codegen hooks
+# code (paraglide messages), register git hooks. The `fix-perms` step
+# (B6.2) cleans up any root-owned artefacts left by a prior container
+# run before the host-user `user:` directive in docker-compose.yml
+# landed, so subsequent host-side `pnpm` commands stop tripping
+# EACCES. Idempotent — re-running after the first bootstrap is a
+# no-op.
+bootstrap: fix-perms image install codegen hooks
+
+# One-shot ownership migration for workspace artefacts written by a
+# root-running dev container (B6.2). Re-execs under sudo so the
+# operator's terminal prompts for credentials once; subsequent
+# bootstraps are no-ops because the new container runs as the host
+# user. Skipped silently when no root-owned files remain.
+fix-perms:
+    @if ./scripts/fix-perms.sh --dry-run-detect 2>/dev/null | grep -q .; then \
+        sudo ./scripts/fix-perms.sh; \
+    else \
+        echo "fix-perms: workspace already host-user-owned, skipping"; \
+    fi
 
 image:
     docker compose build dev

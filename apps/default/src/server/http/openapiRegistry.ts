@@ -13,6 +13,12 @@ import {
   SlotsQuerySchema,
   StaffCancelBodySchema,
 } from "./boundarySchemas.js"
+import {
+  WireIssueTicketMergedEnvelopeSchema,
+  WireProjectionEntrySchema,
+  WireTicketEnvelopeSchema,
+  WireTicketSchema,
+} from "./responseSchemas.js"
 
 /**
  * Single registry of every Effect-Schema boundary surface the HTTP
@@ -50,6 +56,24 @@ export const boundaryRegistry = {
 export type BoundaryRegistryKey = keyof typeof boundaryRegistry
 
 /**
+ * Response-side wire registry (ADR-0085). Companion to
+ * `boundaryRegistry`; the same `Schema.toJsonSchemaDocument` +
+ * `JsonSchema.toMultiDocumentOpenApi3_1` pipeline turns these
+ * Effect Schemas into OpenAPI 3.1 component schemas. The
+ * `responseSchemas.ts` Wire variants are intentionally decoupled
+ * from the domain `Ticket` union (see that file for the dedup-bug
+ * rationale); a property test pins drift between domain ↔ wire.
+ */
+const responseRegistry = {
+  Ticket: WireTicketSchema,
+  ProjectionEntry: WireProjectionEntrySchema,
+  TicketEnvelope: WireTicketEnvelopeSchema,
+  IssueTicketMergedEnvelope: WireIssueTicketMergedEnvelopeSchema,
+} as const
+
+export type ResponseRegistryKey = keyof typeof responseRegistry
+
+/**
  * Derive the JSON Schema document for one boundary-registry entry.
  * Returns the `Schema.toJsonSchemaDocument` output (draft-2020-12);
  * the `JsonSchema` namespace's `fromSchemaOpenApi3_1` adapter can
@@ -69,7 +93,8 @@ export const deriveBoundaryJsonSchema = (key: BoundaryRegistryKey) =>
  * document's `components.schemas` slot.
  */
 export type OpenApiBundle = {
-  readonly schemasByKey: Readonly<Record<BoundaryRegistryKey, JsonSchema.JsonSchema>>
+  readonly bodySchemasByKey: Readonly<Record<BoundaryRegistryKey, JsonSchema.JsonSchema>>
+  readonly responseSchemasByKey: Readonly<Record<ResponseRegistryKey, JsonSchema.JsonSchema>>
   readonly components: Readonly<Record<string, JsonSchema.JsonSchema>>
 }
 
@@ -80,6 +105,10 @@ export type OpenApiBundle = {
  * `#/$defs/X` → `#/components/schemas/X` and unions every entry's
  * `definitions` into one map.
  *
+ * Both boundary (request / query) and response registries are fed
+ * through one MultiDocument call so any shared `$defs` (e.g.
+ * `Instant`) lift into a single `components.schemas` slot.
+ *
  * Memoise — the conversion is pure and the inputs are static; calling
  * once at module load avoids repeated AST walks on every request to
  * `/api/v1/openapi.json`.
@@ -88,37 +117,47 @@ let cachedBundle: OpenApiBundle | undefined
 
 export const buildOpenApiBundle = (): OpenApiBundle => {
   if (cachedBundle !== undefined) return cachedBundle
-  const keys = Object.keys(boundaryRegistry) as readonly BoundaryRegistryKey[]
-  // The MultiDocument input preserves entry ordering, so we can
-  // match `openapi.schemas[i]` back to `keys[i]` after conversion.
-  const draftDocs = keys.map((k) => deriveBoundaryJsonSchema(k))
-  // `MultiDocument.schemas` is typed as a non-empty tuple; the
-  // registry has 13 entries by construction (see `boundaryRegistry`
-  // above + the count pin in `openapiRegistry.test.ts`), so this
-  // assertion holds at compile time even though TS cannot see it.
-  const schemas = draftDocs.map((d) => d.schema) as unknown as readonly [
+  const boundaryKeys = Object.keys(boundaryRegistry) as readonly BoundaryRegistryKey[]
+  const responseKeys = Object.keys(responseRegistry) as readonly ResponseRegistryKey[]
+  // Order matters — we slice the converted schemas back into
+  // their per-registry maps by index below.
+  const boundaryDrafts = boundaryKeys.map((k) => deriveBoundaryJsonSchema(k))
+  const responseDrafts = responseKeys.map((k) => Schema.toJsonSchemaDocument(responseRegistry[k]))
+  const allDrafts = [...boundaryDrafts, ...responseDrafts]
+  // `MultiDocument.schemas` is typed as a non-empty tuple. Both
+  // registries are non-empty by construction; the routerRegistry
+  // and openapiRegistry tests pin their entry counts.
+  const schemas = allDrafts.map((d) => d.schema) as unknown as readonly [
     JsonSchema.JsonSchema,
     ...JsonSchema.JsonSchema[],
   ]
   const draftMulti: JsonSchema.MultiDocument<"draft-2020-12"> = {
     dialect: "draft-2020-12",
     schemas,
-    definitions: Object.assign({}, ...draftDocs.map((d) => d.definitions)) as Record<
+    definitions: Object.assign({}, ...allDrafts.map((d) => d.definitions)) as Record<
       string,
       JsonSchema.JsonSchema
     >,
   }
   const openapiMulti = JsonSchema.toMultiDocumentOpenApi3_1(draftMulti)
-  const schemasByKey = Object.fromEntries(
-    keys.map((k, i) => [k, openapiMulti.schemas[i]] as const),
+  const bodySchemasByKey = Object.fromEntries(
+    boundaryKeys.map((k, i) => [k, openapiMulti.schemas[i]] as const),
   ) as Record<BoundaryRegistryKey, JsonSchema.JsonSchema>
+  const responseSchemasByKey = Object.fromEntries(
+    responseKeys.map((k, i) => [k, openapiMulti.schemas[boundaryKeys.length + i]] as const),
+  ) as Record<ResponseRegistryKey, JsonSchema.JsonSchema>
   cachedBundle = {
-    schemasByKey,
+    bodySchemasByKey,
+    responseSchemasByKey,
     components: openapiMulti.definitions,
   }
   return cachedBundle
 }
 
-/** Shorthand: derived OpenAPI 3.1 schema for a single registry entry. */
+/** Shorthand: derived OpenAPI 3.1 schema for a single boundary-registry entry. */
 export const bodySchemaFor = (key: BoundaryRegistryKey): JsonSchema.JsonSchema =>
-  buildOpenApiBundle().schemasByKey[key]
+  buildOpenApiBundle().bodySchemasByKey[key]
+
+/** Shorthand: derived OpenAPI 3.1 schema for a single response-registry entry. */
+export const responseSchemaFor = (key: ResponseRegistryKey): JsonSchema.JsonSchema =>
+  buildOpenApiBundle().responseSchemasByKey[key]

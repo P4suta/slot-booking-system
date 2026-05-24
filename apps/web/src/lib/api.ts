@@ -1,3 +1,8 @@
+import type {
+  ProjectionEntry as GeneratedProjectionEntry,
+  Ticket as GeneratedTicket,
+  paths,
+} from "../generated/openapi.js"
 import { apiBaseUrl } from "./baseUrl.js"
 
 const baseUrl = apiBaseUrl
@@ -8,104 +13,40 @@ type ErrorEnvelope = {
   readonly reason?: string
 }
 
-export type Lane = "walkIn" | "reservation"
-
-export type Ticket = {
-  readonly id: string
-  readonly seq: number
-  readonly lane: Lane
-  readonly displaySeq: number
-  readonly state: "Waiting" | "Called" | "Overdue" | "Served" | "NoShow" | "Cancelled"
-  // nameKana / phoneLast4 are non-null by domain invariant. The
-  // `IssueTicketBodySchema` at the server boundary requires them
-  // (`NameKanaSchema` non-empty, `PhoneLast4Schema` 4 digits) and
-  // every Ticket variant in `packages/core/src/domain/queue/Ticket.ts`
-  // carries them via `CommonFields`. Encoding through
-  // `TicketSchema` would throw before serialisation if either were
-  // null, so this type matches the wire reality.
-  readonly nameKana: string
-  readonly phoneLast4: string
-  readonly freeText: string | null
-  readonly issuedAt: string
-  readonly calledAt?: string
-  readonly overdueAt?: string
-  readonly lastNudgedAt?: string | null
-  readonly nudgeCount?: number
-  readonly servedAt?: string
-  readonly cancelledAt?: string
-  readonly markedAt?: string
-  readonly appointmentAt: string | null
-  readonly checkedInAt: string | null
-  readonly reason?: string
-}
-
-export type SlotEntry = {
-  readonly date: string
-  readonly bucketId: number
-  readonly granularity: 15 | 30 | 60
-  readonly capacity: number
-  readonly taken: number
-  readonly available: number
-}
-
-export type ProjectionEntry = {
-  readonly id: string
-  readonly seq: number
-  readonly lane: Lane
-  readonly displaySeq: number
-  readonly appointmentAt: string | null
-}
-
 /**
- * Overdue projection entry — same as {@link ProjectionEntry} plus
- * `nudgeCount` so the customer-side de-dup keys `(calledAt,
- * nudgeCount)` can detect each successive `Nudged` event without
- * polling. ADR-0072.
+ * ADR-0083 + ADR-0084 — every wire type is derived from
+ * `docs/openapi.json` via `openapi-typescript`. ADR-0084 split the
+ * legacy header-discriminated `/queue` into two paths with
+ * statically known shapes (`/queue` anonymous, `/queue/staff` full
+ * Ticket); the corresponding `ShopState` / `StaffShopState`
+ * aliases are now path-derived rather than hand-written.
+ *
+ * Wire-level aliases:
+ *   - `Ticket` is the unified discriminated wire image of the six
+ *     ticket states. OpenAPI's flat-object form collapses the union
+ *     to "common fields required, state-specific fields optional";
+ *     consumers narrow by `state` at the call site.
+ *   - `ProjectionEntry` is the PII-free shape `/queue` returns in
+ *     its `calling` / `overdue` / `waitingPreview` arrays.
+ *   - `ShopState` / `StaffShopState` are the two response envelopes
+ *     for the split `/queue` / `/queue/staff` endpoints.
+ *   - `SlotEntry`, `IssueTicketBody` extract reusable shapes from
+ *     the generated paths so route bodies don't repeat the deep
+ *     nested type expressions.
  */
-type OverdueProjectionEntry = ProjectionEntry & {
-  readonly nudgeCount: number
-}
+export type Ticket = GeneratedTicket
 
-type LaneCounts = {
-  readonly walkIn: number
-  readonly reservation: number
-}
+export type SlotEntry =
+  paths["/slots"]["get"]["responses"]["200"]["content"]["application/json"]["slots"][number]
 
-/**
- * v4 anonymous shop projection (ADR-0062 / ADR-0065 / ADR-0066 /
- * ADR-0067 / ADR-0071 / ADR-0072). `Serving` is gone; `Overdue`
- * joins `Called` as the post-call states. The `overdue[]` array
- * carries `nudgeCount` per ticket so the customer-side dedup key
- * `(calledAt, nudgeCount)` (per ADR-0072) detects each successive
- * `Nudged` event without polling.
- */
-export type ShopState = {
-  readonly v: 4
-  readonly waitingCount: number
-  readonly laneCounts: LaneCounts
-  readonly calling: readonly ProjectionEntry[]
-  readonly overdue: readonly OverdueProjectionEntry[]
-  readonly waitingPreview: readonly ProjectionEntry[]
-  readonly nextReservationDeadline: string | null
-}
+type IssueTicketBody = paths["/tickets"]["post"]["requestBody"]["content"]["application/json"]
 
-/**
- * Staff-only shape: PII (nameKana / phoneLast4 / freeText) のせ。
- * calling / overdue / waitingPreview のすべてが full Ticket row を
- * carry。 `terminal` は ADR-0069 §Stage 11 で追加された直近 8 件の
- * Served / Cancelled / NoShow ticket スライス (履歴列の source)。
- * `x-staff-token` 付き GET /api/v1/queue で返る。
- */
-export type StaffShopState = {
-  readonly v: 4
-  readonly waitingCount: number
-  readonly laneCounts: LaneCounts
-  readonly calling: readonly Ticket[]
-  readonly overdue: readonly Ticket[]
-  readonly waitingPreview: readonly Ticket[]
-  readonly terminal: readonly Ticket[]
-  readonly nextReservationDeadline: string | null
-}
+export type ProjectionEntry = GeneratedProjectionEntry
+
+export type ShopState = paths["/queue"]["get"]["responses"]["200"]["content"]["application/json"]
+
+export type StaffShopState =
+  paths["/queue/staff"]["get"]["responses"]["200"]["content"]["application/json"]
 
 /**
  * Tagged-union return for every REST call (C12). The frontend can
@@ -191,13 +132,9 @@ const fetchJson = async <A>(input: string, init?: RequestInit): Promise<ApiResul
   return json<A>(res)
 }
 
-export const issueTicket = async (input: {
-  nameKana: string
-  phoneLast4: string
-  freeText: string | null
-  lane?: Lane
-  appointmentAt?: string
-}): Promise<ApiResult<{ ticket: Ticket }>> =>
+export const issueTicket = async (
+  input: IssueTicketBody,
+): Promise<ApiResult<{ readonly ticket: Ticket; readonly merged?: true }>> =>
   fetchJson(`${baseUrl()}/api/v1/tickets`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -275,11 +212,12 @@ export const shopState = async (): Promise<ApiResult<ShopState>> =>
 
 /**
  * Staff 権限版 shopState — preview に PII (kana / 末尾4 / freeText) が
- * 同梱される。 token を付けたまま public endpoint を叩くだけで sub-path
- * は変わらない (worker 側で `x-staff-token` をチェックして branch)。
+ * 同梱される。 ADR-0084 で `/queue` (anonymous) と `/queue/staff` (PII
+ * inclusive) を別 path に分割。 client は path を選ぶだけで auth header
+ * の意味的役割が無くなった (token はもちろん必要)。
  */
 export const staffShopState = async (token: string): Promise<ApiResult<StaffShopState>> =>
-  fetchJson(`${baseUrl()}/api/v1/queue`, {
+  fetchJson(`${baseUrl()}/api/v1/queue/staff`, {
     headers: { "x-staff-token": token },
   })
 
